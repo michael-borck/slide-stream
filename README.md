@@ -163,10 +163,12 @@ export OLLAMA_MODEL="llama3.2"  # Optional: default model
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-### Development Documentation
+### Documentation
 
-- **[TYPE_SAFETY.md](TYPE_SAFETY.md)** - Complete documentation of all type-related compromises and workarounds
-- **[TYPING_IMPROVEMENTS.md](TYPING_IMPROVEMENTS.md)** - Examples and roadmap for improving type safety
+- **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)** - Comprehensive user guide with examples and workflows
+- **[docs/DEVELOPMENT_WORKFLOW.md](docs/DEVELOPMENT_WORKFLOW.md)** - Development setup, testing, and release process
+- **[docs/TYPE_SAFETY.md](docs/TYPE_SAFETY.md)** - Type safety documentation and workarounds
+- **[docs/TYPING_IMPROVEMENTS.md](docs/TYPING_IMPROVEMENTS.md)** - Type improvement roadmap
 
 ## 📄 License
 

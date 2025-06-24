@@ -81,6 +81,14 @@ src/slide_stream/
 - File type detection by extension
 - Rich progress bars and error formatting
 
+## Documentation Structure
+
+- **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)**: Comprehensive user guide with examples
+- **[docs/DEVELOPMENT_WORKFLOW.md](docs/DEVELOPMENT_WORKFLOW.md)**: Development workflow and release process
+- **[docs/TYPE_SAFETY.md](docs/TYPE_SAFETY.md)**: Type safety documentation
+- **[docs/TYPING_IMPROVEMENTS.md](docs/TYPING_IMPROVEMENTS.md)**: Type improvement roadmap
+- **[tests/fixtures/](tests/fixtures/)**: Test data files
+
 ## Version History
 
 - **1.0.0**: Initial release with Markdown support
