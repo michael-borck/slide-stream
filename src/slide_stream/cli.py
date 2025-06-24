@@ -20,6 +20,7 @@ from .media import (
     text_to_speech,
 )
 from .parser import parse_markdown
+from .powerpoint import parse_powerpoint, format_powerpoint_content_for_llm
 
 # Rich Console Initialization
 console = Console()
@@ -47,12 +48,12 @@ def version_callback(value: bool) -> None:
 
 @app.command()
 def create(
-    input_file: Annotated[
-        typer.FileText,
+    input_path: Annotated[
+        Path,
         typer.Option(
             "--input",
             "-i",
-            help="Path to the input Markdown file.",
+            help="Path to the input file (Markdown .md or PowerPoint .pptx).",
             rich_help_panel="Input/Output Options",
         ),
     ],
@@ -96,7 +97,7 @@ def create(
         ),
     ] = False,
 ) -> None:
-    """Create a video from a Markdown file."""
+    """Create a video from a Markdown (.md) or PowerPoint (.pptx) file."""
     console.print(
         Panel.fit(
             "[bold cyan]🚀 Starting SlideStream! 🚀[/bold cyan]",
@@ -104,10 +105,15 @@ def create(
         )
     )
 
-    # Read input file
-    markdown_input = input_file.read()
-    if not markdown_input.strip():
-        err_console.print("Input file is empty. Exiting.")
+    # Check if input file exists
+    if not input_path.exists():
+        err_console.print(f"Input file not found: {input_path}")
+        raise typer.Exit(code=1)
+    
+    # Determine file type and read accordingly
+    file_extension = input_path.suffix.lower()
+    if file_extension not in [".md", ".pptx"]:
+        err_console.print(f"Unsupported file type: {file_extension}. Supported: .md, .pptx")
         raise typer.Exit(code=1)
 
     # Setup temporary directory
@@ -126,11 +132,25 @@ def create(
             err_console.print(f"Error initializing LLM: {e}")
             raise typer.Exit(code=1)
 
-    # Parse the Markdown
-    console.print("\n[bold]1. Parsing Markdown...[/bold]")
-    slides = parse_markdown(markdown_input)
+    # Parse the input file
+    if file_extension == ".md":
+        console.print("\n[bold]1. Parsing Markdown...[/bold]")
+        with open(input_path, 'r', encoding='utf-8') as f:
+            markdown_input = f.read()
+        if not markdown_input.strip():
+            err_console.print("Markdown file is empty. Exiting.")
+            raise typer.Exit(code=1)
+        slides = parse_markdown(markdown_input)
+    else:  # .pptx
+        console.print("\n[bold]1. Parsing PowerPoint...[/bold]")
+        try:
+            slides = parse_powerpoint(input_path)
+        except ValueError as e:
+            err_console.print(f"Error parsing PowerPoint: {e}")
+            raise typer.Exit(code=1)
+    
     if not slides:
-        err_console.print("No slides found in the Markdown file. Exiting.")
+        err_console.print(f"No slides found in the {file_extension} file. Exiting.")
         raise typer.Exit(code=1)
     console.print(f"📄 Found [bold yellow]{len(slides)}[/bold yellow] slides.")
 
@@ -154,13 +174,21 @@ def create(
                 description=f"[yellow]Processing Slide {slide_num}/{len(slides)}: '{slide['title']}'[/yellow]",
             )
 
-            raw_text = f"Title: {slide['title']}. Content: {' '.join(slide['content'])}"
+            # Format content based on file type
+            if file_extension == ".md":
+                raw_text = f"Title: {slide['title']}. Content: {' '.join(slide['content'])}"
+            else:  # .pptx
+                raw_text = format_powerpoint_content_for_llm(slide)
+            
             speech_text = raw_text
             search_query = slide["title"]
 
             # LLM Processing
             if llm_client:
-                speech_prompt = f"Convert the following slide points into a natural, flowing script for a voiceover. Speak conversationally. Directly output the script and nothing else.\n\n{raw_text}"
+                if file_extension == ".pptx" and slide.get('notes'):
+                    speech_prompt = f"Convert the following PowerPoint slide into a natural, flowing script for a voiceover. Use the speaker notes as guidance for the narrative style. Speak conversationally. Directly output the script and nothing else.\n\n{raw_text}"
+                else:
+                    speech_prompt = f"Convert the following slide points into a natural, flowing script for a voiceover. Speak conversationally. Directly output the script and nothing else.\n\n{raw_text}"
                 natural_speech = query_llm(
                     llm_client, llm_provider, speech_prompt, console, llm_model
                 )

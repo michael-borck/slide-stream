@@ -1,17 +1,19 @@
 # Slide Stream
 
-🎬 An AI-powered tool to automatically create video presentations from Markdown files.
+🎬 An AI-powered tool to automatically create video presentations from Markdown and PowerPoint files.
 
 [![PyPI version](https://badge.fury.io/py/slide-stream.svg)](https://badge.fury.io/py/slide-stream)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Transform your Markdown documents into professional video presentations with AI-powered content enhancement, automatic image sourcing, and natural text-to-speech narration.
+Transform your Markdown documents and PowerPoint presentations into professional video presentations with AI-powered content enhancement, automatic image sourcing, and natural text-to-speech narration.
 
 ## ✨ Features
 
 - 📝 **Markdown to Video**: Convert Markdown files into professional video presentations
+- 📊 **PowerPoint to Video**: Import .pptx files with slide content and speaker notes
 - 🤖 **AI Enhancement**: Improve content using OpenAI, Gemini, Claude, Groq, or Ollama
+- 📋 **Speaker Notes Support**: Use PowerPoint speaker notes for enhanced AI narration
 - 🖼️ **Smart Images**: Automatic image sourcing from Unsplash or generate text-based slides
 - 🎙️ **Text-to-Speech**: Natural narration using Google Text-to-Speech
 - 🎨 **Customizable**: Professional video output with configurable settings
@@ -78,7 +80,11 @@ pip install slide-stream[all-ai]
 
 ### Basic video creation
 ```bash
+# From Markdown
 slide-stream create -i slides.md -o presentation.mp4
+
+# From PowerPoint
+slide-stream create -i presentation.pptx -o video.mp4
 ```
 
 ### With AI enhancement
@@ -99,6 +105,17 @@ slide-stream create \
   -o presentation.mp4 \
   --llm-provider openai \
   --llm-model gpt-4o \
+  --image-source unsplash
+```
+
+### PowerPoint with speaker notes enhancement
+```bash
+# PowerPoint files with speaker notes get enhanced AI narration
+export OPENAI_API_KEY="your-api-key"
+slide-stream create \
+  -i presentation.pptx \
+  -o enhanced-video.mp4 \
+  --llm-provider openai \
   --image-source unsplash
 ```
 
