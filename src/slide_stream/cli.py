@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from moviepy import ImageClip, concatenate_videoclips
+from moviepy import ImageClip, VideoFileClip, concatenate_videoclips
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
@@ -231,10 +231,7 @@ def create(
     console.print("\n[bold]2. Combining Video Fragments...[/bold]")
     if video_fragments:
         try:
-            clips = [
-                ImageClip(f).set_duration(ImageClip(f).duration)  # type: ignore[attr-defined]
-                for f in video_fragments
-            ]
+            clips = [VideoFileClip(f) for f in video_fragments]
             final_clip = concatenate_videoclips(clips)
             final_clip.write_videofile(
                 output_filename, fps=24, codec="libx264", audio_codec="aac", logger=None

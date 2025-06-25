@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "slide-stream"
-version = "1.1.6"
+version = "1.1.7"
 description = "An AI-powered tool to automatically create video presentations from Markdown and PowerPoint files"
 readme = "README.md"
 license = { text = "MIT" }

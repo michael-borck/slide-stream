@@ -1782,7 +1782,7 @@ wheels = [
 
 [[package]]
 name = "slide-stream"
-version = "1.1.6"
+version = "1.1.7"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
