@@ -29,7 +29,8 @@ err_console = Console(stderr=True, style="bold red")
 def search_and_download_image(query: str, filename: str) -> str:
     """Download image from Unsplash based on search query."""
     try:
-        url = f"https://source.unsplash.com/random/{VIDEO_RESOLUTION[0]}x{VIDEO_RESOLUTION[1]}/?{query.replace(' ', ',')}"
+        # Use picsum.photos as fallback since source.unsplash.com is deprecated
+        url = f"https://picsum.photos/{VIDEO_RESOLUTION[0]}/{VIDEO_RESOLUTION[1]}"
         response = requests.get(
             url, timeout=IMAGE_DOWNLOAD_TIMEOUT, allow_redirects=True
         )
@@ -120,7 +121,7 @@ def create_video_fragment(
         )
 
         # Create image clip
-        image_clip = ImageClip(image_path, duration=duration).set_position("center")  # type: ignore[attr-defined]
+        image_clip = ImageClip(image_path, duration=duration)  # type: ignore[attr-defined]
 
         # Resize image to fit resolution if needed
         if image_clip.h > VIDEO_RESOLUTION[1]:

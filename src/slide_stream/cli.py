@@ -30,7 +30,7 @@ err_console = Console(stderr=True, style="bold red")
 app = typer.Typer(
     name="slide-stream",
     help="""
-    SlideStream: An AI-powered tool to automatically create video presentations from text and Markdown.
+    SlideStream: An AI-powered tool to automatically create video presentations from Markdown and PowerPoint files.
     """,
     add_completion=False,
     rich_markup_mode="markdown",
