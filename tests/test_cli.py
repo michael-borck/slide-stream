@@ -66,7 +66,7 @@ def test_cli_version(runner):
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
     assert "SlideStream" in result.stdout
-    assert "1.1.5" in result.stdout
+    assert "1.1.6" in result.stdout
 
 
 def test_cli_create_missing_input(runner):
