@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "slide-stream"
-version = "1.1.7"
+version = "2.0.0"
 description = "An AI-powered tool to automatically create video presentations from Markdown and PowerPoint files"
 readme = "README.md"
 license = { text = "MIT" }
@@ -37,11 +37,13 @@ dependencies = [
     "moviepy>=1.0.3",
     "pillow>=10.0.0",
     "typing-extensions>=4.8.0",
+    "pyyaml>=6.0.0",
     # Optional AI providers
     "google-generativeai>=0.3.0; extra == 'gemini'",
     "openai>=1.0.0; extra == 'openai'",
     "anthropic>=0.7.0; extra == 'claude'",
     "groq>=0.4.0; extra == 'groq'",
+    "elevenlabs>=1.0.0; extra == 'elevenlabs'",
     "python-pptx>=1.0.2",
 ]
 
@@ -51,11 +53,13 @@ gemini = ["google-generativeai>=0.3.0"]
 openai = ["openai>=1.0.0"]
 claude = ["anthropic>=0.7.0"]
 groq = ["groq>=0.4.0"]
+elevenlabs = ["elevenlabs>=1.0.0"]
 all-ai = [
     "google-generativeai>=0.3.0",
     "openai>=1.0.0",
     "anthropic>=0.7.0",
     "groq>=0.4.0",
+    "elevenlabs>=1.0.0",
 ]
 
 # Development dependencies

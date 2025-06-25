@@ -63,15 +63,15 @@ def test_cli_help(runner):
 
 def test_cli_version(runner):
     """Test CLI version command."""
-    result = runner.invoke(app, ["--version"])
+    result = runner.invoke(app, ["create", "--version"])
     assert result.exit_code == 0
     assert "SlideStream" in result.stdout
-    assert "1.1.7" in result.stdout
+    assert "2.0.0" in result.stdout
 
 
 def test_cli_create_missing_input(runner):
     """Test CLI with missing input file."""
-    result = runner.invoke(app, [])
+    result = runner.invoke(app, ["create"])
     assert result.exit_code != 0
 
 
@@ -81,11 +81,9 @@ def test_cli_create_basic(runner, sample_markdown):
         f.write(sample_markdown)
         f.flush()
         
-        # Test with text image source to avoid network calls
+        # Test with new CLI format
         result = runner.invoke(app, [
-            "--input", f.name,
-            "--output", "test_output.mp4",
-            "--image-source", "text"
+            "create", f.name, "test_output.mp4"
         ])
         
         # Should not crash during parsing phase
@@ -99,11 +97,9 @@ def test_cli_create_basic(runner, sample_markdown):
 def test_cli_create_powerpoint(runner, sample_powerpoint):
     """Test CLI create command with PowerPoint file."""
     try:
-        # Test with PowerPoint file and text image source to avoid network calls
+        # Test with PowerPoint file using new CLI format
         result = runner.invoke(app, [
-            "--input", str(sample_powerpoint),
-            "--output", "test_pptx_output.mp4",
-            "--image-source", "text"
+            "create", str(sample_powerpoint), "test_pptx_output.mp4"
         ])
         
         # Should not crash during parsing phase
@@ -123,8 +119,7 @@ def test_cli_unsupported_file_type(runner):
         f.flush()
         
         result = runner.invoke(app, [
-            "--input", f.name,
-            "--output", "test_output.mp4"
+            "create", f.name, "test_output.mp4"
         ])
         
         assert result.exit_code != 0
@@ -137,8 +132,7 @@ def test_cli_unsupported_file_type(runner):
 def test_cli_nonexistent_file(runner):
     """Test CLI with non-existent input file."""
     result = runner.invoke(app, [
-        "--input", "nonexistent.md",
-        "--output", "test_output.mp4"
+        "create", "nonexistent.md", "test_output.mp4"
     ])
     
     assert result.exit_code != 0

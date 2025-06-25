@@ -1,50 +1,66 @@
-# SlideStream User Guide
+# SlideStream 2.0 User Guide
 
-A comprehensive guide to using SlideStream for creating AI-powered video presentations from Markdown and PowerPoint files.
+Comprehensive guide for creating professional video presentations with SlideStream's AI-powered tools.
 
 ## Table of Contents
 
-1. [Overview](#overview)
-2. [Installation](#installation)
-3. [Quick Start](#quick-start)
-4. [Input Formats](#input-formats)
-5. [Command Reference](#command-reference)
-6. [AI Providers](#ai-providers)
-7. [Image Sources](#image-sources)
-8. [Workflow Examples](#workflow-examples)
-9. [Advanced Usage](#advanced-usage)
-10. [Troubleshooting](#troubleshooting)
-11. [Tips & Best Practices](#tips--best-practices)
+- [Quick Start](#quick-start)
+- [Installation](#installation)
+- [Configuration System](#configuration-system)
+- [Creating Your First Video](#creating-your-first-video)
+- [Working with Providers](#working-with-providers)
+- [Advanced Workflows](#advanced-workflows)
+- [Troubleshooting](#troubleshooting)
+- [Best Practices](#best-practices)
 
-## Overview
+## Quick Start
 
-SlideStream is an AI-powered command-line tool that automatically creates professional video presentations from:
-- 📝 **Markdown files** (.md)
-- 📊 **PowerPoint files** (.pptx)
+### 1. Install SlideStream
 
-### Key Features
+```bash
+# Install with all AI providers
+pip install slide-stream[all-ai]
+```
 
-- 🤖 **AI Enhancement**: Improve content using OpenAI, Gemini, Claude, Groq, or Ollama
-- 📋 **Speaker Notes Support**: Use PowerPoint speaker notes for enhanced AI narration
-- 🖼️ **Smart Images**: Automatic image sourcing from Unsplash or generate text-based slides
-- 🎙️ **Text-to-Speech**: Natural narration using Google Text-to-Speech
-- 🎨 **Professional Output**: High-quality MP4 videos with configurable settings
+### 2. Create Configuration
+
+```bash
+slide-stream init
+```
+
+This creates a `slidestream.yaml` file in your current directory with example configuration.
+
+### 3. Set Up API Keys
+
+Edit your configuration file or set environment variables:
+
+```bash
+export OPENAI_API_KEY="your-openai-key"
+export ELEVENLABS_API_KEY="your-elevenlabs-key"
+```
+
+### 4. Create Your First Video
+
+```bash
+slide-stream create presentation.md output.mp4
+```
 
 ## Installation
 
-### Basic Installation
+### Core Installation
 
 ```bash
 pip install slide-stream
 ```
 
-### With AI Provider Support
-
-Choose the AI providers you want to use:
+### With Specific Providers
 
 ```bash
-# For OpenAI GPT models
+# For OpenAI (DALL-E, GPT, TTS)
 pip install slide-stream[openai]
+
+# For ElevenLabs premium voices
+pip install slide-stream[elevenlabs]
 
 # For Google Gemini
 pip install slide-stream[gemini]
@@ -55,552 +71,563 @@ pip install slide-stream[claude]
 # For Groq (fast inference)
 pip install slide-stream[groq]
 
-# For all AI providers
+# All AI providers
 pip install slide-stream[all-ai]
 ```
 
 ### System Requirements
 
-- **Python**: 3.10 or higher
-- **FFmpeg**: Required for video processing
-- **Internet connection**: For Unsplash images and AI providers (optional)
+- **Python 3.10+**
+- **FFmpeg** (for video processing)
 
 #### Installing FFmpeg
 
-**macOS (using Homebrew):**
+**macOS:**
 ```bash
 brew install ffmpeg
 ```
 
 **Ubuntu/Debian:**
 ```bash
-sudo apt update
-sudo apt install ffmpeg
+sudo apt update && sudo apt install ffmpeg
 ```
 
 **Windows:**
-Download from [FFmpeg official website](https://ffmpeg.org/download.html) or use chocolatey:
+Download from [FFmpeg website](https://ffmpeg.org/download.html)
+
+## Configuration System
+
+SlideStream 2.0 uses YAML configuration files for maximum flexibility and maintainability.
+
+### Configuration Discovery
+
+SlideStream searches for configuration in this order:
+
+1. `./slidestream.yaml` (current directory)
+2. `~/.slidestream.yaml` (home directory)
+3. Built-in defaults
+
+### Basic Configuration
+
+```yaml
+# slidestream.yaml
+providers:
+  llm:
+    provider: openai
+    model: gpt-4o-mini
+    
+  images:
+    provider: dalle3
+    fallback: text
+    
+  tts:
+    provider: elevenlabs
+    voice: rachel
+
+api_keys:
+  openai: "${OPENAI_API_KEY}"
+  elevenlabs: "${ELEVENLABS_API_KEY}"
+
+settings:
+  video:
+    resolution: [1920, 1080]
+    fps: 24
+  cleanup: true
+```
+
+### Environment Variables
+
+Use environment variables for secure API key management:
+
 ```bash
-choco install ffmpeg
+# OpenAI (for DALL-E 3, GPT, and OpenAI TTS)
+export OPENAI_API_KEY="sk-..."
+
+# ElevenLabs (for premium TTS)
+export ELEVENLABS_API_KEY="..."
+
+# Stock photo providers (optional)
+export PEXELS_API_KEY="..."
+export UNSPLASH_ACCESS_KEY="..."
+
+# Other LLM providers
+export GEMINI_API_KEY="..."
+export ANTHROPIC_API_KEY="..."
+export GROQ_API_KEY="..."
 ```
 
-## Quick Start
+### Configuration Profiles
 
-### 1. Create a Simple Markdown File
+Create different configurations for different use cases:
 
-Create `my-presentation.md`:
+**Basic Profile** (`basic.yaml`):
+```yaml
+providers:
+  llm:
+    provider: none
+  images:
+    provider: text
+  tts:
+    provider: gtts
+```
+
+**Professional Profile** (`pro.yaml`):
+```yaml
+providers:
+  llm:
+    provider: openai
+    model: gpt-4o
+  images:
+    provider: dalle3
+    fallback: pexels
+  tts:
+    provider: elevenlabs
+    voice: rachel
+
+api_keys:
+  openai: "${OPENAI_API_KEY}"
+  elevenlabs: "${ELEVENLABS_API_KEY}"
+  pexels: "${PEXELS_API_KEY}"
+```
+
+Use with:
+```bash
+slide-stream create --config pro.yaml presentation.md video.mp4
+```
+
+## Creating Your First Video
+
+### From Markdown
+
+Create a simple Markdown file:
+
 ```markdown
-# Welcome to My Presentation
+# Welcome to SlideStream
 
-- This is the first point
-- Here's another important point
-- And a final thought
+- Create professional video presentations
+- Use AI to enhance your content
+- Generate videos automatically
 
-# Second Slide
+# Key Features
 
-- More content here
-- Additional information
-- Conclusion
+- AI-powered image generation
+- Premium text-to-speech voices
+- Smart content enhancement
+- Professional video output
+
+# Getting Started
+
+- Install SlideStream
+- Configure your providers
+- Create your first video
 ```
 
-### 2. Generate Your Video
+Generate the video:
 
 ```bash
-slide-stream --input my-presentation.md --output my-video.mp4
+slide-stream create presentation.md my-video.mp4
 ```
 
-### 3. View Your Video
+### From PowerPoint
 
-Open `my-video.mp4` in any video player to see your AI-generated presentation!
+SlideStream 2.0 supports PowerPoint files with enhanced features:
 
-## Input Formats
-
-### Markdown Files (.md)
-
-SlideStream uses level 1 headers (`#`) to create new slides:
-
-```markdown
-# Slide 1 Title
-- Bullet point 1
-- Bullet point 2
-- Bullet point 3
-
-# Slide 2 Title
-- More content
-- Additional points
-
-# Final Slide
-- Conclusion
-- Thank you
+```bash
+slide-stream create slides.pptx presentation.mp4
 ```
-
-**Features:**
-- Each `# Header` creates a new slide
-- Bullet points become slide content
-- Simple and clean formatting
-- Great for quick presentations
-
-### PowerPoint Files (.pptx)
-
-SlideStream can import PowerPoint presentations:
-
-**Supported Elements:**
-- Slide titles
-- Text content (bullet points, paragraphs)
-- Speaker notes (used for enhanced AI narration)
 
 **PowerPoint Features:**
-- **Speaker Notes**: Automatically used by AI to create natural narration
-- **Slide Content**: Bullet points and text are extracted
-- **Layout Agnostic**: Works with any PowerPoint layout
+- Extracts slide titles and content
+- Uses speaker notes for enhanced narration
+- Preserves slide structure
+- Supports complex layouts
 
-**Example PowerPoint to Video:**
-```bash
-slide-stream --input presentation.pptx --output video.mp4
+### Example Speaker Notes
+
+When using PowerPoint files, add speaker notes for better AI narration:
+
+```
+Slide Content: Key Benefits
+• Faster development
+• Better user experience
+• Competitive advantage
+
+Speaker Notes: In this slide, we'll explore the three main benefits of adopting our solution. First, you'll see dramatically faster development cycles, allowing your team to ship features in weeks rather than months. Second, your users will experience a more intuitive and responsive interface. Finally, these improvements will give you a significant competitive advantage in your market.
 ```
 
-## Command Reference
+The AI will use these notes to create natural, flowing narration.
 
-### Basic Syntax
+## Working with Providers
 
-```bash
-slide-stream [OPTIONS]
+### Image Providers
+
+#### DALL-E 3 (AI Generation)
+```yaml
+providers:
+  images:
+    provider: dalle3
+    fallback: text
+
+api_keys:
+  openai: "${OPENAI_API_KEY}"
 ```
 
-### Required Options
+**Benefits:**
+- Custom images for each slide
+- Relevant to your content
+- Professional quality
+- No licensing concerns
 
-| Option | Short | Description |
-|--------|--------|-------------|
-| `--input` | `-i` | Path to input file (.md or .pptx) |
-| `--output` | `-o` | Output video filename (default: output_video.mp4) |
+**Requirements:**
+- OpenAI API key
+- Pay-per-image pricing
 
-### AI & Content Options
+#### Stock Photo Providers
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--llm-provider` | `none` | AI provider: `none`, `openai`, `gemini`, `claude`, `groq`, `ollama` |
-| `--llm-model` | (auto) | Specific model to use (optional) |
-| `--image-source` | `unsplash` | Image source: `unsplash` or `text` |
+**Pexels:**
+```yaml
+providers:
+  images:
+    provider: pexels
+    fallback: text
 
-### Examples
-
-```bash
-# Basic usage
-slide-stream -i slides.md -o presentation.mp4
-
-# With AI enhancement
-slide-stream -i slides.md -o presentation.mp4 --llm-provider openai
-
-# Text-only slides (no internet required)
-slide-stream -i slides.md -o presentation.mp4 --image-source text
-
-# PowerPoint with specific model
-slide-stream -i presentation.pptx -o video.mp4 --llm-provider openai --llm-model gpt-4o
+api_keys:
+  pexels: "${PEXELS_API_KEY}"
 ```
 
-## AI Providers
+**Unsplash:**
+```yaml
+providers:
+  images:
+    provider: unsplash
+    fallback: text
 
-### Configuration
-
-Set environment variables for your chosen AI provider:
-
-#### OpenAI
-```bash
-export OPENAI_API_KEY="your-openai-key"
-export OPENAI_MODEL="gpt-4o-mini"  # Optional: default model
+api_keys:
+  unsplash: "${UNSPLASH_ACCESS_KEY}"
 ```
 
-#### Google Gemini
-```bash
-export GEMINI_API_KEY="your-gemini-key"
-export GEMINI_MODEL="gemini-1.5-flash"  # Optional: default model
+#### Text-Based Images
+```yaml
+providers:
+  images:
+    provider: text
 ```
 
-#### Anthropic Claude
-```bash
-export ANTHROPIC_API_KEY="your-claude-key"
-export CLAUDE_MODEL="claude-3-5-sonnet-20241022"  # Optional: default model
+Always available as a fallback. Creates clean, professional text-based slides.
+
+### Text-to-Speech Providers
+
+#### ElevenLabs (Premium)
+```yaml
+providers:
+  tts:
+    provider: elevenlabs
+    voice: rachel  # or adam, aria, etc.
+
+api_keys:
+  elevenlabs: "${ELEVENLABS_API_KEY}"
 ```
 
-#### Groq
-```bash
-export GROQ_API_KEY="your-groq-key"
-export GROQ_MODEL="llama-3.1-8b-instant"  # Optional: default model
+**Available Voices:**
+- `rachel`: Professional female voice
+- `adam`: Clear male voice
+- `aria`: Expressive female voice
+- `josh`: Warm male voice
+- And 900+ more voices
+
+#### OpenAI TTS
+```yaml
+providers:
+  tts:
+    provider: openai
+    voice: nova  # alloy, echo, fable, nova, onyx, shimmer
+
+api_keys:
+  openai: "${OPENAI_API_KEY}"
 ```
 
-#### Ollama (Local)
-```bash
-export OLLAMA_BASE_URL="http://localhost:11434"
-export OLLAMA_MODEL="llama3.2"  # Optional: default model
+#### Google TTS (Free)
+```yaml
+providers:
+  tts:
+    provider: gtts
 ```
 
-### AI Enhancement Features
+Always available, no API key required.
 
-When using AI providers, SlideStream:
+### LLM Providers
 
-1. **Improves Speech**: Converts bullet points into natural, flowing narration
-2. **Enhances Search**: Generates better image search queries for Unsplash
-3. **Uses Speaker Notes**: For PowerPoint files, incorporates speaker notes into narration
-4. **Maintains Context**: Ensures coherent presentation flow
+#### Content Enhancement
 
-## Image Sources
+LLMs improve your slide content by:
+- Making bullet points flow naturally
+- Creating engaging narratives
+- Improving clarity and structure
+- Generating better image search queries
 
-### Unsplash (Default)
-- **Pros**: High-quality, professional stock photos
-- **Cons**: Requires internet connection
-- **Usage**: Automatic image search based on slide content
-
-```bash
-slide-stream -i slides.md -o video.mp4 --image-source unsplash
+**OpenAI GPT:**
+```yaml
+providers:
+  llm:
+    provider: openai
+    model: gpt-4o-mini  # or gpt-4o for higher quality
 ```
 
-### Text-Only
-- **Pros**: No internet required, fast processing
-- **Cons**: Less visually appealing
-- **Usage**: Creates text-based slides with title and bullet points
-
-```bash
-slide-stream -i slides.md -o video.mp4 --image-source text
+**Google Gemini:**
+```yaml
+providers:
+  llm:
+    provider: gemini
+    model: gemini-1.5-flash
 ```
 
-## Workflow Examples
-
-### 1. Simple Markdown Presentation
-
-**Input**: `simple.md`
-```markdown
-# Introduction
-- Welcome to our company
-- Today's agenda
-- Questions at the end
-
-# Our Services
-- Web development
-- Mobile applications
-- Cloud solutions
-
-# Contact Us
-- email@company.com
-- +1-555-0123
-- Thank you for your time
+**Anthropic Claude:**
+```yaml
+providers:
+  llm:
+    provider: claude
+    model: claude-3-5-sonnet-20241022
 ```
 
-**Command**:
-```bash
-slide-stream -i simple.md -o company-intro.mp4 --image-source text
-```
+## Advanced Workflows
 
-### 2. AI-Enhanced Presentation
+### Multi-Configuration Workflow
 
-**Input**: `pitch.md`
-```markdown
-# Product Launch
-- Revolutionary new app
-- Solves major industry problem
-- Ready for market
-
-# Market Opportunity
-- $10B market size
-- Growing 15% annually
-- Underserved segment
-
-# Our Solution
-- Innovative technology
-- User-friendly design
-- Competitive pricing
-```
-
-**Setup**:
-```bash
-export OPENAI_API_KEY="your-key-here"
-```
-
-**Command**:
-```bash
-slide-stream -i pitch.md -o pitch-presentation.mp4 \
-  --llm-provider openai \
-  --image-source unsplash
-```
-
-### 3. PowerPoint with Speaker Notes
-
-**Input**: `presentation.pptx` (with speaker notes)
-
-**Command**:
-```bash
-slide-stream -i presentation.pptx -o enhanced-video.mp4 \
-  --llm-provider openai \
-  --image-source unsplash
-```
-
-**What happens**:
-- Extracts slide content and speaker notes
-- AI uses speaker notes to create natural narration
-- Finds relevant images for each slide
-- Generates professional video output
-
-### 4. Batch Processing
-
-Process multiple files:
+Create different configurations for different scenarios:
 
 ```bash
-# Process all markdown files in directory
+# Quick prototype with free services
+slide-stream create --config basic.yaml draft.md prototype.mp4
+
+# High-quality final version
+slide-stream create --config premium.yaml final.md presentation.mp4
+
+# Client-specific branding
+slide-stream create --config client-brand.yaml proposal.md client-video.mp4
+```
+
+### Batch Processing
+
+Process multiple presentations:
+
+```bash
+# Create multiple videos
 for file in *.md; do
-  slide-stream -i "$file" -o "${file%.md}.mp4" --image-source text
-done
-
-# Process with AI enhancement
-for file in *.pptx; do
-  slide-stream -i "$file" -o "${file%.pptx}-video.mp4" \
-    --llm-provider openai --image-source unsplash
+    output="${file%.md}.mp4"
+    slide-stream create "$file" "$output"
 done
 ```
 
-## Advanced Usage
+### Custom Video Settings
 
-### Custom Model Selection
+Fine-tune video output:
 
-Different models offer different capabilities:
+```yaml
+settings:
+  video:
+    resolution: [1920, 1080]  # 4K: [3840, 2160]
+    fps: 30                   # Smooth playback
+    codec: libx264            # Compatibility
+    audio_codec: aac
+    slide_duration_padding: 2.0  # More time per slide
+    default_slide_duration: 8.0
 
-```bash
-# Fast, cost-effective
-slide-stream -i slides.md -o video.mp4 \
-  --llm-provider openai --llm-model gpt-4o-mini
-
-# High-quality, more expensive
-slide-stream -i slides.md -o video.mp4 \
-  --llm-provider openai --llm-model gpt-4o
-
-# Ultra-fast inference with Groq
-slide-stream -i slides.md -o video.mp4 \
-  --llm-provider groq --llm-model llama-3.1-8b-instant
+  image:
+    bg_color: "#1a1a1a"      # Dark theme
+    font_color: "#ffffff"
+    title_font_size: 120
+    content_font_size: 80
 ```
 
-### Local AI with Ollama
+### Integration with CI/CD
 
-Run AI models locally for privacy:
+Automate presentation generation:
 
-1. **Install Ollama**: [Follow Ollama installation guide](https://ollama.ai)
+```yaml
+# .github/workflows/presentations.yml
+name: Generate Presentations
+on:
+  push:
+    paths: ['presentations/*.md']
 
-2. **Pull a model**:
-```bash
-ollama pull llama3.2
-```
-
-3. **Use with SlideStream**:
-```bash
-slide-stream -i slides.md -o video.mp4 \
-  --llm-provider ollama --llm-model llama3.2
-```
-
-### Environment Configuration File
-
-Create `.env` file in your project:
-```bash
-# .env file
-OPENAI_API_KEY=your-key-here
-OPENAI_MODEL=gpt-4o-mini
-GEMINI_API_KEY=your-gemini-key
-ANTHROPIC_API_KEY=your-claude-key
-```
-
-Load before running:
-```bash
-source .env
-slide-stream -i slides.md -o video.mp4 --llm-provider openai
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install SlideStream
+        run: pip install slide-stream[all-ai]
+      
+      - name: Generate Videos
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+        run: |
+          slide-stream create presentations/quarterly-review.md output/q4-review.mp4
+          slide-stream create presentations/product-launch.md output/launch.mp4
 ```
 
 ## Troubleshooting
 
 ### Common Issues
 
-#### 1. "Input file not found"
+#### "Provider not available"
 ```bash
-# Error: Input file not found: slides.md
+slide-stream providers
 ```
-**Solution**: Check file path and ensure file exists
+Check which providers are available and their status.
+
+#### "API key not found"
+- Verify environment variables: `echo $OPENAI_API_KEY`
+- Check configuration file syntax
+- Ensure API keys are valid and have sufficient credits
+
+#### "FFmpeg not found"
+Install FFmpeg:
 ```bash
-ls -la slides.md  # Verify file exists
-slide-stream -i ./slides.md -o video.mp4  # Use explicit path
+# macOS
+brew install ffmpeg
+
+# Ubuntu/Debian
+sudo apt install ffmpeg
 ```
 
-#### 2. "Unsupported file type"
-```bash
-# Error: Unsupported file type: .txt. Supported: .md, .pptx
-```
-**Solution**: Use supported file formats (.md or .pptx)
+#### Video generation fails
+- Check disk space in temp directory
+- Verify input file format (.md or .pptx)
+- Try with `--config` to use specific configuration
 
-#### 3. "Error initializing LLM"
-```bash
-# Error initializing LLM: Missing API key
+#### Audio/video sync issues
+Adjust timing settings:
+```yaml
+settings:
+  video:
+    slide_duration_padding: 2.0  # More padding
+    default_slide_duration: 6.0  # Longer default
 ```
-**Solution**: Set environment variable for your AI provider
-```bash
-export OPENAI_API_KEY="your-key-here"
-```
-
-#### 4. "No slides found"
-```bash
-# No slides found in the .md file. Exiting.
-```
-**Solution**: Ensure your Markdown uses `# Header` for slide titles
-```markdown
-# Slide Title  ← This creates a slide
-- Content here
-
-## Subtitle   ← This does NOT create a slide
-```
-
-#### 5. FFmpeg Issues
-```bash
-# Error: FFmpeg not found
-```
-**Solution**: Install FFmpeg (see Installation section)
-
-#### 6. Network/Image Issues
-```bash
-# Error downloading image from Unsplash
-```
-**Solution**: Use text-only images or check internet connection
-```bash
-slide-stream -i slides.md -o video.mp4 --image-source text
-```
-
-### Performance Tips
-
-#### 1. Use Text Images for Testing
-```bash
-# Fast processing, no network calls
-slide-stream -i slides.md -o video.mp4 --image-source text
-```
-
-#### 2. Choose Appropriate AI Models
-```bash
-# Fast and cost-effective
---llm-provider openai --llm-model gpt-4o-mini
-
-# Local processing (no API costs)
---llm-provider ollama --llm-model llama3.2
-```
-
-#### 3. Optimize PowerPoint Files
-- Keep slide content concise
-- Use clear, descriptive speaker notes
-- Avoid complex layouts
 
 ### Debug Mode
 
-For detailed output, check the console during processing:
-- Green messages: Success
-- Yellow messages: Warnings
-- Red messages: Errors
+For detailed error information:
 
-## Tips & Best Practices
+```bash
+PYTHONPATH=. python -m slide_stream.cli create --help
+```
+
+### Provider Status
+
+Check what's working:
+
+```bash
+slide-stream providers
+```
+
+Output shows each provider's availability and requirements.
+
+## Best Practices
 
 ### Content Creation
 
-#### Markdown Best Practices
+**Markdown Structure:**
 ```markdown
 # Clear, Descriptive Titles
-- Keep bullet points concise
-- Use parallel structure
+
+- Use bullet points for key ideas
+- Keep points concise and focused
 - Aim for 3-5 points per slide
 
-# Avoid
-- Really long bullet points that go on and on and become difficult to read
-- Too many nested levels
-- Complex formatting
+# Logical Flow
+
+- Structure your presentation logically
+- Use consistent formatting
+- Include call-to-action slides
 ```
 
-#### PowerPoint Best Practices
-- **Speaker Notes**: Add detailed speaker notes for better AI narration
-- **Simple Layouts**: Use standard layouts (Title + Content works best)
-- **Clear Text**: Ensure text is extractable (avoid text in images)
+**PowerPoint Tips:**
+- Use speaker notes for detailed explanations
+- Keep slide content brief
+- Use consistent layouts
+- Include relevant images in slides
 
-### AI Enhancement Tips
+### Configuration Management
 
-#### 1. Content Quality
-- Clear, descriptive slide titles help AI find better images
-- Detailed speaker notes result in better narration
-- Consistent terminology improves coherence
-
-#### 2. Model Selection
-- **gpt-4o-mini**: Fast, cost-effective, good quality
-- **gpt-4o**: Highest quality, more expensive
-- **gemini-1.5-flash**: Good balance, competitive pricing
-- **claude-3-5-sonnet**: Excellent for creative content
-- **groq models**: Ultra-fast inference
-
-#### 3. Image Search Optimization
-```markdown
-# Good: Specific, descriptive
-# "Modern Office Workspace"
-# "Data Analytics Dashboard"
-# "Team Collaboration Meeting"
-
-# Poor: Generic, vague
-# "Business"
-# "Technology"
-# "People"
-```
-
-### Workflow Optimization
-
-#### 1. Development Workflow
+**Environment Variables:**
 ```bash
-# 1. Create content with text images (fast)
-slide-stream -i draft.md -o preview.mp4 --image-source text
-
-# 2. Review and refine content
-
-# 3. Generate final version with AI and images
-slide-stream -i final.md -o presentation.mp4 \
-  --llm-provider openai --image-source unsplash
+# .env file (don't commit to git)
+OPENAI_API_KEY=sk-...
+ELEVENLABS_API_KEY=...
+PEXELS_API_KEY=...
 ```
 
-#### 2. Team Workflow
-```bash
-# Content creators use PowerPoint with speaker notes
-# Developers convert to video
-slide-stream -i team-presentation.pptx -o final-video.mp4 \
-  --llm-provider openai --image-source unsplash
+**Version Control:**
+- Commit configuration files
+- Use environment variables for secrets
+- Create different configs for different environments
+
+### Performance Optimization
+
+**Fast Generation:**
+```yaml
+providers:
+  llm:
+    provider: groq  # Fastest inference
+    model: llama-3.1-8b-instant
+  images:
+    provider: text  # No API calls
+  tts:
+    provider: gtts  # Free and fast
 ```
 
-#### 3. Production Workflow
-```bash
-# Automated processing
-#!/bin/bash
-for presentation in presentations/*.pptx; do
-  output="videos/$(basename "$presentation" .pptx).mp4"
-  slide-stream -i "$presentation" -o "$output" \
-    --llm-provider openai --image-source unsplash
-done
+**High Quality:**
+```yaml
+providers:
+  llm:
+    provider: openai
+    model: gpt-4o  # Best quality
+  images:
+    provider: dalle3
+  tts:
+    provider: elevenlabs
+    voice: rachel
 ```
 
-### Quality Considerations
+### Cost Management
 
-#### Video Output
-- **Resolution**: 1920x1080 (Full HD)
-- **Frame Rate**: 24 fps
-- **Codec**: H.264 (MP4)
-- **Audio**: AAC compression
+**Monitor Usage:**
+- OpenAI: Check usage dashboard
+- ElevenLabs: Monitor character usage
+- Set usage alerts
 
-#### Duration
-- Each slide duration is based on text-to-speech narration length
-- Longer, more detailed content = longer slides
-- Typical: 30-60 seconds per slide
+**Optimize Costs:**
+- Use text images for drafts
+- Switch to premium providers for final versions
+- Batch process multiple presentations
 
-#### File Sizes
-- Text images: ~5-10 MB per minute
-- Unsplash images: ~20-50 MB per minute
-- Depends on slide count and image complexity
+### Quality Guidelines
+
+**For Professional Presentations:**
+- Use DALL-E 3 or stock photos for images
+- Use ElevenLabs or OpenAI TTS for voices
+- Enable LLM content enhancement
+- Use higher resolution (1920x1080 or 4K)
+
+**For Internal/Draft Use:**
+- Text-based images are sufficient
+- gTTS provides adequate quality
+- Disable LLM enhancement for speed
+
+### Security Best Practices
+
+- Never commit API keys to version control
+- Use environment variables or secure vaults
+- Rotate API keys regularly
+- Monitor API usage for unusual activity
+- Use least-privilege API permissions
 
 ---
 
-## Need Help?
-
-- **Issues**: [GitHub Issues](https://github.com/michael-borck/slide-stream/issues)
-- **Documentation**: [Project README](../README.md)
-- **Type Safety**: [Type Safety Documentation](TYPE_SAFETY.md)
-
-Happy presenting! 🎬✨
+This guide covers the essential workflows for SlideStream 2.0. For development setup and contributing, see [DEVELOPMENT_WORKFLOW.md](DEVELOPMENT_WORKFLOW.md).
