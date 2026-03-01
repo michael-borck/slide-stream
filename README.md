@@ -1,5 +1,9 @@
 # Slide Stream 2.0
 
+<!-- BADGES:START -->
+[![ai](https://img.shields.io/badge/-ai-ff6f00?style=flat-square)](https://github.com/topics/ai) [![cli-tool](https://img.shields.io/badge/-cli--tool-blue?style=flat-square)](https://github.com/topics/cli-tool) [![markdown-to-video](https://img.shields.io/badge/-markdown--to--video-blue?style=flat-square)](https://github.com/topics/markdown-to-video) [![natural-language-processing](https://img.shields.io/badge/-natural--language--processing-blue?style=flat-square)](https://github.com/topics/natural-language-processing) [![python](https://img.shields.io/badge/-python-3776ab?style=flat-square)](https://github.com/topics/python) [![text-to-speech](https://img.shields.io/badge/-text--to--speech-blue?style=flat-square)](https://github.com/topics/text-to-speech) [![video-creation](https://img.shields.io/badge/-video--creation-blue?style=flat-square)](https://github.com/topics/video-creation) [![image-sourcing](https://img.shields.io/badge/-image--sourcing-blue?style=flat-square)](https://github.com/topics/image-sourcing) [![powerpoint-to-video](https://img.shields.io/badge/-powerpoint--to--video-blue?style=flat-square)](https://github.com/topics/powerpoint-to-video) [![presentation-automation](https://img.shields.io/badge/-presentation--automation-blue?style=flat-square)](https://github.com/topics/presentation-automation)
+<!-- BADGES:END -->
+
 🎬 **Professional AI-powered video presentations from Markdown and PowerPoint files.**
 
 [![PyPI version](https://badge.fury.io/py/slide-stream.svg)](https://badge.fury.io/py/slide-stream)
