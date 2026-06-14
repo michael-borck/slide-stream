@@ -1,6 +1,5 @@
 """Command line interface for Slide Stream."""
 
-import time
 from pathlib import Path
 from typing import Annotated
 
@@ -214,7 +213,6 @@ def create(
                 video_fragments.append(fragment_file)
 
             progress.update(process_task, advance=1)
-            time.sleep(0.1)  # Small delay for smoother progress bar updates
 
     # Combine video fragments
     console.print("\n[bold]2. Combining Video Fragments...[/bold]")
