@@ -1,5 +1,9 @@
 """Tests for the CLI interface."""
 
+# python-pptx ships incomplete type stubs; the PowerPoint fixture below builds
+# a .pptx file via the runtime API, so suppress the stub-gap diagnostics here.
+# pyright: reportArgumentType=false, reportAttributeAccessIssue=false, reportOptionalMemberAccess=false
+
 import tempfile
 from pathlib import Path
 
@@ -35,21 +39,21 @@ def sample_markdown():
 def sample_powerpoint():
     """Create sample PowerPoint file."""
     temp_file = Path(tempfile.mktemp(suffix=".pptx"))
-    
+
     # Create a presentation
     prs = Presentation()
     slide = prs.slides.add_slide(prs.slide_layouts[1])  # Title and Content layout
-    
+
     title = slide.shapes.title
     title.text = "Test PowerPoint Slide"
-    
+
     content = slide.placeholders[1]
     content.text = "First bullet point\nSecond bullet point"
-    
+
     # Add speaker notes
     notes_slide = slide.notes_slide
     notes_slide.notes_text_frame.text = "These are test speaker notes."
-    
+
     prs.save(temp_file)
     return temp_file
 
@@ -80,15 +84,15 @@ def test_cli_create_basic(runner, sample_markdown):
     with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as f:
         f.write(sample_markdown)
         f.flush()
-        
+
         # Test with new CLI format
         result = runner.invoke(app, [
             "create", f.name, "test_output.mp4"
         ])
-        
+
         # Should not crash during parsing phase
         assert "Parsing Markdown" in result.stdout or result.exit_code == 0
-        
+
         # Clean up
         Path(f.name).unlink(missing_ok=True)
         Path("test_output.mp4").unlink(missing_ok=True)
@@ -101,13 +105,13 @@ def test_cli_create_powerpoint(runner, sample_powerpoint):
         result = runner.invoke(app, [
             "create", str(sample_powerpoint), "test_pptx_output.mp4"
         ])
-        
+
         # Should not crash during parsing phase
         assert "Parsing PowerPoint" in result.stdout or result.exit_code == 0
-        
+
         # Clean up
         Path("test_pptx_output.mp4").unlink(missing_ok=True)
-        
+
     finally:
         sample_powerpoint.unlink(missing_ok=True)
 
@@ -117,14 +121,14 @@ def test_cli_unsupported_file_type(runner):
     with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
         f.write("Some text content")
         f.flush()
-        
+
         result = runner.invoke(app, [
             "create", f.name, "test_output.mp4"
         ])
-        
+
         assert result.exit_code != 0
         assert "Unsupported file type" in result.stdout
-        
+
         # Clean up
         Path(f.name).unlink(missing_ok=True)
 
@@ -134,6 +138,6 @@ def test_cli_nonexistent_file(runner):
     result = runner.invoke(app, [
         "create", "nonexistent.md", "test_output.mp4"
     ])
-    
+
     assert result.exit_code != 0
     assert "Input file not found" in result.stdout

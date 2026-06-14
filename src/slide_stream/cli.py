@@ -2,7 +2,7 @@
 
 import time
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from moviepy import VideoFileClip, concatenate_videoclips
@@ -58,7 +58,7 @@ def create(
         ),
     ],
     config_file: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--config",
             "-c",
@@ -82,7 +82,7 @@ def create(
             border_style="green",
         )
     )
-    
+
     # Load configuration
     try:
         config = load_config(config_file)
@@ -94,7 +94,7 @@ def create(
     if not input_path.exists():
         err_console.print(f"Input file not found: {input_path}")
         raise typer.Exit(code=1)
-    
+
     # Determine file type and validate
     file_extension = input_path.suffix.lower()
     if file_extension not in [".md", ".pptx"]:
@@ -104,7 +104,7 @@ def create(
     # Setup temporary directory
     temp_dir = Path(config["settings"]["temp_dir"])
     temp_dir.mkdir(exist_ok=True)
-    
+
     # Initialize providers
     image_provider = ProviderFactory.create_image_provider(config)
     tts_provider = ProviderFactory.create_tts_provider(config)
@@ -113,7 +113,7 @@ def create(
     llm_client = None
     llm_provider_name = config["providers"]["llm"]["provider"]
     llm_model = config["providers"]["llm"]["model"]
-    
+
     if llm_provider_name != "none":
         try:
             llm_client = get_llm_client(llm_provider_name)
@@ -127,7 +127,7 @@ def create(
     # Parse the input file
     if file_extension == ".md":
         console.print("\n[bold]1. Parsing Markdown...[/bold]")
-        with open(input_path, 'r', encoding='utf-8') as f:
+        with open(input_path, encoding='utf-8') as f:
             markdown_input = f.read()
         if not markdown_input.strip():
             err_console.print("Markdown file is empty. Exiting.")
@@ -140,7 +140,7 @@ def create(
         except ValueError as e:
             err_console.print(f"Error parsing PowerPoint: {e}")
             raise typer.Exit(code=1)
-    
+
     if not slides:
         err_console.print(f"No slides found in the {file_extension} file. Exiting.")
         raise typer.Exit(code=1)
@@ -171,7 +171,7 @@ def create(
                 raw_text = f"Title: {slide['title']}. Content: {' '.join(slide['content'])}"
             else:  # .pptx
                 raw_text = format_powerpoint_content_for_llm(slide)
-            
+
             speech_text = raw_text
             search_query = slide["title"]
 
@@ -222,7 +222,7 @@ def create(
         try:
             clips = [VideoFileClip(f) for f in video_fragments]
             final_clip = concatenate_videoclips(clips)
-            
+
             video_settings = config["settings"]["video"]
             final_clip.write_videofile(
                 output_filename,
@@ -284,39 +284,39 @@ def providers() -> None:
         config = load_config()
     except ConfigurationError:
         config = {}
-    
+
     availability = ProviderFactory.check_provider_availability(config)
-    
+
     console.print("\n[bold cyan]📋 Available Providers[/bold cyan]\n")
-    
+
     # Image providers
     console.print("[bold]🖼️  Image Providers[/bold]")
     table = Table()
     table.add_column("Provider", style="cyan")
     table.add_column("Status", style="green")
     table.add_column("Description")
-    
+
     image_providers = ProviderFactory.list_image_providers()
     for name, description in image_providers.items():
         status = "✅ Available" if availability.get("images", {}).get(name, False) else "❌ Unavailable"
         table.add_row(name, status, description)
-    
+
     console.print(table)
-    
+
     # TTS providers
     console.print("\n[bold]🎙️  Text-to-Speech Providers[/bold]")
     table = Table()
     table.add_column("Provider", style="cyan")
     table.add_column("Status", style="green")
     table.add_column("Description")
-    
+
     tts_providers = ProviderFactory.list_tts_providers()
     for name, description in tts_providers.items():
         status = "✅ Available" if availability.get("tts", {}).get(name, False) else "❌ Unavailable"
         table.add_row(name, status, description)
-    
+
     console.print(table)
-    
+
     console.print("\n[dim]💡 Tip: Use 'slide-stream init' to create a configuration file[/dim]")
 
 

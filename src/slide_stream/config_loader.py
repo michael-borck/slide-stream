@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import yaml
 from rich.console import Console
@@ -66,7 +66,7 @@ def expand_env_vars(value: Any) -> Any:
     return value
 
 
-def find_config_file() -> Optional[Path]:
+def find_config_file() -> Path | None:
     """Find configuration file in standard locations."""
     possible_locations = [
         Path("./slidestream.yaml"),
@@ -74,30 +74,30 @@ def find_config_file() -> Optional[Path]:
         Path.home() / ".slidestream.yaml",
         Path.home() / ".slidestream.yml"
     ]
-    
+
     for location in possible_locations:
         if location.exists():
             return location
-    
+
     return None
 
 
-def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
+def load_config(config_path: str | None = None) -> dict[str, Any]:
     """Load configuration from file or return defaults."""
     config = DEFAULT_CONFIG.copy()
-    
+
     if config_path:
         config_file = Path(config_path)
         if not config_file.exists():
             raise ConfigurationError(f"Configuration file not found: {config_path}")
     else:
         config_file = find_config_file()
-    
+
     if config_file:
         try:
-            with open(config_file, 'r', encoding='utf-8') as f:
+            with open(config_file, encoding='utf-8') as f:
                 file_config = yaml.safe_load(f)
-            
+
             if file_config:
                 # Deep merge with defaults
                 config = merge_configs(config, file_config)
@@ -108,45 +108,45 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
             raise ConfigurationError(f"Error reading config file: {e}")
     else:
         console.print("📋 Using default configuration")
-    
+
     # Expand environment variables
     config = expand_env_vars(config)
-    
+
     # Validate configuration
     validate_config(config)
-    
+
     return config
 
 
-def merge_configs(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+def merge_configs(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """Deep merge two configuration dictionaries."""
     result = base.copy()
-    
+
     for key, value in override.items():
         if key in result and isinstance(result[key], dict) and isinstance(value, dict):
             result[key] = merge_configs(result[key], value)
         else:
             result[key] = value
-    
+
     return result
 
 
-def validate_config(config: Dict[str, Any]) -> None:
+def validate_config(config: dict[str, Any]) -> None:
     """Validate configuration structure and required values."""
     required_sections = ["providers", "settings"]
-    
+
     for section in required_sections:
         if section not in config:
             raise ConfigurationError(f"Missing required section: {section}")
-    
+
     # Validate providers section
     providers = config["providers"]
     required_providers = ["llm", "images", "tts"]
-    
+
     for provider_type in required_providers:
         if provider_type not in providers:
             raise ConfigurationError(f"Missing provider configuration: {provider_type}")
-    
+
     # Validate video settings
     video_settings = config["settings"]["video"]
     if not isinstance(video_settings["resolution"], list) or len(video_settings["resolution"]) != 2:
@@ -161,11 +161,11 @@ providers:
   llm:
     provider: openai        # none, openai, gemini, claude, groq, ollama
     model: gpt-4o-mini     # optional: specific model to use
-    
+
   images:
     provider: dalle3        # text, dalle3, pexels, unsplash, stable-diffusion
     fallback: text         # fallback when primary fails
-    
+
   tts:
     provider: elevenlabs   # gtts, elevenlabs, openai, azure, polly
     voice: rachel          # voice ID/name (provider-specific)
@@ -185,7 +185,7 @@ settings:
     audio_codec: aac
     slide_duration_padding: 1.0
     default_slide_duration: 5.0
-    
+
   image:
     download_timeout: 15
     bg_color: black
@@ -193,7 +193,7 @@ settings:
     content_font_size: 60
     font_color: white
     max_line_width: 50
-    
+
   temp_dir: temp_files
   cleanup: true
 """

@@ -23,7 +23,7 @@ def create_video_fragment(
     try:
         # Get settings from config
         video_settings = config["settings"]["video"]
-        
+
         # Load audio if it exists
         audio_clip = None
         if audio_path and os.path.exists(audio_path):
@@ -56,7 +56,7 @@ def create_video_fragment(
             duration=duration,
         )
         image_clip = CompositeVideoClip(
-            [background, image_clip.with_position("center")],
+            [background, image_clip.with_position("center")],  # type: ignore[attr-defined]
             size=(width, height),
         ).with_duration(duration)
 
@@ -68,9 +68,9 @@ def create_video_fragment(
 
         # Write video file
         final_clip.write_videofile(
-            output_path, 
-            fps=video_settings["fps"], 
-            codec=video_settings["codec"], 
+            output_path,
+            fps=video_settings["fps"],
+            codec=video_settings["codec"],
             logger=None
         )
 

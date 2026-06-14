@@ -1,6 +1,5 @@
 """Tests for the markdown parser."""
 
-import pytest
 
 from slide_stream.parser import parse_markdown
 
@@ -17,9 +16,9 @@ def test_parse_markdown_basic():
 - Another point
 - Final point
 """
-    
+
     slides = parse_markdown(markdown_text)
-    
+
     assert len(slides) == 2
     assert slides[0]["title"] == "First Slide"
     assert slides[0]["content"] == ["Point 1", "Point 2"]
@@ -43,9 +42,9 @@ Some paragraph text.
 
 More text here.
 """
-    
+
     slides = parse_markdown(markdown_text)
-    
+
     assert len(slides) == 2
     assert slides[0]["title"] == "Title Only"
     assert slides[0]["content"] == ["Some paragraph text."]
@@ -66,9 +65,9 @@ This is a paragraph.
 
 Another paragraph.
 """
-    
+
     slides = parse_markdown(markdown_text)
-    
+
     assert len(slides) == 2
     assert slides[0]["title"] == "First Slide"
     # The parser prioritizes lists over paragraphs when both are present
