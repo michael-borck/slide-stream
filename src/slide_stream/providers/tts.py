@@ -39,47 +39,65 @@ class GTTSProvider(TTSProvider):
 
 class ElevenLabsTTSProvider(TTSProvider):
     """ElevenLabs premium text-to-speech provider."""
-    
+
+    # Voice IDs for the common built-in voices, so users can configure a
+    # familiar name instead of an opaque ID. Anything not listed here is
+    # passed through to the API as a voice_id verbatim.
+    VOICE_IDS = {
+        "rachel": "21m00Tcm4TlvDq8ikWAM",
+        "drew": "29vD33N1CtxCmqQRPOHJ",
+        "clyde": "2EiwWnXFnvU5JabPnv8n",
+        "domi": "AZnzlk1XvdvUeBnXmlld",
+        "dave": "CYw3kZ02Hs0563khs1Fj",
+        "bella": "EXAVITQu4vr4xnSDxMaL",
+        "antoni": "ErXwobaYiN019PkySvjV",
+        "josh": "TxGEqnHWrfWFTfGW9XjX",
+        "arnold": "VR6AewLTigWG4xSOukaG",
+        "adam": "pNInz6obpgDQGcFmaJgB",
+        "sam": "yoZ06aMxZJJ28mfd3POQ",
+    }
+
     @property
     def name(self) -> str:
         return "elevenlabs"
-    
+
     def is_available(self) -> bool:
         """Check if ElevenLabs API key is available."""
         api_keys = self.config.get("api_keys", {})
         elevenlabs_key = api_keys.get("elevenlabs") or os.getenv("ELEVENLABS_API_KEY")
         return bool(elevenlabs_key)
-    
+
     def synthesize(self, text: str, filename: str) -> Optional[str]:
         """Convert text to speech using ElevenLabs."""
         try:
-            from elevenlabs import generate, save
-            
+            from elevenlabs import save
+            from elevenlabs.client import ElevenLabs
+
             api_keys = self.config.get("api_keys", {})
             api_key = api_keys.get("elevenlabs") or os.getenv("ELEVENLABS_API_KEY")
-            
+
             if not api_key:
                 raise ValueError("ElevenLabs API key not found")
-            
-            # Set API key
-            os.environ["ELEVENLABS_API_KEY"] = api_key
-            
-            # Get voice from config
+
+            client = ElevenLabs(api_key=api_key)
+
+            # Get voice from config and resolve a friendly name to its ID.
             tts_config = self.config.get("providers", {}).get("tts", {})
-            voice = tts_config.get("voice", "Rachel")  # Default to Rachel
-            
-            # Generate audio
-            audio = generate(
+            voice = tts_config.get("voice") or "Rachel"  # Default to Rachel
+            voice_id = self.VOICE_IDS.get(voice.lower(), voice)
+
+            # Generate audio (1.x+ client API)
+            audio = client.text_to_speech.convert(
+                voice_id=voice_id,
                 text=text,
-                voice=voice,
-                model="eleven_monolingual_v1"
+                model_id="eleven_multilingual_v2",
             )
-            
+
             # Save to file
             save(audio, filename)
             console.print(f"  - Generated audio with ElevenLabs ({voice})")
             return filename
-            
+
         except ImportError:
             err_console.print("  - ElevenLabs library not installed. Install with: pip install elevenlabs")
             return self._fallback_to_gtts(text, filename)
