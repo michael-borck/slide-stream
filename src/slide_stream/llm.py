@@ -8,8 +8,13 @@ from rich.console import Console
 err_console = Console(stderr=True, style="bold red")
 
 
-def get_llm_client(provider: str) -> Any:
-    """Get LLM client based on provider."""
+def get_llm_client(provider: str, base_url: str | None = None) -> Any:
+    """Get LLM client based on provider.
+
+    For ``openai-compatible``, ``base_url`` selects the backend (a local
+    server such as LocalAI/vLLM/llama.cpp, or any hosted OpenAI-compatible
+    API). Falls back to the ``OPENAI_BASE_URL`` env var when not given.
+    """
     if provider == "gemini":
         try:
             import google.generativeai as genai  # type: ignore[import-untyped]
@@ -76,6 +81,25 @@ def get_llm_client(provider: str) -> Any:
                 "OpenAI library not found. Please install with: pip install slide-stream[openai]"
             )
 
+    elif provider == "openai-compatible":
+        try:
+            from openai import OpenAI
+
+            resolved_base_url = base_url or os.getenv("OPENAI_BASE_URL")
+            if not resolved_base_url:
+                raise ValueError(
+                    "openai-compatible LLM requires a base_url (config "
+                    "providers.llm.base_url or the OPENAI_BASE_URL env var)."
+                )
+            # Local servers usually ignore the key; send a placeholder so the
+            # client constructs cleanly.
+            api_key = os.getenv("OPENAI_API_KEY", "not-needed")
+            return OpenAI(base_url=resolved_base_url, api_key=api_key)
+        except ImportError:
+            raise ImportError(
+                "OpenAI library not found. Please install with: pip install slide-stream[openai]"
+            )
+
     else:
         raise ValueError(f"Unknown LLM provider: {provider}")
 
@@ -103,7 +127,7 @@ def query_llm(
                 response = client.generate_content(prompt_text)
             return response.text
 
-        elif provider in ["openai", "ollama"]:
+        elif provider in ["openai", "ollama", "openai-compatible"]:
             # Use provided model or fallback to environment variable or default
             if model:
                 selected_model = model
@@ -111,10 +135,12 @@ def query_llm(
                 selected_model = os.getenv(
                     "OPENAI_MODEL", "gpt-4o-mini"
                 )  # Updated default
-            else:  # ollama
+            elif provider == "ollama":
                 selected_model = os.getenv(
                     "OLLAMA_MODEL", "llama3.2"
                 )  # Updated default
+            else:  # openai-compatible
+                selected_model = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
 
             response = client.chat.completions.create(
                 model=selected_model,

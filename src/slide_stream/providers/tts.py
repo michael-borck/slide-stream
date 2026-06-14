@@ -110,6 +110,75 @@ class ElevenLabsTTSProvider(TTSProvider):
         return gtts_provider.synthesize(text, filename)
 
 
+class OpenAICompatTTSProvider(TTSProvider):
+    """Text-to-speech via any OpenAI-compatible /v1/audio/speech endpoint.
+
+    Works against a local server (LocalAI, openedai-speech, Kokoro-FastAPI,
+    ...) or a hosted one. The backend is chosen entirely by ``base_url`` in
+    config, so no vendor-specific SDK or code path is needed. Local servers
+    usually need no API key.
+    """
+
+    @property
+    def name(self) -> str:
+        return "openai-compatible"
+
+    def _base_url(self) -> str | None:
+        tts_config = self.config.get("providers", {}).get("tts", {})
+        return tts_config.get("base_url") or os.getenv("OPENAI_BASE_URL")
+
+    def is_available(self) -> bool:
+        """Available when a base_url is configured, or an OpenAI key exists."""
+        api_keys = self.config.get("api_keys", {})
+        has_key = bool(api_keys.get("openai") or os.getenv("OPENAI_API_KEY"))
+        return bool(self._base_url()) or has_key
+
+    def synthesize(self, text: str, filename: str) -> str | None:
+        """Convert text to speech via an OpenAI-compatible endpoint."""
+        try:
+            from openai import OpenAI
+
+            api_keys = self.config.get("api_keys", {})
+            tts_config = self.config.get("providers", {}).get("tts", {})
+
+            base_url = self._base_url()
+            # Local servers typically ignore the key; send a placeholder so the
+            # SDK doesn't refuse to construct a client.
+            api_key = (
+                tts_config.get("api_key")
+                or api_keys.get("openai")
+                or os.getenv("OPENAI_API_KEY")
+                or "not-needed"
+            )
+            model = tts_config.get("model") or "tts-1"
+            voice = tts_config.get("voice") or "alloy"
+
+            client = OpenAI(base_url=base_url, api_key=api_key)
+
+            response = client.audio.speech.create(
+                model=model,
+                voice=voice,
+                input=text,
+            )
+            response.write_to_file(filename)
+            console.print(
+                f"  - Generated audio with OpenAI-compatible endpoint ({voice})"
+            )
+            return filename
+
+        except ImportError:
+            err_console.print("  - OpenAI library not installed. Install with: pip install openai")
+            return self._fallback_to_gtts(text, filename)
+        except Exception as e:
+            err_console.print(f"  - OpenAI-compatible TTS error: {e}. Using gTTS fallback.")
+            return self._fallback_to_gtts(text, filename)
+
+    def _fallback_to_gtts(self, text: str, filename: str) -> str | None:
+        """Fallback to gTTS."""
+        gtts_provider = GTTSProvider(self.config)
+        return gtts_provider.synthesize(text, filename)
+
+
 class OpenAITTSProvider(TTSProvider):
     """OpenAI text-to-speech provider."""
 

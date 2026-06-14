@@ -1,5 +1,6 @@
 """Image provider implementations."""
 
+import base64
 import os
 import textwrap
 
@@ -270,6 +271,98 @@ class UnsplashImageProvider(ImageProvider):
 
         except Exception as e:
             err_console.print(f"  - Unsplash error: {e}. Using text fallback.")
+            return self._fallback_to_text(query, filename)
+
+    def _fallback_to_text(self, query: str, filename: str) -> str:
+        """Fallback to text image generation."""
+        text_provider = TextImageProvider(self.config)
+        return text_provider.generate_image(query, filename)
+
+
+class OpenAICompatImageProvider(ImageProvider):
+    """Image generation via any OpenAI-compatible /v1/images endpoint.
+
+    The backend is selected by ``base_url`` in config, so this works against a
+    local server (LocalAI, an Automatic1111 OpenAI shim, ...) or a hosted one
+    without vendor-specific code. Handles responses that return either a URL
+    or inline base64 (``b64_json``), since local servers commonly do the
+    latter. Falls back to a text image on any failure.
+    """
+
+    @property
+    def name(self) -> str:
+        return "openai-compatible"
+
+    def _settings(self) -> dict:
+        return self.config.get("providers", {}).get("images", {})
+
+    def _base_url(self) -> str | None:
+        return self._settings().get("base_url") or os.getenv("OPENAI_BASE_URL")
+
+    def is_available(self) -> bool:
+        """Available when a base_url is configured, or an OpenAI key exists."""
+        api_keys = self.config.get("api_keys", {})
+        has_key = bool(api_keys.get("openai") or os.getenv("OPENAI_API_KEY"))
+        return bool(self._base_url()) or has_key
+
+    def generate_image(self, query: str, filename: str) -> str:
+        """Generate an image via an OpenAI-compatible endpoint."""
+        try:
+            from openai import OpenAI
+
+            api_keys = self.config.get("api_keys", {})
+            settings = self._settings()
+
+            base_url = self._base_url()
+            api_key = (
+                settings.get("api_key")
+                or api_keys.get("openai")
+                or os.getenv("OPENAI_API_KEY")
+                or "not-needed"
+            )
+            model = settings.get("model") or "dall-e-3"
+            size = settings.get("size") or "1792x1024"
+            timeout = settings.get("download_timeout", 30)
+
+            client = OpenAI(base_url=base_url, api_key=api_key)
+
+            prompt = (
+                f"A professional, clean image for a presentation slide about: "
+                f"{query}. High quality, suitable for business presentation, "
+                f"no text overlay."
+            )
+            response = client.images.generate(
+                model=model,
+                prompt=prompt,
+                size=size,
+                n=1,
+            )
+
+            if not response.data:
+                raise ValueError("Endpoint returned no image data")
+
+            item = response.data[0]
+            b64 = getattr(item, "b64_json", None)
+            url = getattr(item, "url", None)
+            if b64:
+                with open(filename, "wb") as f:
+                    f.write(base64.b64decode(b64))
+            elif url:
+                img_response = requests.get(url, timeout=timeout)
+                img_response.raise_for_status()
+                with open(filename, "wb") as f:
+                    f.write(img_response.content)
+            else:
+                raise ValueError("Endpoint returned neither a URL nor b64_json")
+
+            console.print(f"  - Generated image via OpenAI-compatible endpoint: {query}")
+            return filename
+
+        except ImportError:
+            err_console.print("  - OpenAI library not installed. Install with: pip install openai")
+            return self._fallback_to_text(query, filename)
+        except Exception as e:
+            err_console.print(f"  - OpenAI-compatible image error: {e}. Using text fallback.")
             return self._fallback_to_text(query, filename)
 
     def _fallback_to_text(self, query: str, filename: str) -> str:

@@ -5,10 +5,15 @@ from PIL import Image
 
 from slide_stream.config_loader import DEFAULT_CONFIG
 from slide_stream.providers.factory import ProviderFactory
-from slide_stream.providers.images import DalleImageProvider, TextImageProvider
+from slide_stream.providers.images import (
+    DalleImageProvider,
+    OpenAICompatImageProvider,
+    TextImageProvider,
+)
 from slide_stream.providers.tts import (
     ElevenLabsTTSProvider,
     GTTSProvider,
+    OpenAICompatTTSProvider,
 )
 
 
@@ -196,3 +201,154 @@ def test_elevenlabs_falls_back_to_gtts_on_error(config, tmp_path, mocker):
 
     assert result == str(out)
     assert out.exists()
+
+
+# --- OpenAI-compatible providers (local / hosted, base_url driven) ----------
+
+
+def test_openai_compat_tts_available_with_base_url_no_key(config, monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    config["api_keys"] = {}
+    config["providers"]["tts"] = {"provider": "openai-compatible"}
+    assert OpenAICompatTTSProvider(config).is_available() is False
+
+    # A configured base_url alone makes it available (local servers need no key).
+    config["providers"]["tts"]["base_url"] = "http://localhost:8000/v1"
+    assert OpenAICompatTTSProvider(config).is_available() is True
+
+
+def test_factory_selects_openai_compat_tts(config):
+    config["providers"]["tts"] = {
+        "provider": "openai-compatible",
+        "base_url": "http://localhost:8000/v1",
+    }
+    provider = ProviderFactory.create_tts_provider(config)
+    assert isinstance(provider, OpenAICompatTTSProvider)
+
+
+def test_openai_compat_tts_writes_file(config, tmp_path, mocker):
+    out = tmp_path / "audio.mp3"
+    config["providers"]["tts"] = {
+        "provider": "openai-compatible",
+        "base_url": "http://localhost:8000/v1",
+        "voice": "en_US-amy",
+        "model": "tts-1",
+    }
+
+    def fake_write(filename):
+        with open(filename, "wb") as f:
+            f.write(b"local-audio")
+
+    fake_response = mocker.MagicMock()
+    fake_response.write_to_file.side_effect = fake_write
+    fake_client = mocker.MagicMock()
+    fake_client.audio.speech.create.return_value = fake_response
+    openai_ctor = mocker.patch("openai.OpenAI", return_value=fake_client)
+
+    result = OpenAICompatTTSProvider(config).synthesize("Hello", str(out))
+
+    assert result == str(out)
+    assert out.exists()
+    # base_url was forwarded to the SDK client.
+    assert openai_ctor.call_args.kwargs["base_url"] == "http://localhost:8000/v1"
+
+
+def test_openai_compat_tts_falls_back_to_gtts_on_error(config, tmp_path, mocker):
+    out = tmp_path / "audio.mp3"
+    config["providers"]["tts"] = {
+        "provider": "openai-compatible",
+        "base_url": "http://localhost:8000/v1",
+    }
+
+    fake_client = mocker.MagicMock()
+    fake_client.audio.speech.create.side_effect = RuntimeError("server down")
+    mocker.patch("openai.OpenAI", return_value=fake_client)
+
+    def fake_save(filename):
+        with open(filename, "wb") as f:
+            f.write(b"fallback")
+
+    fake_tts = mocker.MagicMock()
+    fake_tts.save.side_effect = fake_save
+    mocker.patch("gtts.gTTS", return_value=fake_tts)
+
+    result = OpenAICompatTTSProvider(config).synthesize("Hello", str(out))
+    assert result == str(out)
+    assert out.exists()
+
+
+def test_factory_selects_openai_compat_image(config):
+    config["providers"]["images"] = {
+        "provider": "openai-compatible",
+        "fallback": "text",
+        "base_url": "http://localhost:8080/v1",
+    }
+    provider = ProviderFactory.create_image_provider(config)
+    assert isinstance(provider, OpenAICompatImageProvider)
+
+
+def test_openai_compat_image_handles_b64(config, tmp_path, mocker):
+    """Local servers commonly return inline base64 rather than a URL."""
+    import base64
+
+    out = tmp_path / "img.png"
+    config["providers"]["images"] = {
+        "provider": "openai-compatible",
+        "base_url": "http://localhost:8080/v1",
+    }
+
+    item = mocker.MagicMock()
+    item.b64_json = base64.b64encode(b"raw-image-bytes").decode()
+    item.url = None
+    fake_client = mocker.MagicMock()
+    fake_client.images.generate.return_value.data = [item]
+    mocker.patch("openai.OpenAI", return_value=fake_client)
+
+    result = OpenAICompatImageProvider(config).generate_image("topic", str(out))
+
+    assert result == str(out)
+    assert out.read_bytes() == b"raw-image-bytes"
+
+
+def test_openai_compat_image_handles_url(config, tmp_path, mocker):
+    out = tmp_path / "img.png"
+    config["providers"]["images"] = {
+        "provider": "openai-compatible",
+        "base_url": "http://localhost:8080/v1",
+    }
+
+    item = mocker.MagicMock()
+    item.b64_json = None
+    item.url = "http://localhost:8080/image.png"
+    fake_client = mocker.MagicMock()
+    fake_client.images.generate.return_value.data = [item]
+    mocker.patch("openai.OpenAI", return_value=fake_client)
+
+    fake_get = mocker.MagicMock()
+    fake_get.content = b"downloaded-bytes"
+    mocker.patch(
+        "slide_stream.providers.images.requests.get", return_value=fake_get
+    )
+
+    result = OpenAICompatImageProvider(config).generate_image("topic", str(out))
+
+    assert result == str(out)
+    assert out.read_bytes() == b"downloaded-bytes"
+
+
+def test_openai_compat_image_falls_back_to_text_on_error(config, tmp_path, mocker):
+    out = tmp_path / "img.png"
+    config["providers"]["images"] = {
+        "provider": "openai-compatible",
+        "base_url": "http://localhost:8080/v1",
+    }
+
+    fake_client = mocker.MagicMock()
+    fake_client.images.generate.side_effect = RuntimeError("boom")
+    mocker.patch("openai.OpenAI", return_value=fake_client)
+
+    result = OpenAICompatImageProvider(config).generate_image("topic", str(out))
+
+    assert result == str(out)
+    assert out.exists()  # text fallback produced an image

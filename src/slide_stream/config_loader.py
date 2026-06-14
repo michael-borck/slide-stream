@@ -20,15 +20,18 @@ DEFAULT_CONFIG = {
     "providers": {
         "llm": {
             "provider": "none",
-            "model": None
+            "model": None,
+            "base_url": None  # used by the openai-compatible provider
         },
         "images": {
             "provider": "text",
-            "fallback": "text"
+            "fallback": "text",
+            "base_url": None  # used by the openai-compatible provider
         },
         "tts": {
             "provider": "gtts",
-            "voice": None
+            "voice": None,
+            "base_url": None  # used by the openai-compatible provider
         }
     },
     "settings": {
@@ -159,16 +162,37 @@ def create_example_config() -> str:
 
 providers:
   llm:
-    provider: openai        # none, openai, gemini, claude, groq, ollama
+    provider: openai        # none, openai, gemini, claude, groq, ollama, openai-compatible
     model: gpt-4o-mini     # optional: specific model to use
 
   images:
-    provider: dalle3        # text, dalle3, pexels, unsplash, stable-diffusion
+    provider: dalle3        # text, dalle3, openai-compatible, pexels, unsplash
     fallback: text         # fallback when primary fails
 
   tts:
-    provider: elevenlabs   # gtts, elevenlabs, openai, azure, polly
+    provider: elevenlabs   # gtts, elevenlabs, openai, openai-compatible
     voice: rachel          # voice ID/name (provider-specific)
+
+# --- Fully local / self-hosted stack -------------------------------------
+# Point every layer at an OpenAI-compatible server (LocalAI, vLLM,
+# openedai-speech, Kokoro-FastAPI, ...). No cloud keys required.
+#
+# providers:
+#   llm:
+#     provider: openai-compatible
+#     base_url: http://localhost:8080/v1
+#     model: llama-3.1-8b-instruct
+#   images:
+#     provider: openai-compatible
+#     base_url: http://localhost:8080/v1
+#     model: sdxl
+#     fallback: text
+#   tts:
+#     provider: openai-compatible
+#     base_url: http://localhost:8000/v1
+#     model: tts-1
+#     voice: en_US-amy
+# -------------------------------------------------------------------------
 
 # API Keys (use environment variables)
 api_keys:

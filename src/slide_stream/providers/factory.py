@@ -7,11 +7,17 @@ from rich.console import Console
 from .base import ImageProvider, TTSProvider
 from .images import (
     DalleImageProvider,
+    OpenAICompatImageProvider,
     PexelsImageProvider,
     TextImageProvider,
     UnsplashImageProvider,
 )
-from .tts import ElevenLabsTTSProvider, GTTSProvider, OpenAITTSProvider
+from .tts import (
+    ElevenLabsTTSProvider,
+    GTTSProvider,
+    OpenAICompatTTSProvider,
+    OpenAITTSProvider,
+)
 
 console = Console()
 err_console = Console(stderr=True, style="bold red")
@@ -24,6 +30,7 @@ class ProviderFactory:
     IMAGE_PROVIDERS: dict[str, type[ImageProvider]] = {
         "text": TextImageProvider,
         "dalle3": DalleImageProvider,
+        "openai-compatible": OpenAICompatImageProvider,
         "pexels": PexelsImageProvider,
         "unsplash": UnsplashImageProvider,
     }
@@ -32,6 +39,7 @@ class ProviderFactory:
         "gtts": GTTSProvider,
         "elevenlabs": ElevenLabsTTSProvider,
         "openai": OpenAITTSProvider,
+        "openai-compatible": OpenAICompatTTSProvider,
     }
 
     @classmethod
@@ -97,6 +105,7 @@ class ProviderFactory:
         return {
             "text": "Text-based images (always available)",
             "dalle3": "DALL-E 3 AI image generation (requires OpenAI API key)",
+            "openai-compatible": "Any OpenAI-compatible image endpoint (set base_url; local or hosted)",
             "pexels": "Pexels stock photos (requires Pexels API key)",
             "unsplash": "Unsplash stock photos (requires Unsplash API key)",
         }
@@ -108,6 +117,7 @@ class ProviderFactory:
             "gtts": "Google Text-to-Speech (free, always available)",
             "elevenlabs": "ElevenLabs premium TTS (requires ElevenLabs API key)",
             "openai": "OpenAI TTS (requires OpenAI API key)",
+            "openai-compatible": "Any OpenAI-compatible speech endpoint (set base_url; local or hosted)",
         }
 
     @classmethod

@@ -112,10 +112,11 @@ def create(
     llm_client = None
     llm_provider_name = config["providers"]["llm"]["provider"]
     llm_model = config["providers"]["llm"]["model"]
+    llm_base_url = config["providers"]["llm"].get("base_url")
 
     if llm_provider_name != "none":
         try:
-            llm_client = get_llm_client(llm_provider_name)
+            llm_client = get_llm_client(llm_provider_name, base_url=llm_base_url)
             console.print(
                 f"✅ LLM Provider: [bold green]{llm_provider_name}[/bold green]"
             )
