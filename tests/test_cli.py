@@ -38,7 +38,7 @@ def sample_markdown():
 @pytest.fixture
 def sample_powerpoint():
     """Create sample PowerPoint file."""
-    temp_file = Path(tempfile.mktemp(suffix=".pptx"))
+    temp_file = Path(tempfile.mkdtemp()) / "test.pptx"
 
     # Create a presentation
     prs = Presentation()

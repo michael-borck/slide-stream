@@ -15,7 +15,7 @@ from slide_stream.powerpoint import format_powerpoint_content_for_llm, parse_pow
 
 def create_test_powerpoint() -> Path:
     """Create a test PowerPoint file with sample content."""
-    temp_file = Path(tempfile.mktemp(suffix=".pptx"))
+    temp_file = Path(tempfile.mkdtemp()) / "test.pptx"
 
     # Create a presentation
     prs = Presentation()
@@ -128,7 +128,7 @@ def test_format_powerpoint_content_no_content():
 
 def test_empty_powerpoint():
     """Test parsing PowerPoint with no meaningful content."""
-    temp_file = Path(tempfile.mktemp(suffix=".pptx"))
+    temp_file = Path(tempfile.mkdtemp()) / "test.pptx"
 
     try:
         # Create empty presentation
