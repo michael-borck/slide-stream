@@ -67,10 +67,12 @@ def test_cli_help(runner):
 
 def test_cli_version(runner):
     """Test CLI version command."""
+    from slide_stream import __version__
+
     result = runner.invoke(app, ["create", "--version"])
     assert result.exit_code == 0
     assert "SlideStream" in result.stdout
-    assert "2.0.0" in result.stdout
+    assert __version__ in result.stdout
 
 
 def test_cli_create_missing_input(runner):
