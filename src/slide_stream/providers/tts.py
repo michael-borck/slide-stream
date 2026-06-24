@@ -128,10 +128,13 @@ class OpenAICompatTTSProvider(TTSProvider):
         return tts_config.get("base_url") or os.getenv("OPENAI_BASE_URL")
 
     def is_available(self) -> bool:
-        """Available when a base_url is configured, or an OpenAI key exists."""
-        api_keys = self.config.get("api_keys", {})
-        has_key = bool(api_keys.get("openai") or os.getenv("OPENAI_API_KEY"))
-        return bool(self._base_url()) or has_key
+        """Available only when a base_url is configured.
+
+        An OpenAI key alone is not enough: without a base_url this provider
+        would silently talk to the real OpenAI API instead of the intended
+        local/self-hosted server. Use the ``openai`` TTS provider for real OpenAI.
+        """
+        return bool(self._base_url())
 
     def synthesize(self, text: str, filename: str) -> str | None:
         """Convert text to speech via an OpenAI-compatible endpoint."""

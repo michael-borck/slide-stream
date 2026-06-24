@@ -3,6 +3,7 @@
 import base64
 import os
 import textwrap
+from typing import Any
 
 import requests
 from PIL import Image, ImageDraw, ImageFont
@@ -24,8 +25,15 @@ class TextImageProvider(ImageProvider):
     def is_available(self) -> bool:
         return True
 
-    def generate_image(self, query: str, filename: str) -> str:
-        """Create a text-based image."""
+    def generate_image(
+        self, query: str, filename: str, slide: dict[str, Any] | None = None
+    ) -> str:
+        """Create a text-based slide image showing the slide's title and content.
+
+        This is the default image source, so the on-screen text must reflect the
+        actual slide. When ``slide`` is provided its title and bullet points are
+        rendered; otherwise the query is drawn as a fallback.
+        """
         settings = self.config.get("settings", {}).get("image", {})
         video_settings = self.config.get("settings", {}).get("video", {})
 
@@ -51,33 +59,43 @@ class TextImageProvider(ImageProvider):
                 title_font = ImageFont.load_default()
                 content_font = ImageFont.load_default()
 
-        # Draw title
-        title = "Generated Image"
-        draw.text(
-            (resolution[0] * 0.1, resolution[1] * 0.1),
-            title,
-            font=title_font,
-            fill=font_color,
-        )
+        if slide is not None:
+            title = (slide.get("title") or "").strip() or "Slide"
+            content_items = [
+                str(item).strip()
+                for item in slide.get("content", [])
+                if str(item).strip()
+            ]
+        else:
+            title = "Slide"
+            content_items = [f"Topic: {query}"] if query else []
 
-        # Draw content
-        content_items = [f"Topic: {query}"]
-        y_pos = resolution[1] * 0.3
+        # Draw the title (wrapped to fit the frame).
+        y_pos = resolution[1] * 0.1
+        for line in textwrap.wrap(title, width=max_line_width) or [title]:
+            draw.text(
+                (resolution[0] * 0.1, y_pos),
+                line,
+                font=title_font,
+                fill=font_color,
+            )
+            y_pos += title_font_size + 20
 
+        # Draw the content bullets (wrapped to fit).
+        y_pos += 40
         for item in content_items:
-            wrapped_lines = textwrap.wrap(f"• {item}", width=max_line_width)
-            for line in wrapped_lines:
+            for line in textwrap.wrap(f"• {item}", width=max_line_width):
                 draw.text(
                     (resolution[0] * 0.1, y_pos),
                     line,
                     font=content_font,
                     fill=font_color,
                 )
-                y_pos += 70
-            y_pos += 30
+                y_pos += content_font_size + 20
+            y_pos += 20
 
         img.save(filename)
-        console.print(f"  - Generated text image: {query}")
+        console.print(f"  - Generated text slide: {title}")
         return filename
 
 
@@ -94,7 +112,7 @@ class DalleImageProvider(ImageProvider):
         openai_key = api_keys.get("openai") or os.getenv("OPENAI_API_KEY")
         return bool(openai_key)
 
-    def generate_image(self, query: str, filename: str) -> str:
+    def generate_image(self, query: str, filename: str, slide: dict[str, Any] | None = None) -> str:
         """Generate image using DALL-E 3."""
         try:
             from openai import OpenAI
@@ -134,15 +152,15 @@ class DalleImageProvider(ImageProvider):
 
         except ImportError:
             err_console.print("  - OpenAI library not installed. Install with: pip install openai")
-            return self._fallback_to_text(query, filename)
+            return self._fallback_to_text(query, filename, slide=slide)
         except Exception as e:
             err_console.print(f"  - DALL-E error: {e}. Using text fallback.")
-            return self._fallback_to_text(query, filename)
+            return self._fallback_to_text(query, filename, slide=slide)
 
-    def _fallback_to_text(self, query: str, filename: str) -> str:
-        """Fallback to text image generation."""
+    def _fallback_to_text(self, query: str, filename: str, slide: dict[str, Any] | None = None) -> str:
+        """Fall back to a text image, preserving slide content when known."""
         text_provider = TextImageProvider(self.config)
-        return text_provider.generate_image(query, filename)
+        return text_provider.generate_image(query, filename, slide=slide)
 
 
 class PexelsImageProvider(ImageProvider):
@@ -158,7 +176,7 @@ class PexelsImageProvider(ImageProvider):
         pexels_key = api_keys.get("pexels") or os.getenv("PEXELS_API_KEY")
         return bool(pexels_key)
 
-    def generate_image(self, query: str, filename: str) -> str:
+    def generate_image(self, query: str, filename: str, slide: dict[str, Any] | None = None) -> str:
         """Download image from Pexels."""
         try:
             api_keys = self.config.get("api_keys", {})
@@ -203,12 +221,12 @@ class PexelsImageProvider(ImageProvider):
 
         except Exception as e:
             err_console.print(f"  - Pexels error: {e}. Using text fallback.")
-            return self._fallback_to_text(query, filename)
+            return self._fallback_to_text(query, filename, slide=slide)
 
-    def _fallback_to_text(self, query: str, filename: str) -> str:
-        """Fallback to text image generation."""
+    def _fallback_to_text(self, query: str, filename: str, slide: dict[str, Any] | None = None) -> str:
+        """Fall back to a text image, preserving slide content when known."""
         text_provider = TextImageProvider(self.config)
-        return text_provider.generate_image(query, filename)
+        return text_provider.generate_image(query, filename, slide=slide)
 
 
 class UnsplashImageProvider(ImageProvider):
@@ -224,7 +242,7 @@ class UnsplashImageProvider(ImageProvider):
         unsplash_key = api_keys.get("unsplash") or os.getenv("UNSPLASH_ACCESS_KEY")
         return bool(unsplash_key)
 
-    def generate_image(self, query: str, filename: str) -> str:
+    def generate_image(self, query: str, filename: str, slide: dict[str, Any] | None = None) -> str:
         """Download image from Unsplash."""
         try:
             api_keys = self.config.get("api_keys", {})
@@ -271,12 +289,12 @@ class UnsplashImageProvider(ImageProvider):
 
         except Exception as e:
             err_console.print(f"  - Unsplash error: {e}. Using text fallback.")
-            return self._fallback_to_text(query, filename)
+            return self._fallback_to_text(query, filename, slide=slide)
 
-    def _fallback_to_text(self, query: str, filename: str) -> str:
-        """Fallback to text image generation."""
+    def _fallback_to_text(self, query: str, filename: str, slide: dict[str, Any] | None = None) -> str:
+        """Fall back to a text image, preserving slide content when known."""
         text_provider = TextImageProvider(self.config)
-        return text_provider.generate_image(query, filename)
+        return text_provider.generate_image(query, filename, slide=slide)
 
 
 class OpenAICompatImageProvider(ImageProvider):
@@ -300,12 +318,15 @@ class OpenAICompatImageProvider(ImageProvider):
         return self._settings().get("base_url") or os.getenv("OPENAI_BASE_URL")
 
     def is_available(self) -> bool:
-        """Available when a base_url is configured, or an OpenAI key exists."""
-        api_keys = self.config.get("api_keys", {})
-        has_key = bool(api_keys.get("openai") or os.getenv("OPENAI_API_KEY"))
-        return bool(self._base_url()) or has_key
+        """Available only when a base_url is configured.
 
-    def generate_image(self, query: str, filename: str) -> str:
+        An OpenAI key alone is not enough: without a base_url this provider
+        would silently talk to the real OpenAI API instead of the intended
+        local/self-hosted server. Use the ``dalle3`` provider for real OpenAI.
+        """
+        return bool(self._base_url())
+
+    def generate_image(self, query: str, filename: str, slide: dict[str, Any] | None = None) -> str:
         """Generate an image via an OpenAI-compatible endpoint."""
         try:
             from openai import OpenAI
@@ -360,12 +381,12 @@ class OpenAICompatImageProvider(ImageProvider):
 
         except ImportError:
             err_console.print("  - OpenAI library not installed. Install with: pip install openai")
-            return self._fallback_to_text(query, filename)
+            return self._fallback_to_text(query, filename, slide=slide)
         except Exception as e:
             err_console.print(f"  - OpenAI-compatible image error: {e}. Using text fallback.")
-            return self._fallback_to_text(query, filename)
+            return self._fallback_to_text(query, filename, slide=slide)
 
-    def _fallback_to_text(self, query: str, filename: str) -> str:
-        """Fallback to text image generation."""
+    def _fallback_to_text(self, query: str, filename: str, slide: dict[str, Any] | None = None) -> str:
+        """Fall back to a text image, preserving slide content when known."""
         text_provider = TextImageProvider(self.config)
-        return text_provider.generate_image(query, filename)
+        return text_provider.generate_image(query, filename, slide=slide)

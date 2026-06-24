@@ -154,6 +154,29 @@ def test_dalle_falls_back_to_text_on_api_error(config, tmp_path, mocker):
     assert out.exists()  # produced by the text fallback
 
 
+def test_dalle_fallback_renders_slide_content(config, tmp_path, mocker):
+    """When DALL-E fails, the text fallback renders the slide's own content
+    (not a generic 'Topic: ...'): two slides sharing a query but differing in
+    content produce different fallback images."""
+    config["api_keys"] = {"openai": "sk-test"}
+    fake_client = mocker.MagicMock()
+    fake_client.images.generate.side_effect = RuntimeError("boom")
+    mocker.patch("openai.OpenAI", return_value=fake_client)
+
+    provider = DalleImageProvider(config)
+    out_a = tmp_path / "a.png"
+    out_b = tmp_path / "b.png"
+    provider.generate_image(
+        "same query", str(out_a), slide={"title": "T", "content": ["Apple", "Banana"]}
+    )
+    provider.generate_image(
+        "same query", str(out_b), slide={"title": "T", "content": ["Carrot", "Daikon"]}
+    )
+
+    assert out_a.exists() and out_b.exists()
+    assert out_a.read_bytes() != out_b.read_bytes()
+
+
 def test_elevenlabs_voice_name_resolves_to_id(config, tmp_path, mocker):
     """A friendly voice name is mapped to its voice_id before the API call."""
     out = tmp_path / "audio.mp3"
@@ -352,3 +375,43 @@ def test_openai_compat_image_falls_back_to_text_on_error(config, tmp_path, mocke
 
     assert result == str(out)
     assert out.exists()  # text fallback produced an image
+
+
+def test_openai_compat_image_requires_base_url_not_just_key(config, monkeypatch):
+    """A bare OpenAI key must NOT make the compat image provider available:
+    without a base_url it would silently bill real OpenAI instead of the local
+    server. Only an explicit base_url enables it."""
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    config["api_keys"] = {"openai": "sk-test"}
+    config["providers"]["images"] = {"provider": "openai-compatible"}
+    assert OpenAICompatImageProvider(config).is_available() is False
+
+    config["providers"]["images"]["base_url"] = "http://localhost:8080/v1"
+    assert OpenAICompatImageProvider(config).is_available() is True
+
+
+def test_openai_compat_tts_requires_base_url_not_just_key(config, monkeypatch):
+    """A bare OpenAI key must NOT make the compat TTS provider available."""
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    config["api_keys"] = {"openai": "sk-test"}
+    config["providers"]["tts"] = {"provider": "openai-compatible"}
+    assert OpenAICompatTTSProvider(config).is_available() is False
+
+    config["providers"]["tts"]["base_url"] = "http://localhost:8000/v1"
+    assert OpenAICompatTTSProvider(config).is_available() is True
+
+
+def test_text_image_provider_renders_slide_content(config, tmp_path):
+    """The text provider renders the slide's own content, not a generic
+    placeholder. Two slides sharing a query but differing in content produce
+    different images (the old code ignored content entirely)."""
+    slide_a = {"title": "Same Title", "content": ["Apple", "Banana"]}
+    slide_b = {"title": "Same Title", "content": ["Carrot", "Daikon"]}
+    out_a = tmp_path / "a.png"
+    out_b = tmp_path / "b.png"
+
+    TextImageProvider(config).generate_image("same query", str(out_a), slide=slide_a)
+    TextImageProvider(config).generate_image("same query", str(out_b), slide=slide_b)
+
+    assert out_a.exists() and out_b.exists()
+    assert out_a.read_bytes() != out_b.read_bytes()

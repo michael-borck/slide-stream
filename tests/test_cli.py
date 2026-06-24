@@ -69,10 +69,32 @@ def test_cli_version(runner):
     """Test CLI version command."""
     from slide_stream import __version__
 
-    result = runner.invoke(app, ["create", "--version"])
+    result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
     assert "SlideStream" in result.stdout
     assert __version__ in result.stdout
+
+
+def test_cli_no_args_shows_help(runner):
+    """Bare invocation prints help and exits 0 instead of erroring."""
+    result = runner.invoke(app, [])
+    assert result.exit_code == 0
+    assert "Usage" in result.output
+
+
+def test_cli_init_refuses_overwrite_without_force(runner, tmp_path):
+    """init must not clobber an existing file unless --force is given."""
+    target = tmp_path / "slidestream.yaml"
+    target.write_text("existing: content\n")
+
+    result = runner.invoke(app, ["init", str(target)])
+    assert result.exit_code != 0
+    assert target.read_text() == "existing: content\n"
+
+    # --force overwrites the existing file.
+    result = runner.invoke(app, ["init", str(target), "--force"])
+    assert result.exit_code == 0
+    assert "SlideStream Configuration" in target.read_text()
 
 
 def test_cli_create_missing_input(runner):

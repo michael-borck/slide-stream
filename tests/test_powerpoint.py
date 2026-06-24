@@ -141,3 +141,22 @@ def test_empty_powerpoint():
 
     finally:
         temp_file.unlink(missing_ok=True)
+
+
+def test_parse_powerpoint_keeps_title_only_slide():
+    """A slide with only a title (e.g. a section divider) is kept, not dropped."""
+    temp_file = Path(tempfile.mkdtemp()) / "test.pptx"
+    try:
+        prs = Presentation()
+        # Layout 1 ('Title and Content'); leave the body placeholder empty so the
+        # slide has a title but no content and no notes.
+        slide = prs.slides.add_slide(prs.slide_layouts[1])
+        slide.shapes.title.text = "Section Divider"
+        prs.save(temp_file)
+
+        slides = parse_powerpoint(temp_file)
+        assert len(slides) == 1
+        assert slides[0]["title"] == "Section Divider"
+        assert slides[0]["content"] == []
+    finally:
+        temp_file.unlink(missing_ok=True)

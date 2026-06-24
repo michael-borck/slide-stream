@@ -1,7 +1,9 @@
 """Command line interface for Slide Stream."""
 
+import shutil
+import tempfile
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 from moviepy import VideoFileClip, concatenate_videoclips
@@ -30,16 +32,71 @@ app = typer.Typer(
     """,
     add_completion=False,
     rich_markup_mode="markdown",
+    invoke_without_command=True,
 )
 
 
-def version_callback(value: bool) -> None:
-    """Print the version of the application and exit."""
-    if value:
+@app.callback()
+def main(
+    ctx: typer.Context,
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            "-V",
+            help="Show the application version and exit.",
+            is_eager=True,
+        ),
+    ] = False,
+) -> None:
+    """SlideStream: create professional video presentations from Markdown and PowerPoint files."""
+    if version:
         console.print(
             f"[bold cyan]SlideStream[/bold cyan] version: [yellow]{__version__}[/yellow]"
         )
         raise typer.Exit()
+    if ctx.invoked_subcommand is None:
+        # No subcommand given: show help instead of erroring out.
+        console.print(ctx.get_help())
+        raise typer.Exit()
+
+
+def _clean_narration(title: str, content: list[Any], notes: str = "") -> str:
+    """Build clean, speakable narration from slide text (no markup labels).
+
+    This is the default voiceover used when LLM enhancement is disabled or when
+    an LLM call fails, so the audio never reads scaffolding like 'Title:' or
+    'Content:' verbatim.
+    """
+    parts: list[str] = []
+    if title.strip():
+        parts.append(title.strip())
+    for item in content:
+        text = str(item).strip()
+        if text:
+            parts.append(text)
+    if notes.strip() and notes.strip() != "Click to add notes":
+        parts.append(notes.strip())
+    return ". ".join(parts)
+
+
+def _slide_query(
+    title: str, content: list[Any], default_title: str | None
+) -> str:
+    """Choose a meaningful image/search query for a slide.
+
+    Prefers the title, but falls back to the first content line for slides whose
+    title is still the default placeholder (e.g. an untitled 'Slide 3').
+    """
+    if title and default_title is not None and title == default_title:
+        title = ""
+    if title.strip():
+        return title.strip()
+    for item in content:
+        text = str(item).strip()
+        if text:
+            return text
+    return title.strip() or "presentation slide"
 
 
 @app.command()
@@ -64,15 +121,6 @@ def create(
             help="Path to configuration file (YAML).",
         ),
     ] = None,
-    version: Annotated[
-        bool,
-        typer.Option(
-            "--version",
-            help="Show application version and exit.",
-            callback=version_callback,
-            is_eager=True,
-        ),
-    ] = False,
 ) -> None:
     """Create a video from a Markdown (.md) or PowerPoint (.pptx) file."""
     console.print(
@@ -89,6 +137,15 @@ def create(
         err_console.print(f"Configuration Error: {e}")
         raise typer.Exit(code=1)
 
+    # FFmpeg is required to encode video; fail early with an actionable hint.
+    if not shutil.which("ffmpeg"):
+        err_console.print(
+            "FFmpeg was not found on your PATH. SlideStream needs FFmpeg to "
+            "encode video. Install it (e.g. 'brew install ffmpeg' or "
+            "'sudo apt install ffmpeg') and try again."
+        )
+        raise typer.Exit(code=1)
+
     # Check if input file exists
     if not input_path.exists():
         err_console.print(f"Input file not found: {input_path}")
@@ -100,179 +157,233 @@ def create(
         err_console.print(f"Unsupported file type: {file_extension}. Supported: .md, .pptx")
         raise typer.Exit(code=1)
 
-    # Setup temporary directory
-    temp_dir = Path(config["settings"]["temp_dir"])
-    temp_dir.mkdir(exist_ok=True)
+    # Setup a unique temporary directory. Creating our own subdirectory (rather
+    # than reusing the configured path directly) guarantees we can never delete
+    # files we did not create, and that concurrent runs never collide.
+    base_temp_dir = Path(config["settings"]["temp_dir"])
+    base_temp_dir.mkdir(parents=True, exist_ok=True)
+    temp_dir = Path(tempfile.mkdtemp(prefix="slide_stream_", dir=str(base_temp_dir)))
 
-    # Initialize providers
-    image_provider = ProviderFactory.create_image_provider(config)
-    tts_provider = ProviderFactory.create_tts_provider(config)
+    try:
+        # Initialize providers
+        image_provider = ProviderFactory.create_image_provider(config)
+        tts_provider = ProviderFactory.create_tts_provider(config)
 
-    # Initialize LLM client
-    llm_client = None
-    llm_provider_name = config["providers"]["llm"]["provider"]
-    llm_model = config["providers"]["llm"]["model"]
-    llm_base_url = config["providers"]["llm"].get("base_url")
+        # Initialize LLM client
+        llm_client = None
+        llm_provider_name = config["providers"]["llm"]["provider"]
+        llm_model = config["providers"]["llm"]["model"]
+        llm_base_url = config["providers"]["llm"].get("base_url")
 
-    if llm_provider_name != "none":
-        try:
-            llm_client = get_llm_client(llm_provider_name, base_url=llm_base_url)
-            console.print(
-                f"✅ LLM Provider: [bold green]{llm_provider_name}[/bold green]"
+        if llm_provider_name != "none":
+            try:
+                llm_client = get_llm_client(llm_provider_name, base_url=llm_base_url)
+                console.print(
+                    f"✅ LLM Provider: [bold green]{llm_provider_name}[/bold green]"
+                )
+            except (ImportError, ValueError) as e:
+                err_console.print(f"Error initializing LLM: {e}")
+                raise typer.Exit(code=1)
+
+        # Parse the input file
+        if file_extension == ".md":
+            console.print("\n[bold]1. Parsing Markdown...[/bold]")
+            with open(input_path, encoding='utf-8') as f:
+                markdown_input = f.read()
+            if not markdown_input.strip():
+                err_console.print("Markdown file is empty. Exiting.")
+                raise typer.Exit(code=1)
+            slides = parse_markdown(markdown_input)
+        else:  # .pptx
+            console.print("\n[bold]1. Parsing PowerPoint...[/bold]")
+            try:
+                slides = parse_powerpoint(input_path)
+            except ValueError as e:
+                err_console.print(f"Error parsing PowerPoint: {e}")
+                raise typer.Exit(code=1)
+
+        if not slides:
+            err_console.print(f"No slides found in the {file_extension} file. Exiting.")
+            raise typer.Exit(code=1)
+        console.print(f"📄 Found [bold yellow]{len(slides)}[/bold yellow] slides.")
+
+        # Process each slide with Rich progress bar
+        video_fragments = []
+        audio_failed = 0
+        llm_narration_failed = 0
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            transient=True,
+        ) as progress:
+            process_task = progress.add_task(
+                "[yellow]Processing Slides...", total=len(slides)
             )
-        except (ImportError, ValueError) as e:
-            err_console.print(f"Error initializing LLM: {e}")
-            raise typer.Exit(code=1)
 
-    # Parse the input file
-    if file_extension == ".md":
-        console.print("\n[bold]1. Parsing Markdown...[/bold]")
-        with open(input_path, encoding='utf-8') as f:
-            markdown_input = f.read()
-        if not markdown_input.strip():
-            err_console.print("Markdown file is empty. Exiting.")
-            raise typer.Exit(code=1)
-        slides = parse_markdown(markdown_input)
-    else:  # .pptx
-        console.print("\n[bold]1. Parsing PowerPoint...[/bold]")
-        try:
-            slides = parse_powerpoint(input_path)
-        except ValueError as e:
-            err_console.print(f"Error parsing PowerPoint: {e}")
-            raise typer.Exit(code=1)
+            for i, slide in enumerate(slides):
+                slide_num = i + 1
+                progress.update(
+                    process_task,
+                    description=f"[yellow]Processing Slide {slide_num}/{len(slides)}: '{slide['title']}'[/yellow]",
+                )
 
-    if not slides:
-        err_console.print(f"No slides found in the {file_extension} file. Exiting.")
-        raise typer.Exit(code=1)
-    console.print(f"📄 Found [bold yellow]{len(slides)}[/bold yellow] slides.")
+                # raw_text is the structured prompt fed to the LLM only.
+                if file_extension == ".md":
+                    raw_text = f"Title: {slide['title']}. Content: {' '.join(slide['content'])}"
+                else:  # .pptx
+                    raw_text = format_powerpoint_content_for_llm(slide)
 
-    # Process each slide with Rich progress bar
-    video_fragments = []
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        transient=True,
-    ) as progress:
-        process_task = progress.add_task(
-            "[yellow]Processing Slides...", total=len(slides)
+                # Default narration is clean spoken text (no 'Title:'/'Content:'
+                # labels), used when LLM enhancement is off or fails.
+                default_title = f"Slide {slide_num}" if file_extension == ".pptx" else None
+                effective_title = (
+                    slide["title"]
+                    if default_title is None or slide["title"] != default_title
+                    else ""
+                )
+                notes = slide.get("notes", "") if file_extension == ".pptx" else ""
+                speech_text = _clean_narration(
+                    effective_title, slide.get("content", []), notes
+                )
+
+                # Meaningful image/search query (falls back past placeholder titles).
+                search_query = _slide_query(
+                    slide["title"], slide.get("content", []), default_title
+                )
+
+                # LLM Processing
+                if llm_client:
+                    if file_extension == ".pptx" and slide.get("notes"):
+                        speech_prompt = f"Convert the following PowerPoint slide into a natural, flowing script for a voiceover. Use the speaker notes as guidance for the narrative style. Speak conversationally. Directly output the script and nothing else.\n\n{raw_text}"
+                    else:
+                        speech_prompt = f"Convert the following slide points into a natural, flowing script for a voiceover. Speak conversationally. Directly output the script and nothing else.\n\n{raw_text}"
+                    natural_speech = query_llm(
+                        llm_client, llm_provider_name, speech_prompt, console, llm_model
+                    )
+                    if natural_speech:
+                        speech_text = natural_speech
+                    else:
+                        llm_narration_failed += 1
+
+                    # Only spend an LLM round-trip refining the image query when
+                    # the active image provider actually consumes a query; the
+                    # text provider renders slide content directly instead.
+                    if image_provider.name != "text":
+                        search_prompt = f"Generate a concise, descriptive search query for finding a high-quality, relevant image for this topic. Output only the query. Topic:\n\n{raw_text}"
+                        improved_query = query_llm(
+                            llm_client, llm_provider_name, search_prompt, console, llm_model
+                        )
+                        if improved_query:
+                            search_query = improved_query.strip().replace('"', "")
+
+                # File paths
+                img_path = temp_dir / f"slide_{slide_num}.png"
+                audio_path = temp_dir / f"slide_{slide_num}.mp3"
+                fragment_path = temp_dir / f"fragment_{slide_num}.mp4"
+
+                # Generate image, audio, and video
+                image_provider.generate_image(search_query, str(img_path), slide=slide)
+                audio_file = tts_provider.synthesize(speech_text, str(audio_path))
+                if audio_file is None:
+                    audio_failed += 1
+                fragment_file = create_video_fragment(
+                    str(img_path),
+                    str(audio_path) if audio_file else None,
+                    str(fragment_path),
+                    config,
+                )
+
+                if fragment_file:
+                    video_fragments.append(fragment_file)
+
+                progress.update(process_task, advance=1)
+
+        # Per-run summary: surface partial output and degradation rather than
+        # always declaring total success.
+        summary = (
+            f"📊 Rendered [bold]{len(video_fragments)}/{len(slides)}[/bold] slides"
+            f" · [yellow]{audio_failed}[/yellow] without audio"
         )
+        if llm_client:
+            summary += f" · [red]{llm_narration_failed}[/red] LLM narration failure(s)"
+        if len(video_fragments) < len(slides) or audio_failed:
+            summary += "  [dim](output is incomplete)[/dim]"
+        console.print(summary)
 
-        for i, slide in enumerate(slides):
-            slide_num = i + 1
-            progress.update(
-                process_task,
-                description=f"[yellow]Processing Slide {slide_num}/{len(slides)}: '{slide['title']}'[/yellow]",
-            )
+        # Combine video fragments
+        console.print("\n[bold]2. Combining Video Fragments...[/bold]")
+        if video_fragments:
+            clips = []
+            final_clip = None
+            try:
+                clips = [VideoFileClip(f) for f in video_fragments]
+                final_clip = concatenate_videoclips(clips)
 
-            # Format content based on file type
-            if file_extension == ".md":
-                raw_text = f"Title: {slide['title']}. Content: {' '.join(slide['content'])}"
-            else:  # .pptx
-                raw_text = format_powerpoint_content_for_llm(slide)
-
-            speech_text = raw_text
-            search_query = slide["title"]
-
-            # LLM Processing
-            if llm_client:
-                if file_extension == ".pptx" and slide.get('notes'):
-                    speech_prompt = f"Convert the following PowerPoint slide into a natural, flowing script for a voiceover. Use the speaker notes as guidance for the narrative style. Speak conversationally. Directly output the script and nothing else.\n\n{raw_text}"
-                else:
-                    speech_prompt = f"Convert the following slide points into a natural, flowing script for a voiceover. Speak conversationally. Directly output the script and nothing else.\n\n{raw_text}"
-                natural_speech = query_llm(
-                    llm_client, llm_provider_name, speech_prompt, console, llm_model
+                video_settings = config["settings"]["video"]
+                final_clip.write_videofile(
+                    output_filename,
+                    fps=video_settings["fps"],
+                    codec=video_settings["codec"],
+                    audio_codec=video_settings["audio_codec"],
+                    logger=None,
                 )
-                if natural_speech:
-                    speech_text = natural_speech
 
-                # Generate better image search query using LLM
-                search_prompt = f"Generate a concise, descriptive search query for finding a high-quality, relevant image for this topic. Output only the query. Topic:\n\n{raw_text}"
-                improved_query = query_llm(
-                    llm_client, llm_provider_name, search_prompt, console, llm_model
+                console.print(
+                    Panel(
+                        f"🎉 [bold green]Video creation complete![/bold green] 🎉\n\nOutput file: [yellow]{output_filename}[/yellow]",
+                        border_style="green",
+                        expand=False,
+                    )
                 )
-                if improved_query:
-                    search_query = improved_query.strip().replace('"', "")
-
-            # File paths
-            img_path = temp_dir / f"slide_{slide_num}.png"
-            audio_path = temp_dir / f"slide_{slide_num}.mp3"
-            fragment_path = temp_dir / f"fragment_{slide_num}.mp4"
-
-            # Generate image, audio, and video
-            image_provider.generate_image(search_query, str(img_path))
-            audio_file = tts_provider.synthesize(speech_text, str(audio_path))
-            fragment_file = create_video_fragment(
-                str(img_path),
-                str(audio_path) if audio_file else None,
-                str(fragment_path),
-                config
+            except Exception as e:
+                err_console.print(f"Error combining video fragments: {e}")
+                raise typer.Exit(code=1)
+            finally:
+                # Release every clip even if concatenation or encoding raised.
+                for clip in clips:
+                    clip.close()
+                if final_clip is not None:
+                    final_clip.close()
+        else:
+            err_console.print(
+                "No video fragments were created, so the final video could not be generated."
             )
-
-            if fragment_file:
-                video_fragments.append(fragment_file)
-
-            progress.update(process_task, advance=1)
-
-    # Combine video fragments
-    console.print("\n[bold]2. Combining Video Fragments...[/bold]")
-    if video_fragments:
-        try:
-            clips = [VideoFileClip(f) for f in video_fragments]
-            final_clip = concatenate_videoclips(clips)
-
-            video_settings = config["settings"]["video"]
-            final_clip.write_videofile(
-                output_filename,
-                fps=video_settings["fps"],
-                codec=video_settings["codec"],
-                audio_codec=video_settings["audio_codec"],
-                logger=None
-            )
-
-            # Clean up clips
-            for clip in clips:
-                clip.close()
-            final_clip.close()
-
-            console.print(
-                Panel(
-                    f"🎉 [bold green]Video creation complete![/bold green] 🎉\n\nOutput file: [yellow]{output_filename}[/yellow]",
-                    border_style="green",
-                    expand=False,
-                )
-            )
-        except Exception as e:
-            err_console.print(f"Error combining video fragments: {e}")
             raise typer.Exit(code=1)
-    else:
-        err_console.print(
-            "No video fragments were created, so the final video could not be generated."
-        )
-        raise typer.Exit(code=1)
 
-    # Cleanup
-    if config["settings"]["cleanup"]:
-        console.print("\n[bold]3. Cleaning up temporary files...[/bold]")
-        try:
-            for file_path in temp_dir.iterdir():
-                if file_path.is_file():
-                    file_path.unlink()
-            temp_dir.rmdir()
+    finally:
+        # Always remove our unique temp directory on every exit path (success or
+        # failure) when cleanup is enabled, so error paths never leak
+        # slide_stream_* directories on disk.
+        if config.get("settings", {}).get("cleanup", True):
+            console.print("\n[bold]3. Cleaning up temporary files...[/bold]")
+            shutil.rmtree(temp_dir, ignore_errors=True)
             console.print("✅ Cleanup complete.")
-        except Exception as e:
-            err_console.print(f"Warning: Could not clean up temporary files: {e}")
 
 
 @app.command()
 def init(
     output_path: Annotated[
         str,
-        typer.Argument(help="Path where to create the example configuration file.")
-    ] = "slidestream.yaml"
+        typer.Argument(help="Path where to create the example configuration file."),
+    ] = "slidestream.yaml",
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            "-f",
+            help="Overwrite the file if it already exists.",
+        ),
+    ] = False,
 ) -> None:
     """Create an example configuration file."""
+    target = Path(output_path)
+    if target.exists() and not force:
+        err_console.print(
+            f"{output_path} already exists. Re-run with --force to overwrite it."
+        )
+        raise typer.Exit(code=1)
     save_example_config(output_path)
 
 

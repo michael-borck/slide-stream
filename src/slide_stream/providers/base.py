@@ -12,12 +12,16 @@ class ImageProvider(ABC):
         self.config = config
 
     @abstractmethod
-    def generate_image(self, query: str, filename: str) -> str:
+    def generate_image(
+        self, query: str, filename: str, slide: dict[str, Any] | None = None
+    ) -> str:
         """Generate or download an image based on query.
 
         Args:
             query: Search query or prompt for image generation
             filename: Target filename to save the image
+            slide: Optional slide dict (title/content). The text provider renders
+                it; other providers ignore it and use ``query``.
 
         Returns:
             Path to the saved image file

@@ -114,7 +114,7 @@ class ProviderFactory:
     def list_tts_providers(cls) -> dict[str, str]:
         """Get list of available TTS providers."""
         return {
-            "gtts": "Google Text-to-Speech (free, always available)",
+            "gtts": "Google Text-to-Speech (free, no API key; requires an internet connection)",
             "elevenlabs": "ElevenLabs premium TTS (requires ElevenLabs API key)",
             "openai": "OpenAI TTS (requires OpenAI API key)",
             "openai-compatible": "Any OpenAI-compatible speech endpoint (set base_url; local or hosted)",

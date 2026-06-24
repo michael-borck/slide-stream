@@ -107,7 +107,7 @@ known-first-party = ["slide_stream"]
 
 [tool.basedpyright]
 include = ["src", "tests"]
-exclude = ["**/__pycache__"]
+exclude = ["**/__pycache__", "**/._*"]
 venvPath = "."
 venv = ".venv"
 pythonVersion = "3.10"

@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from pptx import Presentation
+from pptx.enum.shapes import PP_PLACEHOLDER
 
 
 def parse_powerpoint(file_path: str | Path) -> list[dict[str, Any]]:
@@ -32,24 +33,36 @@ def parse_powerpoint(file_path: str | Path) -> list[dict[str, Any]]:
         }
 
         # Extract slide content
+        title_set = False
         for shape in slide.shapes:
-            if shape.has_text_frame:
-                # Check if this might be a title (usually the first text shape or larger font)
-                text = shape.text.strip()  # type: ignore[attr-defined]
-                if not text:
-                    continue
+            if not shape.has_text_frame:
+                continue
+            text = shape.text.strip()  # type: ignore[attr-defined]
+            if not text:
+                continue
 
-                # If this is the first significant text and looks like a title
-                if (slide_data["title"] == f"Slide {slide_num}" and
-                    len(text) < 100 and
-                    '\n' not in text):
-                    slide_data["title"] = text
-                else:
-                    # Extract bullet points or paragraphs
-                    for paragraph in shape.text_frame.paragraphs:  # type: ignore[attr-defined]
-                        para_text = paragraph.text.strip()
-                        if para_text:
-                            slide_data["content"].append(para_text)
+            # Prefer a genuine title placeholder; fall back to the heuristic
+            # (first short, single-line text) only for layouts with no title slot.
+            is_title_placeholder = bool(
+                shape.is_placeholder  # type: ignore[attr-defined]
+                and shape.placeholder_format.type  # type: ignore[attr-defined]
+                in (PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE)
+            )
+            if not title_set and is_title_placeholder:
+                slide_data["title"] = text
+                title_set = True
+                continue
+
+            if not title_set and len(text) < 100 and "\n" not in text:
+                slide_data["title"] = text
+                title_set = True
+                continue
+
+            # Otherwise this is body content: extract bullet points / paragraphs.
+            for paragraph in shape.text_frame.paragraphs:  # type: ignore[attr-defined]
+                para_text = paragraph.text.strip()
+                if para_text:
+                    slide_data["content"].append(para_text)
 
         # Extract speaker notes
         if slide.has_notes_slide:
@@ -61,8 +74,10 @@ def parse_powerpoint(file_path: str | Path) -> list[dict[str, Any]]:
                         slide_data["notes"] = notes_text
                         break
 
-        # Only add slides that have meaningful content
-        if slide_data["content"] or slide_data["notes"]:
+        # Keep any slide with body content, speaker notes, or a real (non-default)
+        # title, so title-only / section-divider slides are not silently dropped.
+        has_real_title = slide_data["title"] != f"Slide {slide_num}"
+        if slide_data["content"] or slide_data["notes"] or has_real_title:
             slides.append(slide_data)
 
     return slides
