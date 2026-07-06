@@ -410,3 +410,120 @@ def test_factory_registers_did_and_strict(config, tmp_path):
     import pytest as _pytest
     with _pytest.raises(StrictModeError):
         ProviderFactory.create_avatar_provider(config)
+
+
+# --- SadTalker avatar provider (ComfyUI, network mocked) ---------------------
+
+
+def _sadtalker_config(config, **avatar):
+    config["providers"]["avatar"] = {"provider": "sadtalker", **avatar}
+    return config
+
+
+def test_sadtalker_availability_needs_url_and_source(config, monkeypatch):
+    from slide_stream.providers.avatar import SadTalkerAvatarProvider
+
+    monkeypatch.delenv("COMFYUI_BASE_URL", raising=False)
+    _sadtalker_config(config)
+    assert SadTalkerAvatarProvider(config).is_available() is False
+
+    _sadtalker_config(config, base_url="https://comfy.example.org")
+    assert SadTalkerAvatarProvider(config).is_available() is False
+
+    _sadtalker_config(config, base_url="https://comfy.example.org", source_image="/tmp/f.png")
+    assert SadTalkerAvatarProvider(config).is_available() is True
+
+
+def test_sadtalker_generate_flow(config, tmp_path, mocker, monkeypatch):
+    from slide_stream.providers.avatar import SadTalkerAvatarProvider
+
+    face = tmp_path / "face.png"
+    face.write_bytes(b"png")
+    audio = tmp_path / "a.wav"
+    audio.write_bytes(b"wav")
+    _sadtalker_config(
+        config, base_url="https://comfy.example.org", source_image=str(face),
+        preprocess="full", poll_interval=0,
+    )
+    # No ffmpeg in the test -> audio uploaded as-is.
+    monkeypatch.setattr("slide_stream.providers.avatar.shutil.which", lambda _: None)
+
+    img_up = mocker.MagicMock()
+    img_up.json.return_value = {"name": "face.png"}
+    aud_up = mocker.MagicMock()
+    aud_up.json.return_value = {"name": "a.wav"}
+    submit = mocker.MagicMock()
+    submit.json.return_value = {"prompt_id": "pid-1"}
+    post = mocker.patch(
+        "slide_stream.providers.avatar.requests.post",
+        side_effect=[img_up, aud_up, submit],
+    )
+
+    pending = mocker.MagicMock()
+    pending.json.return_value = {"pid-1": {"status": {"status_str": "pending"}}}
+    done = mocker.MagicMock()
+    done.json.return_value = {
+        "pid-1": {
+            "status": {"status_str": "success"},
+            "outputs": {"4": {"show_video_path": ["/basedir/output/out.mp4"]}},
+        }
+    }
+    clip = mocker.MagicMock(content=b"MP4")
+    get = mocker.patch(
+        "slide_stream.providers.avatar.requests.get",
+        side_effect=[pending, done, clip],
+    )
+    mocker.patch("slide_stream.providers.avatar.time.sleep")
+
+    out = tmp_path / "head_1.mp4"
+    result = SadTalkerAvatarProvider(config).generate(str(audio), str(out), 1)
+
+    assert result == str(out)
+    assert out.read_bytes() == b"MP4"
+    # Workflow submitted with the uploaded filenames + configured preprocess.
+    wf = post.call_args_list[2][1]["json"]["prompt"]
+    assert wf["1"]["inputs"]["image"] == "face.png"
+    assert wf["2"]["inputs"]["audio"] == "a.wav"
+    assert wf["3"]["inputs"]["preprocess"] == "full"
+    # Result downloaded via /view by basename.
+    assert get.call_args_list[-1][1]["params"] == {"filename": "out.mp4", "type": "output"}
+
+
+def test_sadtalker_workflow_error_returns_none(config, tmp_path, mocker, monkeypatch):
+    from slide_stream.providers.avatar import SadTalkerAvatarProvider
+
+    face = tmp_path / "f.png"
+    face.write_bytes(b"p")
+    audio = tmp_path / "a.wav"
+    audio.write_bytes(b"w")
+    _sadtalker_config(config, base_url="https://c.org", source_image=str(face), poll_interval=0)
+    monkeypatch.setattr("slide_stream.providers.avatar.shutil.which", lambda _: None)
+
+    img_up = mocker.MagicMock()
+    img_up.json.return_value = {"name": "f.png"}
+    aud_up = mocker.MagicMock()
+    aud_up.json.return_value = {"name": "a.wav"}
+    submit = mocker.MagicMock()
+    submit.json.return_value = {"prompt_id": "p"}
+    mocker.patch("slide_stream.providers.avatar.requests.post",
+                 side_effect=[img_up, aud_up, submit])
+    err = mocker.MagicMock()
+    err.json.return_value = {"p": {"status": {"status_str": "error"}}}
+    mocker.patch("slide_stream.providers.avatar.requests.get", return_value=err)
+    mocker.patch("slide_stream.providers.avatar.time.sleep")
+
+    result = SadTalkerAvatarProvider(config).generate(str(audio), str(tmp_path / "o.mp4"), 1)
+    assert result is None
+
+
+def test_find_show_video_path():
+    from slide_stream.providers.avatar import _find_show_video_path
+
+    assert _find_show_video_path(
+        {"4": {"show_video_path": ["/out/x.mp4"]}}
+    ) == "/out/x.mp4"
+    assert _find_show_video_path({"9": {"images": []}}) is None
+
+
+def test_factory_registers_sadtalker():
+    assert "sadtalker" in ProviderFactory.list_avatar_providers()

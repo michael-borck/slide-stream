@@ -1,6 +1,9 @@
 """Talking-head avatar provider implementations."""
 
 import os
+import shutil
+import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -9,6 +12,32 @@ import requests
 from rich.console import Console
 
 from .base import AvatarProvider
+
+# Proven SadTalker ComfyUI workflow (see docs referenced by sadtalker-api.md):
+# LoadImage + LoadAudio -> SadTalker -> ShowVideo (terminal node surfaces the
+# output path). Only the image/audio filenames and a few tuned params vary.
+SADTALKER_WORKFLOW: dict[str, Any] = {
+    "1": {"class_type": "LoadImage", "inputs": {"image": "portrait.png"}},
+    "2": {"class_type": "LoadAudio", "inputs": {"audio": "voice.wav"}},
+    "3": {
+        "class_type": "SadTalker",
+        "inputs": {
+            "image": ["1", 0],
+            "audio": ["2", 0],
+            "poseStyle": 0,
+            "faceModelResolution": "256",
+            "preprocess": "full",
+            "stillMode": True,
+            "batchSizeInGeneration": 2,
+            "gfpganAsFaceEnhancer": False,
+            "useIdleMode": False,
+            "idleModeTime": 5,
+            "useRefVideo": False,
+            "refInfo": "pose",
+        },
+    },
+    "4": {"class_type": "ShowVideo", "inputs": {"show_video_path": ["3", 1]}},
+}
 
 console = Console()
 err_console = Console(stderr=True, style="bold red")
@@ -205,3 +234,195 @@ class DIDAvatarProvider(AvatarProvider):
         except Exception as e:
             err_console.print(f"  - D-ID avatar error: {e}")
             return None
+
+
+class SadTalkerAvatarProvider(AvatarProvider):
+    """Self-hosted talking head via SadTalker running as a ComfyUI node.
+
+    Drives a ComfyUI server's native /prompt API with the proven SadTalker
+    workflow: the lecturer photo + each slide's narration audio -> a lip-synced
+    clip, composited by media.py. Family 1 (photo -> full-head synthesis);
+    ``stillMode`` defaults on to minimise head-bob jank in the corner circle.
+
+    Config (``providers.avatar``):
+      provider: sadtalker
+      base_url: https://comfyui.example.org
+      source_image: ./lecturer.png   # local path (uploaded once) or input/ name
+      api_key: "${COMFYUI_TOKEN}"    # optional Bearer, if fronted by auth
+    Optional SadTalker tuning: ``still_mode`` (bool), ``preprocess``,
+    ``face_resolution`` ("256"/"512"), ``pose_style`` (int),
+    ``face_enhancer`` (bool). Plus ``timeout`` (default 600s), ``poll_interval``.
+    """
+
+    def __init__(self, config: dict[str, Any]):
+        super().__init__(config)
+        # The source image is uploaded once per run; cache the input filename.
+        self._source_name: str | None = None
+
+    @property
+    def name(self) -> str:
+        return "sadtalker"
+
+    def _avatar_config(self) -> dict[str, Any]:
+        return self.config.get("providers", {}).get("avatar", {})
+
+    def _base_url(self) -> str | None:
+        base_url = self._avatar_config().get("base_url") or os.getenv("COMFYUI_BASE_URL")
+        return base_url.rstrip("/") if base_url else None
+
+    def _headers(self) -> dict[str, str]:
+        api_key = self._avatar_config().get("api_key") or os.getenv("COMFYUI_TOKEN")
+        return {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+    def _source_image(self) -> str | None:
+        return self._avatar_config().get("source_image")
+
+    def is_available(self) -> bool:
+        """Available when a ComfyUI URL and a source image are configured."""
+        return bool(self._base_url() and self._source_image())
+
+    def _upload(self, path: Path) -> str:
+        """Upload a file to ComfyUI's input/ dir; return its stored name."""
+        with open(path, "rb") as f:
+            response = requests.post(
+                f"{self._base_url()}/upload/image",
+                headers=self._headers(),
+                files={"image": (path.name, f)},
+                timeout=120,
+            )
+        response.raise_for_status()
+        return response.json()["name"]
+
+    def _ensure_source(self) -> str:
+        """Return the input/ filename for the source image, uploading once."""
+        if self._source_name:
+            return self._source_name
+        source = self._source_image()
+        if source is None:
+            raise ValueError("no source_image configured")
+        path = Path(source)
+        # A bare filename that is not a local file is assumed to already live in
+        # ComfyUI's input/ directory.
+        self._source_name = self._upload(path) if path.is_file() else source
+        if path.is_file():
+            console.print("  - Uploaded avatar source image to ComfyUI")
+        return self._source_name
+
+    def _build_workflow(self, image_name: str, audio_name: str) -> dict[str, Any]:
+        import copy
+
+        cfg = self._avatar_config()
+        wf = copy.deepcopy(SADTALKER_WORKFLOW)
+        wf["1"]["inputs"]["image"] = image_name
+        wf["2"]["inputs"]["audio"] = audio_name
+        sad = wf["3"]["inputs"]
+        sad["stillMode"] = bool(cfg.get("still_mode", True))
+        sad["preprocess"] = cfg.get("preprocess") or "full"
+        sad["faceModelResolution"] = str(cfg.get("face_resolution") or "256")
+        sad["poseStyle"] = int(cfg.get("pose_style") or 0)
+        sad["gfpganAsFaceEnhancer"] = bool(cfg.get("face_enhancer", False))
+        return wf
+
+    def generate(
+        self, audio_path: str, output_path: str, slide_num: int
+    ) -> str | None:
+        try:
+            base_url = self._base_url()
+            if not base_url:
+                raise ValueError("ComfyUI base_url not configured")
+            cfg = self._avatar_config()
+            timeout = float(cfg.get("timeout") or 600)
+            poll_interval = float(cfg.get("poll_interval") or 5)
+            headers = self._headers()
+
+            image_name = self._ensure_source()
+            # SadTalker loads audio at 16kHz; some installs crash resampling
+            # from other rates (librosa/resampy/numba mismatch). Feed 16kHz
+            # mono WAV so it never resamples.
+            audio_16k, is_temp = _to_16k_wav(audio_path)
+            try:
+                audio_name = self._upload(Path(audio_16k))
+            finally:
+                if is_temp:
+                    Path(audio_16k).unlink(missing_ok=True)
+            workflow = self._build_workflow(image_name, audio_name)
+
+            # 1. Submit the workflow.
+            submit = requests.post(
+                f"{base_url}/prompt",
+                headers={**headers, "content-type": "application/json"},
+                json={"prompt": workflow},
+                timeout=60,
+            )
+            submit.raise_for_status()
+            prompt_id = submit.json()["prompt_id"]
+
+            # 2. Poll history until success.
+            deadline = time.monotonic() + timeout
+            video_path: str | None = None
+            while time.monotonic() < deadline:
+                hist = requests.get(
+                    f"{base_url}/history/{prompt_id}", headers=headers, timeout=30
+                )
+                hist.raise_for_status()
+                data = hist.json()
+                entry = data.get(prompt_id)
+                if entry:
+                    status_str = entry.get("status", {}).get("status_str")
+                    if status_str == "success":
+                        video_path = _find_show_video_path(entry.get("outputs", {}))
+                        break
+                    if status_str == "error":
+                        raise ValueError(f"ComfyUI workflow error: {entry.get('status')}")
+                time.sleep(poll_interval)
+
+            if not video_path:
+                raise TimeoutError(f"SadTalker render timed out after {timeout:.0f}s")
+
+            # 3. Download the result via /view.
+            clip = requests.get(
+                f"{base_url}/view",
+                headers=headers,
+                params={"filename": Path(video_path).name, "type": "output"},
+                timeout=timeout,
+            )
+            clip.raise_for_status()
+            with open(output_path, "wb") as f:
+                f.write(clip.content)
+            console.print(f"  - Generated SadTalker talking head (slide {slide_num})")
+            return output_path
+
+        except Exception as e:
+            err_console.print(f"  - SadTalker avatar error: {e}")
+            return None
+
+
+def _to_16k_wav(audio_path: str) -> tuple[str, bool]:
+    """Return a 16kHz mono WAV path for the audio, converting via ffmpeg.
+
+    Returns (path, is_temporary). If ffmpeg is unavailable, returns the input
+    unchanged so upload is still attempted.
+    """
+    if not shutil.which("ffmpeg"):
+        return audio_path, False
+    fd, converted = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-i", audio_path,
+             "-ar", "16000", "-ac", "1", converted],
+            check=True,
+        )
+    except Exception:
+        Path(converted).unlink(missing_ok=True)
+        return audio_path, False
+    return converted, True
+
+
+def _find_show_video_path(outputs: dict[str, Any]) -> str | None:
+    """Pull the ShowVideo node's output path out of a ComfyUI history entry."""
+    for node_output in outputs.values():
+        paths = node_output.get("show_video_path") if isinstance(node_output, dict) else None
+        if paths:
+            return paths[0]
+    return None

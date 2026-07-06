@@ -4,7 +4,12 @@ from typing import Any
 
 from rich.console import Console
 
-from .avatar import DIDAvatarProvider, NoneAvatarProvider, PrecomputedAvatarProvider
+from .avatar import (
+    DIDAvatarProvider,
+    NoneAvatarProvider,
+    PrecomputedAvatarProvider,
+    SadTalkerAvatarProvider,
+)
 from .base import (
     AvatarProvider,
     ImageProvider,
@@ -63,6 +68,7 @@ class ProviderFactory:
         "none": NoneAvatarProvider,
         "precomputed": PrecomputedAvatarProvider,
         "d-id": DIDAvatarProvider,
+        "sadtalker": SadTalkerAvatarProvider,
     }
 
     @classmethod
@@ -201,6 +207,7 @@ class ProviderFactory:
             "none": "Avatar disabled (default)",
             "precomputed": "Pre-supplied head clips: assets_dir/head_N.mp4 (no GPU or service needed)",
             "d-id": "D-ID lip-synced talking head from a source image (BYOK; requires DID_API_KEY + source_image)",
+            "sadtalker": "Self-hosted SadTalker via a ComfyUI server (set base_url + source_image; no per-image cost)",
         }
 
     @classmethod

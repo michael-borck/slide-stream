@@ -141,13 +141,17 @@ def create_video_fragment(
             # Combine with audio (MoviePy 2.x: .with_audio())
             final_clip = image_clip.with_audio(audio_clip) if audio_clip else image_clip
 
-            # Write video file
-            final_clip.write_videofile(
-                output_path,
-                fps=video_settings["fps"],
-                codec=video_settings["codec"],
-                logger=None,
-            )
+            # Write video file. Pass the audio codec (default aac) so fragments
+            # are playable everywhere — MoviePy otherwise defaults to mp3, which
+            # QuickTime won't play inside an mp4 container.
+            write_kwargs: dict = {
+                "fps": video_settings["fps"],
+                "codec": video_settings["codec"],
+                "logger": None,
+            }
+            if audio_clip is not None:
+                write_kwargs["audio_codec"] = video_settings.get("audio_codec", "aac")
+            final_clip.write_videofile(output_path, **write_kwargs)
 
             return output_path
         finally:

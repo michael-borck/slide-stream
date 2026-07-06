@@ -265,6 +265,15 @@ providers:
   # avatar:
   #   provider: precomputed
   #   assets_dir: ./heads
+  #
+  # Talking-head from a photo:
+  #   provider: sadtalker           # self-hosted via a ComfyUI server
+  #   base_url: https://comfyui.example.org
+  #   source_image: ./me.png
+  # ...or the hosted BYOK option (bills per minute of video):
+  #   provider: d-id
+  #   source_image: ./me.png
+  #   api_key: "${DID_API_KEY}"
 
 # --- Fully offline TTS (no cloud, no API key) ------------------------------
 # Requires: pip install "slide-stream[local-tts]"
