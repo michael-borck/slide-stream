@@ -1,5 +1,6 @@
 """Command line interface for Slide Stream."""
 
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -467,6 +468,83 @@ def init(
         )
         raise typer.Exit(code=1)
     save_example_config(output_path)
+
+
+# Ephemeral per-run voice uploads are named <uuid4>.<ext>; they are internal
+# plumbing and must never be shown to users as selectable voices.
+_UUID_VOICE_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.[a-z0-9]+)?$",
+    re.IGNORECASE,
+)
+
+
+def _is_uuid_voice(name: str) -> bool:
+    """True for ephemeral UUID-named voice files (hidden from listings)."""
+    return bool(_UUID_VOICE_RE.match(name))
+
+
+@app.command()
+def voices(
+    config_file: Annotated[
+        str | None,
+        typer.Option("--config", "-c", help="Path to configuration file (YAML)."),
+    ] = None,
+) -> None:
+    """List voices available on the configured Chatterbox/TTS server."""
+    import requests
+
+    try:
+        config = load_config(config_file)
+    except ConfigurationError as e:
+        err_console.print(f"Configuration Error: {e}")
+        raise typer.Exit(code=1)
+
+    tts_config = config.get("providers", {}).get("tts", {})
+    base_url = tts_config.get("base_url")
+    if not base_url:
+        err_console.print(
+            "No TTS server configured (providers.tts.base_url). The 'voices' "
+            "command lists voices from a Chatterbox or OpenAI-compatible server."
+        )
+        raise typer.Exit(code=1)
+    base_url = base_url.rstrip("/").removesuffix("/v1")
+
+    api_key = tts_config.get("api_key") or config.get("api_keys", {}).get("chatterbox")
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+    def fetch(path: str) -> list[str]:
+        response = requests.get(f"{base_url}{path}", headers=headers, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        items = data.get("voices", data) if isinstance(data, dict) else data
+        return [str(v) for v in items]
+
+    try:
+        stock = fetch("/v1/audio/voices")
+    except Exception as e:
+        err_console.print(f"Could not reach TTS server at {base_url}: {e}")
+        raise typer.Exit(code=1)
+
+    try:
+        references = fetch("/get_reference_files")
+    except Exception:
+        references = []  # non-Chatterbox servers don't have this endpoint
+
+    table = Table(title=f"Voices on {base_url}")
+    table.add_column("Voice", style="cyan")
+    table.add_column("Type")
+    for name in sorted(stock):
+        if not _is_uuid_voice(name):
+            table.add_row(name, "stock")
+    for name in sorted(references):
+        if not _is_uuid_voice(name):
+            table.add_row(name, "reference")
+    console.print(table)
+    console.print(
+        "\n[dim]💡 Use providers.tts.voice for any listed voice, or "
+        "providers.tts.voice_sample: /path/to/you.wav for an ephemeral, "
+        "privacy-first clone of your own voice (10-30s of clean speech).[/dim]"
+    )
 
 
 @app.command()

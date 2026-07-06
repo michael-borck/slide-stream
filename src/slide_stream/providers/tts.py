@@ -185,6 +185,149 @@ class KokoroTTSProvider(TTSProvider):
         return gtts_provider.synthesize(text, filename)
 
 
+class ChatterboxTTSProvider(TTSProvider):
+    """Voice cloning via a self-hosted Chatterbox TTS server (devnen).
+
+    Privacy-first flow: when ``voice_sample`` points at a local reference
+    recording, it is uploaded once per run under a random UUID filename and
+    used for every slide, so no lecturer-recognisable voice name ever exists
+    on the server, and a server-side cleanup job (see contrib/chatterbox/)
+    removes UUID files afterwards. Alternatively set ``voice`` to a stock
+    voice or an existing server-side reference file.
+
+    References shorter than ~5 seconds are rejected by the engine; 10-30
+    seconds of clean speech is recommended.
+    """
+
+    # One uploaded sample per provider instance (i.e. per run).
+    _session_voice: str | None = None
+
+    @property
+    def name(self) -> str:
+        return "chatterbox"
+
+    def _tts_config(self) -> dict[str, Any]:
+        return self.config.get("providers", {}).get("tts", {})
+
+    def _base_url(self) -> str | None:
+        base_url = self._tts_config().get("base_url") or os.getenv("CHATTERBOX_BASE_URL")
+        if not base_url:
+            return None
+        # Accept a base_url with or without the OpenAI-style /v1 suffix.
+        return base_url.rstrip("/").removesuffix("/v1")
+
+    def _api_key(self) -> str | None:
+        return (
+            self._tts_config().get("api_key")
+            or self.config.get("api_keys", {}).get("chatterbox")
+            or os.getenv("CHATTERBOX_TOKEN")
+        )
+
+    def _headers(self) -> dict[str, str]:
+        api_key = self._api_key()
+        return {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+    def is_available(self) -> bool:
+        """Available when a server URL and a voice source are configured."""
+        tts_config = self._tts_config()
+        return bool(
+            self._base_url()
+            and (tts_config.get("voice") or tts_config.get("voice_sample"))
+        )
+
+    def _warn_if_sample_too_short(self, sample_path: Path) -> None:
+        """The engine fails on very short references; warn before uploading."""
+        if sample_path.suffix.lower() != ".wav":
+            return
+        try:
+            import wave
+
+            with wave.open(str(sample_path), "rb") as w:
+                seconds = w.getnframes() / (w.getframerate() or 1)
+            if seconds < 5:
+                err_console.print(
+                    f"  - Warning: voice sample is only {seconds:.1f}s; "
+                    "references under ~5s usually fail. Use 10-30s."
+                )
+        except Exception:
+            pass
+
+    def _ensure_voice(self) -> str:
+        """Return the server-side voice name, uploading the sample if needed."""
+        tts_config = self._tts_config()
+        voice_sample = tts_config.get("voice_sample")
+        if not voice_sample:
+            return tts_config.get("voice") or "default"
+
+        if self._session_voice:
+            return self._session_voice
+
+        import uuid
+
+        sample_path = Path(voice_sample)
+        if not sample_path.is_file():
+            raise FileNotFoundError(f"voice_sample not found: {voice_sample}")
+        self._warn_if_sample_too_short(sample_path)
+
+        session_voice = f"{uuid.uuid4()}{sample_path.suffix.lower() or '.wav'}"
+        with open(sample_path, "rb") as f:
+            response = requests.post(
+                f"{self._base_url()}/upload_reference",
+                files={"files": (session_voice, f)},
+                headers=self._headers(),
+                timeout=60,
+            )
+        response.raise_for_status()
+        console.print(
+            f"  - Uploaded voice sample as ephemeral reference {session_voice}"
+        )
+        self._session_voice = session_voice
+        return session_voice
+
+    def synthesize(self, text: str, filename: str) -> str | None:
+        """Convert text to speech via the Chatterbox server."""
+        try:
+            tts_config = self._tts_config()
+            voice = self._ensure_voice()
+
+            payload: dict[str, Any] = {
+                "model": "tts-1",
+                "input": text,
+                "voice": voice,
+                "response_format": "wav",
+                "speed": float(tts_config.get("speed") or 1.0),
+            }
+            if tts_config.get("language"):
+                payload["language"] = tts_config["language"]
+
+            response = requests.post(
+                f"{self._base_url()}/v1/audio/speech",
+                json=payload,
+                headers=self._headers(),
+                timeout=float(tts_config.get("timeout") or 300),
+            )
+            response.raise_for_status()
+
+            with open(filename, "wb") as f:
+                f.write(response.content)
+            console.print(f"  - Generated audio with Chatterbox ({voice})")
+            return filename
+
+        except Exception as e:
+            err_console.print(f"  - Chatterbox error: {e}. Using gTTS fallback.")
+            return self._fallback_to_gtts(text, filename)
+
+    def _fallback_to_gtts(self, text: str, filename: str) -> str | None:
+        """Fallback to gTTS, unless strict mode disables fallbacks."""
+        if is_strict(self.config):
+            err_console.print(
+                f"  - Strict mode: not falling back to gTTS after {self.name} failed."
+            )
+            return None
+        gtts_provider = GTTSProvider(self.config)
+        return gtts_provider.synthesize(text, filename)
+
+
 class ElevenLabsTTSProvider(TTSProvider):
     """ElevenLabs premium text-to-speech provider."""
 

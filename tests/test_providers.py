@@ -550,3 +550,139 @@ def test_factory_strict_raises_for_unavailable_kokoro(config, monkeypatch):
 
     with pytest.raises(StrictModeError):
         ProviderFactory.create_tts_provider(config)
+
+
+# --- Chatterbox provider (network mocked) ------------------------------------
+
+
+def _chatterbox_config(config, **tts_overrides):
+    config["providers"]["tts"] = {
+        "provider": "chatterbox",
+        "base_url": "https://cb.example.org",
+        **tts_overrides,
+    }
+    return config
+
+
+def test_chatterbox_availability_needs_url_and_voice(config, monkeypatch):
+    monkeypatch.delenv("CHATTERBOX_BASE_URL", raising=False)
+    monkeypatch.delenv("CHATTERBOX_TOKEN", raising=False)
+    from slide_stream.providers.tts import ChatterboxTTSProvider
+
+    config["providers"]["tts"] = {"provider": "chatterbox"}
+    assert ChatterboxTTSProvider(config).is_available() is False
+
+    _chatterbox_config(config)  # url but no voice source
+    assert ChatterboxTTSProvider(config).is_available() is False
+
+    _chatterbox_config(config, voice="Emily.wav")
+    assert ChatterboxTTSProvider(config).is_available() is True
+
+    _chatterbox_config(config, voice_sample="/tmp/me.wav")
+    assert ChatterboxTTSProvider(config).is_available() is True
+
+
+def test_chatterbox_stock_voice_synthesis(config, tmp_path, mocker):
+    from slide_stream.providers.tts import ChatterboxTTSProvider
+
+    _chatterbox_config(config, voice="Emily.wav", api_key="sekret")
+    out = tmp_path / "audio.mp3"
+
+    fake_response = mocker.MagicMock(content=b"RIFFfake")
+    post = mocker.patch(
+        "slide_stream.providers.tts.requests.post", return_value=fake_response
+    )
+
+    result = ChatterboxTTSProvider(config).synthesize("Hello", str(out))
+
+    assert result == str(out)
+    assert out.read_bytes() == b"RIFFfake"
+    url = post.call_args[0][0]
+    kwargs = post.call_args[1]
+    assert url == "https://cb.example.org/v1/audio/speech"
+    assert kwargs["json"]["voice"] == "Emily.wav"
+    assert kwargs["headers"]["Authorization"] == "Bearer sekret"
+
+
+def test_chatterbox_base_url_v1_suffix_stripped(config, tmp_path, mocker):
+    from slide_stream.providers.tts import ChatterboxTTSProvider
+
+    _chatterbox_config(config, voice="Emily.wav", base_url="https://cb.example.org/v1/")
+    fake_response = mocker.MagicMock(content=b"RIFFfake")
+    post = mocker.patch(
+        "slide_stream.providers.tts.requests.post", return_value=fake_response
+    )
+
+    ChatterboxTTSProvider(config).synthesize("Hello", str(tmp_path / "a.mp3"))
+
+    assert post.call_args[0][0] == "https://cb.example.org/v1/audio/speech"
+
+
+def test_chatterbox_voice_sample_uploads_uuid_once(config, tmp_path, mocker):
+    """voice_sample mode: uploads under a UUID name once, reuses it for every
+    slide in the run, and never sends the user's original filename."""
+    import uuid as uuid_mod
+
+    from slide_stream.providers.tts import ChatterboxTTSProvider
+
+    sample = tmp_path / "michael-voice.wav"
+    sample.write_bytes(b"fake-sample")
+    _chatterbox_config(config, voice_sample=str(sample))
+
+    fake_response = mocker.MagicMock(content=b"RIFFfake")
+    post = mocker.patch(
+        "slide_stream.providers.tts.requests.post", return_value=fake_response
+    )
+
+    provider = ChatterboxTTSProvider(config)
+    provider.synthesize("Slide one", str(tmp_path / "1.mp3"))
+    provider.synthesize("Slide two", str(tmp_path / "2.mp3"))
+
+    upload_calls = [c for c in post.call_args_list if c[0][0].endswith("/upload_reference")]
+    speech_calls = [c for c in post.call_args_list if c[0][0].endswith("/v1/audio/speech")]
+    assert len(upload_calls) == 1  # one upload for the whole run
+    assert len(speech_calls) == 2
+
+    uploaded_name = upload_calls[0][1]["files"]["files"][0]
+    assert uploaded_name.endswith(".wav")
+    uuid_mod.UUID(uploaded_name.removesuffix(".wav"))  # valid UUID or raises
+    assert "michael" not in uploaded_name
+    # Both speech calls used the ephemeral UUID voice.
+    for call in speech_calls:
+        assert call[1]["json"]["voice"] == uploaded_name
+
+
+def test_chatterbox_strict_failure_returns_none(config, tmp_path, mocker):
+    from slide_stream.providers.tts import ChatterboxTTSProvider
+
+    _chatterbox_config(config, voice="Emily.wav")
+    config["settings"]["strict"] = True
+    mocker.patch(
+        "slide_stream.providers.tts.requests.post",
+        side_effect=RuntimeError("server down"),
+    )
+
+    assert ChatterboxTTSProvider(config).synthesize("x", str(tmp_path / "a.mp3")) is None
+
+
+def test_chatterbox_missing_sample_fails_cleanly(config, tmp_path):
+    from slide_stream.providers.tts import ChatterboxTTSProvider
+
+    _chatterbox_config(config, voice_sample=str(tmp_path / "nope.wav"))
+    config["settings"]["strict"] = True
+
+    assert ChatterboxTTSProvider(config).synthesize("x", str(tmp_path / "a.mp3")) is None
+
+
+# --- UUID voice filtering -----------------------------------------------------
+
+
+def test_uuid_voice_filter():
+    from slide_stream.cli import _is_uuid_voice
+
+    assert _is_uuid_voice("c7e37659-03f8-4781-8bd9-f6ec70ca9f5a.wav") is True
+    assert _is_uuid_voice("AA6B8FDE-C9AF-4B0A-A023-E7D5F6294EE7.WAV") is True
+    assert _is_uuid_voice("c7e37659-03f8-4781-8bd9-f6ec70ca9f5a") is True
+    assert _is_uuid_voice("michael.wav") is False
+    assert _is_uuid_voice("Emily.wav") is False
+    assert _is_uuid_voice("deadbeef.wav") is False

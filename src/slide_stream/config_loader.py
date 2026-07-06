@@ -207,6 +207,24 @@ providers:
 #     voice: af_sarah
 # ---------------------------------------------------------------------------
 
+# --- Privacy-first cloned voice (self-hosted Chatterbox) ------------------
+# Your reference recording is uploaded under a random UUID name for THIS RUN
+# ONLY, so no lecturer-recognisable voice ever exists on the server; a
+# server-side cron (contrib/chatterbox/cleanup_uuid_voices.sh) reaps the
+# UUID files. Use 10-30s of clean speech (under ~5s fails). List selectable
+# voices with: slide-stream voices
+#
+# providers:
+#   tts:
+#     provider: chatterbox
+#     base_url: https://chatterbox.example.org
+#     voice_sample: ./my_voice.wav      # ephemeral clone of YOUR voice
+#     # voice: Emily.wav                # ...or a stock server voice instead
+#     api_key: "${CHATTERBOX_TOKEN}"    # if your proxy checks a Bearer token
+# settings:
+#   strict: true                        # never fall back to the wrong voice
+# ---------------------------------------------------------------------------
+
 # --- Fully local / self-hosted stack -------------------------------------
 # Point every layer at an OpenAI-compatible server (LocalAI, vLLM,
 # openedai-speech, Kokoro-FastAPI, ...). No cloud keys required.

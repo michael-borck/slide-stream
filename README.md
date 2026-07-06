@@ -301,9 +301,36 @@ sudo apt update && sudo apt install ffmpeg
 **TTS Providers:**
 - `gtts`: Free, always available (needs internet)
 - `kokoro`: Fully offline, no API key — `pip install "slide-stream[local-tts]"` (~340MB one-time model download; voices include `af_sarah`, `af_bella`, `am_adam`, `am_michael`)
+- `chatterbox`: Voice cloning via a self-hosted [Chatterbox TTS Server](https://github.com/devnen/Chatterbox-TTS-Server) (`base_url`); see "Privacy-first voice cloning" below
 - `elevenlabs`: Requires `ELEVENLABS_API_KEY`
 - `openai`: Requires `OPENAI_API_KEY`
 - `openai-compatible`: Any OpenAI-compatible speech endpoint via `base_url` (local or hosted)
+
+### Privacy-first voice cloning
+
+The `chatterbox` provider narrates videos in your own voice without storing it
+on the server between runs:
+
+```yaml
+providers:
+  tts:
+    provider: chatterbox
+    base_url: https://chatterbox.example.org
+    voice_sample: ./my_voice.wav       # 10-30s of clean speech (<5s fails)
+    api_key: "${CHATTERBOX_TOKEN}"     # if your proxy checks a Bearer token
+settings:
+  strict: true                         # never fall back to the wrong voice
+```
+
+- `voice_sample` is uploaded **once per run under a random UUID filename** and
+  referenced only for that render — no recognisable voice name ever exists on
+  the server, and other users can neither find nor select it.
+- Schedule `contrib/chatterbox/cleanup_uuid_voices.sh` on the server (cron) to
+  delete UUID files after a grace period. Zero-shot cloning has no training
+  step, so re-uploading each run costs only ~1-2 seconds.
+- Prefer a stock server voice instead? Set `voice: Emily.wav` (or any name
+  from `slide-stream voices`, which lists server voices and hides ephemeral
+  UUID uploads).
 
 **Avatar Providers (talking-head overlay):**
 - `none`: Disabled (default)

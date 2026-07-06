@@ -20,6 +20,7 @@ from .images import (
     UnsplashImageProvider,
 )
 from .tts import (
+    ChatterboxTTSProvider,
     ElevenLabsTTSProvider,
     GTTSProvider,
     KokoroTTSProvider,
@@ -46,6 +47,7 @@ class ProviderFactory:
     TTS_PROVIDERS: dict[str, type[TTSProvider]] = {
         "gtts": GTTSProvider,
         "kokoro": KokoroTTSProvider,
+        "chatterbox": ChatterboxTTSProvider,
         "elevenlabs": ElevenLabsTTSProvider,
         "openai": OpenAITTSProvider,
         "openai-compatible": OpenAICompatTTSProvider,
@@ -176,6 +178,7 @@ class ProviderFactory:
         return {
             "gtts": "Google Text-to-Speech (free, no API key; requires an internet connection)",
             "kokoro": "Kokoro local TTS — fully offline (pip install 'slide-stream[local-tts]'; ~340MB one-time model download)",
+            "chatterbox": "Self-hosted Chatterbox voice cloning (set base_url; voice_sample uploads ephemerally per run)",
             "elevenlabs": "ElevenLabs premium TTS (requires ElevenLabs API key)",
             "openai": "OpenAI TTS (requires OpenAI API key)",
             "openai-compatible": "Any OpenAI-compatible speech endpoint (set base_url; local or hosted)",
