@@ -2,6 +2,9 @@
 
 import importlib.util
 import os
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -252,6 +255,36 @@ class ChatterboxTTSProvider(TTSProvider):
         except Exception:
             pass
 
+    def _prepare_sample(self, sample_path: Path) -> tuple[Path, bool]:
+        """Return a WAV path for the sample, converting via ffmpeg if needed.
+
+        Voice Memos and phone recordings arrive as .m4a/.mp3; the engine is
+        happiest with WAV, so convert to 24kHz mono before uploading. Returns
+        (path, is_temporary).
+        """
+        if sample_path.suffix.lower() == ".wav":
+            return sample_path, False
+        if not shutil.which("ffmpeg"):
+            raise RuntimeError(
+                "ffmpeg is required to convert a non-WAV voice_sample "
+                f"({sample_path.suffix}). Install it or supply a .wav file."
+            )
+        fd, converted = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-loglevel", "error",
+                "-i", str(sample_path),
+                "-ar", "24000", "-ac", "1",
+                converted,
+            ],
+            check=True,
+        )
+        console.print(
+            f"  - Converted voice sample {sample_path.name} to WAV for upload"
+        )
+        return Path(converted), True
+
     def _ensure_voice(self) -> str:
         """Return the server-side voice name, uploading the sample if needed."""
         tts_config = self._tts_config()
@@ -267,17 +300,22 @@ class ChatterboxTTSProvider(TTSProvider):
         sample_path = Path(voice_sample)
         if not sample_path.is_file():
             raise FileNotFoundError(f"voice_sample not found: {voice_sample}")
-        self._warn_if_sample_too_short(sample_path)
 
-        session_voice = f"{uuid.uuid4()}{sample_path.suffix.lower() or '.wav'}"
-        with open(sample_path, "rb") as f:
-            response = requests.post(
-                f"{self._base_url()}/upload_reference",
-                files={"files": (session_voice, f)},
-                headers=self._headers(),
-                timeout=60,
-            )
-        response.raise_for_status()
+        upload_path, is_temporary = self._prepare_sample(sample_path)
+        try:
+            self._warn_if_sample_too_short(upload_path)
+            session_voice = f"{uuid.uuid4()}.wav"
+            with open(upload_path, "rb") as f:
+                response = requests.post(
+                    f"{self._base_url()}/upload_reference",
+                    files={"files": (session_voice, f)},
+                    headers=self._headers(),
+                    timeout=60,
+                )
+            response.raise_for_status()
+        finally:
+            if is_temporary:
+                upload_path.unlink(missing_ok=True)
         console.print(
             f"  - Uploaded voice sample as ephemeral reference {session_voice}"
         )

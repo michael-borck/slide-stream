@@ -686,3 +686,45 @@ def test_uuid_voice_filter():
     assert _is_uuid_voice("michael.wav") is False
     assert _is_uuid_voice("Emily.wav") is False
     assert _is_uuid_voice("deadbeef.wav") is False
+
+
+def test_chatterbox_converts_m4a_sample_to_wav(config, tmp_path, mocker):
+    """Voice Memos-style .m4a samples are converted to WAV (real ffmpeg)
+    before the UUID upload; the temp WAV is cleaned up afterwards."""
+    import subprocess
+    import wave
+
+    from slide_stream.providers.tts import ChatterboxTTSProvider
+
+    # Build a real m4a: 1s of silence, wav -> m4a via ffmpeg.
+    src_wav = tmp_path / "memo.wav"
+    with wave.open(str(src_wav), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(24000)
+        w.writeframes(b"\x00\x00" * 24000)
+    sample = tmp_path / "memo.m4a"
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-i", str(src_wav), str(sample)],
+        check=True,
+    )
+
+    _chatterbox_config(config, voice_sample=str(sample))
+    uploaded = {}
+
+    def fake_post(url, **kwargs):
+        if url.endswith("/upload_reference"):
+            name, fileobj = kwargs["files"]["files"]
+            uploaded["name"] = name
+            uploaded["head"] = fileobj.read(4)
+        response = mocker.MagicMock(content=b"RIFFfake")
+        return response
+
+    mocker.patch("slide_stream.providers.tts.requests.post", side_effect=fake_post)
+
+    out = tmp_path / "a.mp3"
+    result = ChatterboxTTSProvider(config).synthesize("hello", str(out))
+
+    assert result == str(out)
+    assert uploaded["name"].endswith(".wav")
+    assert uploaded["head"] == b"RIFF"  # genuinely converted to WAV
