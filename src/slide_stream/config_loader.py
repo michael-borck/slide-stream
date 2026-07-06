@@ -243,10 +243,14 @@ providers:
     # narrated via vision-capable providers (claude, openai, gemini).
 
   images:
-    provider: dalle3        # text, local, dalle3, gemini, openai-compatible, pexels, unsplash
+    provider: dalle3        # text, local, dalle3, gemini, swarmui, openai-compatible, pexels, unsplash
     fallback: text         # fallback when primary fails
     # folder: ./images     # for the 'local' provider — matched by filename keywords
     # model: imagen-4.0-fast-generate-001   # for the 'gemini' (Imagen) provider
+    # --- self-hosted SwarmUI ---
+    # base_url: https://image.example.org
+    # model: juggernautXL_v9   # SwarmUI model name
+    # steps: 20
 
   tts:
     provider: elevenlabs   # gtts, kokoro, elevenlabs, openai, openai-compatible

@@ -795,3 +795,86 @@ def test_gemini_image_success_with_mocked_sdk(config, tmp_path, monkeypatch, moc
 
 def test_factory_registers_gemini_image_provider():
     assert "gemini" in ProviderFactory.list_image_providers()
+
+
+# --- SwarmUI image provider (network mocked) ---------------------------------
+
+
+def test_swarmui_availability_needs_base_url(config, monkeypatch):
+    from slide_stream.providers.images import SwarmUIImageProvider
+
+    monkeypatch.delenv("SWARMUI_BASE_URL", raising=False)
+    config["providers"]["images"] = {"provider": "swarmui"}
+    assert SwarmUIImageProvider(config).is_available() is False
+
+    config["providers"]["images"]["base_url"] = "https://image.example.org"
+    assert SwarmUIImageProvider(config).is_available() is True
+
+
+def test_swarmui_generate_flow(config, tmp_path, mocker):
+    """session -> generate -> fetch path -> save bytes; model passed through."""
+    from slide_stream.providers.images import SwarmUIImageProvider
+
+    config["providers"]["images"] = {
+        "provider": "swarmui",
+        "base_url": "https://image.example.org",
+        "model": "juggernautXL_v9",
+        "steps": 20,
+    }
+
+    session_resp = mocker.MagicMock()
+    session_resp.json.return_value = {"session_id": "sess-123"}
+    gen_resp = mocker.MagicMock()
+    gen_resp.json.return_value = {"images": ["View/local/0.png"]}
+    img_resp = mocker.MagicMock(content=b"\x89PNG-swarm")
+
+    post = mocker.patch(
+        "slide_stream.providers.images.requests.post",
+        side_effect=[session_resp, gen_resp],
+    )
+    get = mocker.patch(
+        "slide_stream.providers.images.requests.get", return_value=img_resp
+    )
+
+    out = tmp_path / "img.png"
+    result = SwarmUIImageProvider(config).generate_image("a red bicycle", str(out))
+
+    assert result == str(out)
+    assert out.read_bytes() == b"\x89PNG-swarm"
+    # GenerateText2Image got the session id, model, and steps.
+    gen_call = post.call_args_list[1]
+    assert gen_call[0][0].endswith("/API/GenerateText2Image")
+    body = gen_call[1]["json"]
+    assert body["session_id"] == "sess-123"
+    assert body["model"] == "juggernautXL_v9"
+    assert body["steps"] == 20
+    # Image fetched from the returned server path.
+    assert get.call_args[0][0] == "https://image.example.org/View/local/0.png"
+
+
+def test_swarmui_no_model_falls_back_to_text(config, tmp_path, mocker):
+    from slide_stream.providers.images import SwarmUIImageProvider
+
+    config["providers"]["images"] = {
+        "provider": "swarmui",
+        "base_url": "https://image.example.org",
+    }
+    session_resp = mocker.MagicMock()
+    session_resp.json.return_value = {"session_id": "s"}
+    gen_resp = mocker.MagicMock()
+    gen_resp.json.return_value = {"error": "No model input given."}
+    mocker.patch(
+        "slide_stream.providers.images.requests.post",
+        side_effect=[session_resp, gen_resp],
+    )
+
+    out = tmp_path / "img.png"
+    result = SwarmUIImageProvider(config).generate_image(
+        "topic", str(out), slide={"title": "T", "content": ["a"]}
+    )
+    assert result == str(out)
+    assert out.exists()  # text fallback rendered
+
+
+def test_factory_registers_swarmui_provider():
+    assert "swarmui" in ProviderFactory.list_image_providers()

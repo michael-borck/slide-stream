@@ -211,6 +211,103 @@ class LocalImageProvider(ImageProvider):
         return TextImageProvider(self.config).generate_image(query, filename, slide=slide)
 
 
+class SwarmUIImageProvider(ImageProvider):
+    """Generate images via a self-hosted SwarmUI server's native API.
+
+    SwarmUI does not speak the OpenAI /v1/images shape, so this provider uses
+    its GetNewSession -> GenerateText2Image -> fetch-path flow. Point
+    ``providers.images.base_url`` at the SwarmUI server (e.g.
+    https://image.example.org). Optional settings: ``model`` (SwarmUI model
+    name; omit to use the server's loaded model), ``steps``, ``width``,
+    ``height``, ``timeout``, and ``api_key`` (Bearer, if fronted by auth).
+    Falls back to a text image on any error.
+    """
+
+    @property
+    def name(self) -> str:
+        return "swarmui"
+
+    def _settings(self) -> dict[str, Any]:
+        return self.config.get("providers", {}).get("images", {})
+
+    def _base_url(self) -> str | None:
+        base_url = self._settings().get("base_url") or os.getenv("SWARMUI_BASE_URL")
+        return base_url.rstrip("/") if base_url else None
+
+    def _headers(self) -> dict[str, str]:
+        api_key = self._settings().get("api_key") or os.getenv("SWARMUI_TOKEN")
+        return {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+    def is_available(self) -> bool:
+        return bool(self._base_url())
+
+    def generate_image(self, query: str, filename: str, slide: dict[str, Any] | None = None) -> str:
+        """Generate an image via SwarmUI's native text-to-image API."""
+        try:
+            base_url = self._base_url()
+            if not base_url:
+                raise ValueError("SwarmUI base_url not configured")
+            settings = self._settings()
+            headers = self._headers()
+            timeout = float(settings.get("timeout") or 180)
+
+            # 1. Open a session.
+            session = requests.post(
+                f"{base_url}/API/GetNewSession", json={}, headers=headers, timeout=30
+            )
+            session.raise_for_status()
+            session_id = session.json()["session_id"]
+
+            # 2. Generate. Default to a 16:9 size the video pipeline can scale.
+            prompt = (
+                f"A professional, clean image for a presentation slide about: "
+                f"{query}. High quality, suitable for business presentation, "
+                f"no text overlay."
+            )
+            payload: dict[str, Any] = {
+                "session_id": session_id,
+                "prompt": prompt,
+                "images": 1,
+                "steps": int(settings.get("steps") or 20),
+                "width": int(settings.get("width") or 1024),
+                "height": int(settings.get("height") or 576),
+            }
+            if settings.get("model"):
+                payload["model"] = settings["model"]
+
+            gen = requests.post(
+                f"{base_url}/API/GenerateText2Image",
+                json=payload,
+                headers=headers,
+                timeout=timeout,
+            )
+            gen.raise_for_status()
+            data = gen.json()
+            images = data.get("images")
+            if not images:
+                raise ValueError(f"SwarmUI returned no image ({data})")
+
+            # 3. Fetch the generated image by its server path.
+            image_path = images[0]
+            img_response = requests.get(
+                f"{base_url}/{image_path.lstrip('/')}", headers=headers, timeout=timeout
+            )
+            img_response.raise_for_status()
+            with open(filename, "wb") as f:
+                f.write(img_response.content)
+
+            console.print(f"  - Generated SwarmUI image: {query}")
+            return filename
+
+        except Exception as e:
+            err_console.print(f"  - SwarmUI error: {e}. Using text fallback.")
+            return self._fallback_to_text(query, filename, slide=slide)
+
+    def _fallback_to_text(self, query: str, filename: str, slide: dict[str, Any] | None = None) -> str:
+        """Fall back to a text image, preserving slide content when known."""
+        return TextImageProvider(self.config).generate_image(query, filename, slide=slide)
+
+
 class GeminiImageProvider(ImageProvider):
     """Generate images with Google Imagen via the google-genai SDK.
 

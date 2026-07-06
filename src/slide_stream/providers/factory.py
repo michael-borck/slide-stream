@@ -18,6 +18,7 @@ from .images import (
     LocalImageProvider,
     OpenAICompatImageProvider,
     PexelsImageProvider,
+    SwarmUIImageProvider,
     TextImageProvider,
     UnsplashImageProvider,
 )
@@ -43,6 +44,7 @@ class ProviderFactory:
         "local": LocalImageProvider,
         "dalle3": DalleImageProvider,
         "gemini": GeminiImageProvider,
+        "swarmui": SwarmUIImageProvider,
         "openai-compatible": OpenAICompatImageProvider,
         "pexels": PexelsImageProvider,
         "unsplash": UnsplashImageProvider,
@@ -173,6 +175,7 @@ class ProviderFactory:
             "local": "Local folder images matched by filename keywords (set providers.images.folder)",
             "dalle3": "DALL-E 3 AI image generation (requires OpenAI API key)",
             "gemini": "Google Imagen generation, cheap (~$0.02/image; requires GEMINI_API_KEY and slide-stream[gemini])",
+            "swarmui": "Self-hosted SwarmUI server (set base_url; native SwarmUI API, no OpenAI shim needed)",
             "openai-compatible": "Any OpenAI-compatible image endpoint (set base_url; local or hosted)",
             "pexels": "Pexels stock photos (requires Pexels API key)",
             "unsplash": "Unsplash stock photos (requires Unsplash API key)",

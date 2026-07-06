@@ -309,6 +309,7 @@ sudo apt update && sudo apt install ffmpeg
 - `local`: Pick images from a local folder by filename keywords (`providers.images.folder`); pair with `slide-stream scan` to AI-name them
 - `dalle3`: Requires `OPENAI_API_KEY`
 - `gemini`: Google Imagen generation, cheap (~$0.02/image) — `pip install "slide-stream[gemini]"` + `GEMINI_API_KEY`; set `providers.images.model` for the Imagen tier (default Fast)
+- `swarmui`: Self-hosted [SwarmUI](https://github.com/mcmonkeyprojects/SwarmUI) server (`base_url`), free local generation via its native API — set `providers.images.model` (e.g. `juggernautXL_v9`), optional `steps`/`width`/`height`/`api_key`
 - `pexels`: Requires `PEXELS_API_KEY`  
 - `unsplash`: Requires `UNSPLASH_ACCESS_KEY`
 
