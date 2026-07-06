@@ -285,3 +285,128 @@ def test_cli_avatar_flag_requires_configured_provider(tmp_path, monkeypatch):
     result = runner.invoke(app, ["create", str(md), "out.mp4", "--avatar"])
 
     assert result.exit_code == 1
+
+
+# --- D-ID avatar provider (network mocked) -----------------------------------
+
+
+def _did_config(config, **avatar):
+    config["providers"]["avatar"] = {"provider": "d-id", **avatar}
+    return config
+
+
+def test_did_availability_needs_key_and_source(config, monkeypatch):
+    from slide_stream.providers.avatar import DIDAvatarProvider
+
+    monkeypatch.delenv("DID_API_KEY", raising=False)
+    _did_config(config)
+    assert DIDAvatarProvider(config).is_available() is False
+
+    _did_config(config, api_key="k")  # key but no source
+    assert DIDAvatarProvider(config).is_available() is False
+
+    _did_config(config, api_key="k", source_image="/tmp/face.jpg")
+    assert DIDAvatarProvider(config).is_available() is True
+
+
+def test_did_generate_full_flow(config, tmp_path, mocker):
+    """image upload -> audio upload -> create talk -> poll -> download."""
+    from slide_stream.providers.avatar import DIDAvatarProvider
+
+    face = tmp_path / "face.jpg"
+    face.write_bytes(b"jpegbytes")
+    audio = tmp_path / "slide_1.mp3"
+    audio.write_bytes(b"audiobytes")
+    _did_config(config, api_key="k", source_image=str(face), poll_interval=0)
+
+    img_up = mocker.MagicMock()
+    img_up.json.return_value = {"url": "https://d-id/img.jpg"}
+    aud_up = mocker.MagicMock()
+    aud_up.json.return_value = {"url": "https://d-id/aud.mp3"}
+    create = mocker.MagicMock()
+    create.json.return_value = {"id": "talk-1"}
+    post = mocker.patch(
+        "slide_stream.providers.avatar.requests.post",
+        side_effect=[img_up, aud_up, create],
+    )
+
+    pending = mocker.MagicMock()
+    pending.json.return_value = {"status": "started"}
+    done = mocker.MagicMock()
+    done.json.return_value = {"status": "done", "result_url": "https://d-id/out.mp4"}
+    clip = mocker.MagicMock(content=b"MP4DATA")
+    get = mocker.patch(
+        "slide_stream.providers.avatar.requests.get",
+        side_effect=[pending, done, clip],
+    )
+    mocker.patch("slide_stream.providers.avatar.time.sleep")
+
+    out = tmp_path / "head_1.mp4"
+    result = DIDAvatarProvider(config).generate(str(audio), str(out), 1)
+
+    assert result == str(out)
+    assert out.read_bytes() == b"MP4DATA"
+    # Talk was created with the uploaded image + audio URLs.
+    talk_body = post.call_args_list[2][1]["json"]
+    assert talk_body["source_url"] == "https://d-id/img.jpg"
+    assert talk_body["script"] == {"type": "audio", "audio_url": "https://d-id/aud.mp3"}
+    assert get.call_args_list[-1][0][0] == "https://d-id/out.mp4"
+
+
+def test_did_source_image_uploaded_once_per_run(config, tmp_path, mocker):
+    from slide_stream.providers.avatar import DIDAvatarProvider
+
+    face = tmp_path / "face.jpg"
+    face.write_bytes(b"jpg")
+    audio = tmp_path / "a.mp3"
+    audio.write_bytes(b"a")
+    _did_config(config, api_key="k", source_image=str(face), poll_interval=0)
+
+    def fake_post(url, **kwargs):
+        r = mocker.MagicMock()
+        if url.endswith("/images"):
+            r.json.return_value = {"url": "https://d-id/img.jpg"}
+        elif url.endswith("/audios"):
+            r.json.return_value = {"url": "https://d-id/aud.mp3"}
+        else:
+            r.json.return_value = {"id": "t"}
+        return r
+
+    post = mocker.patch("slide_stream.providers.avatar.requests.post", side_effect=fake_post)
+    done = mocker.MagicMock()
+    done.json.return_value = {"status": "done", "result_url": "https://d-id/out.mp4"}
+    mocker.patch("slide_stream.providers.avatar.requests.get",
+                 return_value=mocker.MagicMock(content=b"x", **{"json.return_value": {"status": "done", "result_url": "u"}}))
+    mocker.patch("slide_stream.providers.avatar.time.sleep")
+
+    provider = DIDAvatarProvider(config)
+    provider.generate(str(audio), str(tmp_path / "h1.mp4"), 1)
+    provider.generate(str(audio), str(tmp_path / "h2.mp4"), 2)
+
+    image_uploads = [c for c in post.call_args_list if c[0][0].endswith("/images")]
+    assert len(image_uploads) == 1  # uploaded once, reused for slide 2
+
+
+def test_did_error_returns_none(config, tmp_path, mocker):
+    from slide_stream.providers.avatar import DIDAvatarProvider
+
+    face = tmp_path / "face.jpg"
+    face.write_bytes(b"jpg")
+    audio = tmp_path / "a.mp3"
+    audio.write_bytes(b"a")
+    _did_config(config, api_key="k", source_image=str(face))
+    mocker.patch(
+        "slide_stream.providers.avatar.requests.post",
+        side_effect=RuntimeError("api down"),
+    )
+    assert DIDAvatarProvider(config).generate(str(audio), str(tmp_path / "o.mp4"), 1) is None
+
+
+def test_factory_registers_did_and_strict(config, tmp_path):
+    from slide_stream.providers.base import StrictModeError
+
+    config["providers"]["avatar"] = {"provider": "d-id", "source_image": str(tmp_path / "x.jpg")}
+    config["settings"]["strict"] = True  # no key -> unusable -> strict raises
+    import pytest as _pytest
+    with _pytest.raises(StrictModeError):
+        ProviderFactory.create_avatar_provider(config)

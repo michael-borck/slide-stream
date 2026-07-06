@@ -35,10 +35,12 @@ DEFAULT_CONFIG = {
             "base_url": None  # used by the openai-compatible provider
         },
         "avatar": {
-            "provider": "none",       # none | precomputed (| musetalk, later)
+            "provider": "none",       # none | precomputed | d-id (| musetalk, later)
             "base_url": None,         # HTTP lip-sync service (later phase)
             "base_video": None,       # lecturer base footage (later phase)
-            "assets_dir": None        # precomputed head_N.mp4 clips
+            "assets_dir": None,       # precomputed head_N.mp4 clips
+            "source_image": None,     # d-id: lecturer photo (path or URL)
+            "api_key": None           # d-id: DID_API_KEY / ${VAR}
         }
     },
     "settings": {

@@ -413,7 +413,10 @@ Thanks for watching.
 
 **Avatar Providers (talking-head overlay):**
 - `none`: Disabled (default)
-- `precomputed`: Composites `head_1.mp4`, `head_2.mp4`, … from `providers.avatar.assets_dir` as a circle in a corner of each slide — no GPU or service needed. Enable per run with `--avatar`, disable with `--no-avatar`; appearance via `settings.avatar` (`position`, `size`, `margin`).
+- `precomputed`: Composites `head_1.mp4`, `head_2.mp4`, … from `providers.avatar.assets_dir` as a circle in a corner of each slide — no GPU or service needed.
+- `d-id`: Lip-synced talking head generated from a source image via the [D-ID](https://www.d-id.com/) API (BYOK) — set `providers.avatar.source_image` (lecturer photo) and `api_key`/`DID_API_KEY`. Bills per minute of video (~$1–2/min), so pricier than voice/images.
+
+Enable per run with `--avatar`, disable with `--no-avatar`; appearance via `settings.avatar` (`position`, `size`, `margin`).
 
 **LLM Providers:**
 - `none`: No content enhancement

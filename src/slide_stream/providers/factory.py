@@ -4,7 +4,7 @@ from typing import Any
 
 from rich.console import Console
 
-from .avatar import NoneAvatarProvider, PrecomputedAvatarProvider
+from .avatar import DIDAvatarProvider, NoneAvatarProvider, PrecomputedAvatarProvider
 from .base import (
     AvatarProvider,
     ImageProvider,
@@ -62,6 +62,7 @@ class ProviderFactory:
     AVATAR_PROVIDERS: dict[str, type[AvatarProvider]] = {
         "none": NoneAvatarProvider,
         "precomputed": PrecomputedAvatarProvider,
+        "d-id": DIDAvatarProvider,
     }
 
     @classmethod
@@ -199,6 +200,7 @@ class ProviderFactory:
         return {
             "none": "Avatar disabled (default)",
             "precomputed": "Pre-supplied head clips: assets_dir/head_N.mp4 (no GPU or service needed)",
+            "d-id": "D-ID lip-synced talking head from a source image (BYOK; requires DID_API_KEY + source_image)",
         }
 
     @classmethod
