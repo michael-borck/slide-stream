@@ -9,7 +9,7 @@ import requests
 from PIL import Image, ImageDraw, ImageFont
 from rich.console import Console
 
-from .base import ImageProvider
+from .base import ImageProvider, StrictModeError, is_strict
 
 console = Console()
 err_console = Console(stderr=True, style="bold red")
@@ -158,7 +158,12 @@ class DalleImageProvider(ImageProvider):
             return self._fallback_to_text(query, filename, slide=slide)
 
     def _fallback_to_text(self, query: str, filename: str, slide: dict[str, Any] | None = None) -> str:
-        """Fall back to a text image, preserving slide content when known."""
+        """Fall back to a text image, unless strict mode disables fallbacks."""
+        if is_strict(self.config):
+            raise StrictModeError(
+                f"Strict mode: image provider '{self.name}' failed and fallback "
+                "to text images is disabled."
+            )
         text_provider = TextImageProvider(self.config)
         return text_provider.generate_image(query, filename, slide=slide)
 
@@ -224,7 +229,12 @@ class PexelsImageProvider(ImageProvider):
             return self._fallback_to_text(query, filename, slide=slide)
 
     def _fallback_to_text(self, query: str, filename: str, slide: dict[str, Any] | None = None) -> str:
-        """Fall back to a text image, preserving slide content when known."""
+        """Fall back to a text image, unless strict mode disables fallbacks."""
+        if is_strict(self.config):
+            raise StrictModeError(
+                f"Strict mode: image provider '{self.name}' failed and fallback "
+                "to text images is disabled."
+            )
         text_provider = TextImageProvider(self.config)
         return text_provider.generate_image(query, filename, slide=slide)
 
@@ -292,7 +302,12 @@ class UnsplashImageProvider(ImageProvider):
             return self._fallback_to_text(query, filename, slide=slide)
 
     def _fallback_to_text(self, query: str, filename: str, slide: dict[str, Any] | None = None) -> str:
-        """Fall back to a text image, preserving slide content when known."""
+        """Fall back to a text image, unless strict mode disables fallbacks."""
+        if is_strict(self.config):
+            raise StrictModeError(
+                f"Strict mode: image provider '{self.name}' failed and fallback "
+                "to text images is disabled."
+            )
         text_provider = TextImageProvider(self.config)
         return text_provider.generate_image(query, filename, slide=slide)
 
@@ -387,6 +402,11 @@ class OpenAICompatImageProvider(ImageProvider):
             return self._fallback_to_text(query, filename, slide=slide)
 
     def _fallback_to_text(self, query: str, filename: str, slide: dict[str, Any] | None = None) -> str:
-        """Fall back to a text image, preserving slide content when known."""
+        """Fall back to a text image, unless strict mode disables fallbacks."""
+        if is_strict(self.config):
+            raise StrictModeError(
+                f"Strict mode: image provider '{self.name}' failed and fallback "
+                "to text images is disabled."
+            )
         text_provider = TextImageProvider(self.config)
         return text_provider.generate_image(query, filename, slide=slide)

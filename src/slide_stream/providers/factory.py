@@ -4,7 +4,7 @@ from typing import Any
 
 from rich.console import Console
 
-from .base import ImageProvider, TTSProvider
+from .base import ImageProvider, StrictModeError, TTSProvider, is_strict
 from .images import (
     DalleImageProvider,
     OpenAICompatImageProvider,
@@ -64,6 +64,12 @@ class ProviderFactory:
         else:
             err_console.print(f"❌ Unknown image provider: {provider_name}")
 
+        if is_strict(config):
+            raise StrictModeError(
+                f"Strict mode: image provider '{provider_name}' is not usable "
+                "and fallback is disabled."
+            )
+
         # Fallback to backup provider
         if fallback_name in cls.IMAGE_PROVIDERS:
             fallback_class = cls.IMAGE_PROVIDERS[fallback_name]
@@ -94,6 +100,12 @@ class ProviderFactory:
                 err_console.print(f"❌ {provider.name} not available (missing API key?)")
         else:
             err_console.print(f"❌ Unknown TTS provider: {provider_name}")
+
+        if is_strict(config):
+            raise StrictModeError(
+                f"Strict mode: TTS provider '{provider_name}' is not usable "
+                "and fallback is disabled."
+            )
 
         # Fallback to gTTS (always available)
         console.print("🔄 Falling back to: gtts")

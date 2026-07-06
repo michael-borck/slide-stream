@@ -4,6 +4,7 @@ import pytest
 from PIL import Image
 
 from slide_stream.config_loader import DEFAULT_CONFIG
+from slide_stream.providers.base import StrictModeError
 from slide_stream.providers.factory import ProviderFactory
 from slide_stream.providers.images import (
     DalleImageProvider,
@@ -415,3 +416,67 @@ def test_text_image_provider_renders_slide_content(config, tmp_path):
 
     assert out_a.exists() and out_b.exists()
     assert out_a.read_bytes() != out_b.read_bytes()
+
+
+# --- Strict mode (no silent fallbacks) --------------------------------------
+
+
+def test_factory_strict_raises_for_unavailable_tts(config, monkeypatch):
+    """In strict mode an unusable TTS provider aborts instead of using gTTS."""
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    config["settings"]["strict"] = True
+    config["providers"]["tts"]["provider"] = "elevenlabs"
+
+    with pytest.raises(StrictModeError):
+        ProviderFactory.create_tts_provider(config)
+
+
+def test_factory_strict_raises_for_unknown_image_provider(config):
+    config["settings"]["strict"] = True
+    config["providers"]["images"]["provider"] = "no-such-provider"
+
+    with pytest.raises(StrictModeError):
+        ProviderFactory.create_image_provider(config)
+
+
+def test_factory_non_strict_still_falls_back(config, monkeypatch):
+    """Default behaviour is unchanged: unavailable providers fall back."""
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    config["providers"]["tts"]["provider"] = "elevenlabs"
+
+    provider = ProviderFactory.create_tts_provider(config)
+    assert isinstance(provider, GTTSProvider)
+
+
+def test_tts_strict_suppresses_gtts_fallback(config, monkeypatch):
+    """A failing premium TTS provider returns None in strict mode rather than
+    synthesizing with the wrong (gTTS) voice."""
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    config["settings"]["strict"] = True
+
+    provider = ElevenLabsTTSProvider(config)
+    # No API key: synthesize fails internally and must NOT fall back.
+    assert provider.synthesize("hello", "unused.mp3") is None
+
+
+def test_image_strict_raises_instead_of_text_fallback(config, tmp_path, monkeypatch):
+    """A failing image provider raises in strict mode rather than silently
+    rendering a text slide."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    config["settings"]["strict"] = True
+    out = tmp_path / "slide.png"
+
+    with pytest.raises(StrictModeError):
+        DalleImageProvider(config).generate_image("query", str(out))
+    assert not out.exists()
+
+
+def test_image_non_strict_falls_back_to_text(config, tmp_path, monkeypatch):
+    """Default behaviour is unchanged: a failing image provider writes a text
+    slide image instead."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    out = tmp_path / "slide.png"
+
+    result = DalleImageProvider(config).generate_image("query", str(out))
+    assert result == str(out)
+    assert out.exists()

@@ -52,7 +52,10 @@ DEFAULT_CONFIG = {
             "max_line_width": 50
         },
         "temp_dir": "temp_files",
-        "cleanup": True
+        "cleanup": True,
+        # Strict mode: fail the run when a configured provider is unusable or
+        # errors, instead of silently degrading (e.g. ElevenLabs -> gTTS).
+        "strict": False
     }
 }
 
@@ -220,6 +223,12 @@ settings:
 
   temp_dir: temp_files
   cleanup: true
+
+  # Fail the run if a configured provider is unusable or errors, instead of
+  # silently falling back (e.g. elevenlabs -> gtts, dalle3 -> text image).
+  # Recommended when the exact voice matters (e.g. a cloned lecturer voice).
+  # Can also be enabled per-run with: slide-stream create --strict ...
+  strict: false
 """
 
 

@@ -18,6 +18,7 @@ from .llm import get_llm_client, query_llm
 from .media import create_video_fragment
 from .parser import parse_markdown
 from .powerpoint import format_powerpoint_content_for_llm, parse_powerpoint
+from .providers.base import StrictModeError
 from .providers.factory import ProviderFactory
 
 # Rich Console Initialization
@@ -121,6 +122,16 @@ def create(
             help="Path to configuration file (YAML).",
         ),
     ] = None,
+    strict: Annotated[
+        bool,
+        typer.Option(
+            "--strict",
+            help=(
+                "Fail instead of silently falling back when a configured "
+                "provider is unusable or errors (e.g. elevenlabs -> gtts)."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Create a video from a Markdown (.md) or PowerPoint (.pptx) file."""
     console.print(
@@ -136,6 +147,11 @@ def create(
     except ConfigurationError as e:
         err_console.print(f"Configuration Error: {e}")
         raise typer.Exit(code=1)
+
+    # The CLI flag turns strict mode on for this run; it never turns it off,
+    # so a config file with `strict: true` still applies without the flag.
+    if strict:
+        config["settings"]["strict"] = True
 
     # FFmpeg is required to encode video; fail early with an actionable hint.
     if not shutil.which("ffmpeg"):
@@ -166,8 +182,12 @@ def create(
 
     try:
         # Initialize providers
-        image_provider = ProviderFactory.create_image_provider(config)
-        tts_provider = ProviderFactory.create_tts_provider(config)
+        try:
+            image_provider = ProviderFactory.create_image_provider(config)
+            tts_provider = ProviderFactory.create_tts_provider(config)
+        except StrictModeError as e:
+            err_console.print(f"{e}")
+            raise typer.Exit(code=1)
 
         # Initialize LLM client
         llm_client = None
@@ -284,9 +304,22 @@ def create(
                 fragment_path = temp_dir / f"fragment_{slide_num}.mp4"
 
                 # Generate image, audio, and video
-                image_provider.generate_image(search_query, str(img_path), slide=slide)
+                strict_mode = config["settings"].get("strict", False)
+                try:
+                    image_provider.generate_image(
+                        search_query, str(img_path), slide=slide
+                    )
+                except StrictModeError as e:
+                    err_console.print(f"Slide {slide_num}: {e}")
+                    raise typer.Exit(code=1)
                 audio_file = tts_provider.synthesize(speech_text, str(audio_path))
                 if audio_file is None:
+                    if strict_mode:
+                        err_console.print(
+                            f"Slide {slide_num}: audio generation failed and "
+                            "strict mode is enabled. Aborting."
+                        )
+                        raise typer.Exit(code=1)
                     audio_failed += 1
                 fragment_file = create_video_fragment(
                     str(img_path),
@@ -297,6 +330,12 @@ def create(
 
                 if fragment_file:
                     video_fragments.append(fragment_file)
+                elif strict_mode:
+                    err_console.print(
+                        f"Slide {slide_num}: video fragment creation failed and "
+                        "strict mode is enabled. Aborting."
+                    )
+                    raise typer.Exit(code=1)
 
                 progress.update(process_task, advance=1)
 

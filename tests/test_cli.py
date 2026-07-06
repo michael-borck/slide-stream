@@ -165,3 +165,33 @@ def test_cli_nonexistent_file(runner):
 
     assert result.exit_code != 0
     assert "Input file not found" in result.stdout
+
+
+def test_cli_strict_aborts_on_unavailable_tts_provider(
+    runner, sample_markdown, tmp_path, monkeypatch
+):
+    """--strict fails fast when the configured TTS provider is unusable,
+    instead of silently rendering the whole video with gTTS."""
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    md_file = tmp_path / "slides.md"
+    md_file.write_text(sample_markdown)
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "providers:\n  tts:\n    provider: elevenlabs\n"
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "create",
+            str(md_file),
+            str(tmp_path / "out.mp4"),
+            "--config",
+            str(config_file),
+            "--strict",
+        ],
+    )
+    assert result.exit_code == 1
+    assert not (tmp_path / "out.mp4").exists()

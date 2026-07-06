@@ -4,6 +4,15 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 
+class StrictModeError(Exception):
+    """Raised in strict mode when a provider fails and fallback is disabled."""
+
+
+def is_strict(config: dict[str, Any]) -> bool:
+    """Whether strict mode is enabled (fail instead of falling back)."""
+    return bool(config.get("settings", {}).get("strict", False))
+
+
 class ImageProvider(ABC):
     """Abstract base class for image providers."""
 

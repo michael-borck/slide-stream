@@ -4,7 +4,7 @@ import os
 
 from rich.console import Console
 
-from .base import TTSProvider
+from .base import TTSProvider, is_strict
 
 console = Console()
 err_console = Console(stderr=True, style="bold red")
@@ -105,7 +105,12 @@ class ElevenLabsTTSProvider(TTSProvider):
             return self._fallback_to_gtts(text, filename)
 
     def _fallback_to_gtts(self, text: str, filename: str) -> str | None:
-        """Fallback to gTTS."""
+        """Fallback to gTTS, unless strict mode disables fallbacks."""
+        if is_strict(self.config):
+            err_console.print(
+                f"  - Strict mode: not falling back to gTTS after {self.name} failed."
+            )
+            return None
         gtts_provider = GTTSProvider(self.config)
         return gtts_provider.synthesize(text, filename)
 
@@ -177,7 +182,12 @@ class OpenAICompatTTSProvider(TTSProvider):
             return self._fallback_to_gtts(text, filename)
 
     def _fallback_to_gtts(self, text: str, filename: str) -> str | None:
-        """Fallback to gTTS."""
+        """Fallback to gTTS, unless strict mode disables fallbacks."""
+        if is_strict(self.config):
+            err_console.print(
+                f"  - Strict mode: not falling back to gTTS after {self.name} failed."
+            )
+            return None
         gtts_provider = GTTSProvider(self.config)
         return gtts_provider.synthesize(text, filename)
 
@@ -232,6 +242,11 @@ class OpenAITTSProvider(TTSProvider):
             return self._fallback_to_gtts(text, filename)
 
     def _fallback_to_gtts(self, text: str, filename: str) -> str | None:
-        """Fallback to gTTS."""
+        """Fallback to gTTS, unless strict mode disables fallbacks."""
+        if is_strict(self.config):
+            err_console.print(
+                f"  - Strict mode: not falling back to gTTS after {self.name} failed."
+            )
+            return None
         gtts_provider = GTTSProvider(self.config)
         return gtts_provider.synthesize(text, filename)
