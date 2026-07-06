@@ -306,9 +306,34 @@ sudo apt update && sudo apt install ffmpeg
 
 **Image Providers:**
 - `text`: Always available, no setup required
+- `local`: Pick images from a local folder by filename keywords (`providers.images.folder`); pair with `slide-stream scan` to AI-name them
 - `dalle3`: Requires `OPENAI_API_KEY`
 - `pexels`: Requires `PEXELS_API_KEY`  
 - `unsplash`: Requires `UNSPLASH_ACCESS_KEY`
+
+### Enriching a deck with images (`enrich` / `scan`)
+
+Beyond making videos, SlideStream can add an image to each slide and write a
+**new editable deck** — no narration, no video, your original untouched:
+
+```bash
+# Markdown deck + images/ folder (default). Add --pptx for a PowerPoint too.
+slide-stream enrich deck.md out/ --image-provider dalle3
+slide-stream enrich deck.md out/ --image-provider local --image-folder ./pics --pptx
+```
+
+The output is a real artifact you can review, hand-edit, or narrate as a second
+pass (`slide-stream create out/deck.md video.mp4`). For a one-pass video that
+adds images *and* narrates internally, just run `create` with an image
+provider configured — `enrich` is the deck-only track.
+
+`scan` AI-renames a folder of images to keyword slugs so the `local` provider
+can match them to slides (dry-run by default):
+
+```bash
+slide-stream scan ./pics --provider claude          # preview renames
+slide-stream scan ./pics --provider claude --apply  # actually rename + write report
+```
 
 **TTS Providers:**
 - `gtts`: Free, always available (needs internet)

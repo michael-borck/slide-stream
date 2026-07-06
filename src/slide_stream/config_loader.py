@@ -26,7 +26,8 @@ DEFAULT_CONFIG = {
         "images": {
             "provider": "text",
             "fallback": "text",
-            "base_url": None  # used by the openai-compatible provider
+            "base_url": None,  # used by the openai-compatible provider
+            "folder": None     # used by the 'local' provider (enrich/create)
         },
         "tts": {
             "provider": "gtts",
@@ -242,8 +243,9 @@ providers:
     # narrated via vision-capable providers (claude, openai, gemini).
 
   images:
-    provider: dalle3        # text, dalle3, openai-compatible, pexels, unsplash
+    provider: dalle3        # text, local, dalle3, openai-compatible, pexels, unsplash
     fallback: text         # fallback when primary fails
+    # folder: ./images     # for the 'local' provider — matched by filename keywords
 
   tts:
     provider: elevenlabs   # gtts, kokoro, elevenlabs, openai, openai-compatible

@@ -14,6 +14,7 @@ from .base import (
 )
 from .images import (
     DalleImageProvider,
+    LocalImageProvider,
     OpenAICompatImageProvider,
     PexelsImageProvider,
     TextImageProvider,
@@ -38,6 +39,7 @@ class ProviderFactory:
     # Registry of available providers
     IMAGE_PROVIDERS: dict[str, type[ImageProvider]] = {
         "text": TextImageProvider,
+        "local": LocalImageProvider,
         "dalle3": DalleImageProvider,
         "openai-compatible": OpenAICompatImageProvider,
         "pexels": PexelsImageProvider,
@@ -166,6 +168,7 @@ class ProviderFactory:
         """Get list of available image providers."""
         return {
             "text": "Text-based images (always available)",
+            "local": "Local folder images matched by filename keywords (set providers.images.folder)",
             "dalle3": "DALL-E 3 AI image generation (requires OpenAI API key)",
             "openai-compatible": "Any OpenAI-compatible image endpoint (set base_url; local or hosted)",
             "pexels": "Pexels stock photos (requires Pexels API key)",

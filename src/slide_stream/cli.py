@@ -604,6 +604,168 @@ def create(
             console.print("✅ Cleanup complete.")
 
 
+def _parse_deck(input_path: Path) -> list[dict[str, Any]]:
+    """Parse a .md or .pptx deck into slide dicts, or exit with an error."""
+    ext = input_path.suffix.lower()
+    if not input_path.exists():
+        err_console.print(f"Input file not found: {input_path}")
+        raise typer.Exit(code=1)
+    if ext == ".md":
+        with open(input_path, encoding="utf-8") as f:
+            text = f.read()
+        if not text.strip():
+            err_console.print("Markdown file is empty. Exiting.")
+            raise typer.Exit(code=1)
+        return parse_markdown(text)
+    if ext == ".pptx":
+        try:
+            return parse_powerpoint(input_path)
+        except ValueError as e:
+            err_console.print(f"Error parsing PowerPoint: {e}")
+            raise typer.Exit(code=1)
+    err_console.print(f"Unsupported file type: {ext}. Supported: .md, .pptx")
+    raise typer.Exit(code=1)
+
+
+@app.command()
+def enrich(
+    input_path: Annotated[
+        Path,
+        typer.Argument(help="Input deck (Markdown .md or PowerPoint .pptx)."),
+    ],
+    output_dir: Annotated[
+        str,
+        typer.Argument(help="Directory for the enriched deck and images."),
+    ] = "enriched",
+    config_file: Annotated[
+        str | None, typer.Option("--config", "-c", help="Config file (YAML).")
+    ] = None,
+    image_provider_option: Annotated[
+        str | None,
+        typer.Option(
+            "--image-provider",
+            help="Image provider (local, dalle3, pexels, unsplash, openai-compatible).",
+        ),
+    ] = None,
+    image_folder: Annotated[
+        str | None,
+        typer.Option("--image-folder", help="Folder of images for the 'local' provider."),
+    ] = None,
+    pptx: Annotated[
+        bool,
+        typer.Option("--pptx", help="Also write an enriched PowerPoint (.pptx)."),
+    ] = False,
+    zip_output: Annotated[
+        bool, typer.Option("--zip", help="Also write a .zip of the output folder.")
+    ] = False,
+) -> None:
+    """Add an image to each slide and write a new deck (no video).
+
+    The output is an editable Markdown deck plus an images/ folder — run
+    'create' on it to narrate, or use 'create' directly for a one-pass video.
+    """
+    console.print(
+        Panel.fit("[bold cyan]🖼️  Enriching deck[/bold cyan]", border_style="green")
+    )
+    try:
+        config = load_config(config_file)
+    except ConfigurationError as e:
+        err_console.print(f"Configuration Error: {e}")
+        raise typer.Exit(code=1)
+
+    if image_provider_option:
+        config["providers"]["images"]["provider"] = image_provider_option
+    if image_folder:
+        config["providers"]["images"]["folder"] = image_folder
+
+    slides = _parse_deck(input_path)
+    if not slides:
+        err_console.print("No slides found. Exiting.")
+        raise typer.Exit(code=1)
+    console.print(f"📄 Found [bold yellow]{len(slides)}[/bold yellow] slides.")
+
+    try:
+        image_provider = ProviderFactory.create_image_provider(config)
+    except StrictModeError as e:
+        err_console.print(f"{e}")
+        raise typer.Exit(code=1)
+
+    from .enrich import enrich_deck
+
+    out = enrich_deck(
+        slides,
+        image_provider,
+        Path(output_dir),
+        input_path.stem,
+        also_pptx=pptx,
+        also_zip=zip_output,
+    )
+    console.print(
+        Panel(
+            f"🎉 [bold green]Enriched deck written[/bold green]\n\n"
+            f"Markdown: [yellow]{out / (input_path.stem + '.md')}[/yellow]"
+            + (f"\nPowerPoint: [yellow]{out / (input_path.stem + '.pptx')}[/yellow]" if pptx else "")
+            + f"\nImages: [yellow]{out / 'images'}[/yellow]",
+            border_style="green",
+            expand=False,
+        )
+    )
+
+
+@app.command()
+def scan(
+    folder: Annotated[
+        Path, typer.Argument(help="Folder of images to AI-rename to keyword slugs.")
+    ],
+    provider: Annotated[
+        str,
+        typer.Option("--provider", help="Vision LLM provider (claude, openai, gemini)."),
+    ] = "claude",
+    model: Annotated[
+        str | None, typer.Option("--model", help="Specific vision model to use.")
+    ] = None,
+    apply: Annotated[
+        bool,
+        typer.Option(
+            "--apply",
+            help="Actually rename files (default is a dry-run preview).",
+        ),
+    ] = False,
+) -> None:
+    """AI-rename images in a folder to keyword slugs for the 'local' provider."""
+    if not folder.is_dir():
+        err_console.print(f"Not a directory: {folder}")
+        raise typer.Exit(code=1)
+
+    from .scan import apply_renames, build_rename_records, write_scan_report
+
+    try:
+        records = build_rename_records(folder, provider, model)
+    except (ImportError, ValueError) as e:
+        err_console.print(f"Vision provider error: {e}")
+        raise typer.Exit(code=1)
+
+    if not records:
+        console.print("No images found in the folder.")
+        return
+
+    applied = apply_renames(records, dry_run=not apply)
+
+    table = Table(title="Dry run — no files changed" if not apply else "Renamed")
+    table.add_column("Original", style="cyan")
+    table.add_column("→", style="dim")
+    table.add_column("New name", style="green")
+    for orig, new in applied:
+        table.add_row(orig.name, "→", new.name)
+    console.print(table)
+
+    if apply:
+        report = write_scan_report(folder, applied)
+        console.print(f"📝 Report: [yellow]{report}[/yellow]")
+    else:
+        console.print("\n[dim]Re-run with --apply to rename the files.[/dim]")
+
+
 @app.command()
 def init(
     output_path: Annotated[

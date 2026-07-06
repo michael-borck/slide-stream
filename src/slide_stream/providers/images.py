@@ -2,7 +2,10 @@
 
 import base64
 import os
+import re
+import shutil
 import textwrap
+from pathlib import Path
 from typing import Any
 
 import requests
@@ -13,6 +16,19 @@ from .base import ImageProvider, StrictModeError, is_strict
 
 console = Console()
 err_console = Console(stderr=True, style="bold red")
+
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+_STOPWORDS = {
+    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for", "of",
+    "with", "is", "are", "was", "were", "be", "been", "have", "has", "do",
+    "does", "this", "that", "it", "its", "by", "as", "from",
+}
+
+
+def extract_keywords(text: str) -> set[str]:
+    """Content words (lowercased, >2 chars, stopwords removed) from text."""
+    words = re.findall(r"[a-z]+", text.lower())
+    return {w for w in words if w not in _STOPWORDS and len(w) > 2}
 
 # Pillow only searches a handful of directories by name, and on macOS Arial
 # lives in /System/Library/Fonts/Supplemental where it does not look, so
@@ -114,6 +130,85 @@ class TextImageProvider(ImageProvider):
         img.save(filename)
         console.print(f"  - Generated text slide: {title}")
         return filename
+
+
+class LocalImageProvider(ImageProvider):
+    """Pick images from a local folder by keyword-matching filenames.
+
+    Ported from slide-vision. Each slide gets the highest-scoring image whose
+    filename shares the most keywords with the slide's title/content. Every
+    image is used at most once per run, so slides don't collapse onto one
+    popular image. Slides with no keyword match fall back to a text image.
+    Pairs well with the ``scan`` command, which AI-renames images to keyword
+    slugs first.
+    """
+
+    def __init__(self, config: dict[str, Any]):
+        super().__init__(config)
+        self._all_images: list[Path] | None = None
+        self._used: set[Path] = set()
+        # Whether the most recent generate_image() found a real folder match
+        # (vs. falling back to a text card). enrich uses this to list gaps.
+        self.matched_last: bool = False
+
+    @property
+    def name(self) -> str:
+        return "local"
+
+    def _folder(self) -> Path | None:
+        folder = self.config.get("providers", {}).get("images", {}).get("folder")
+        return Path(folder) if folder else None
+
+    def is_available(self) -> bool:
+        folder = self._folder()
+        return folder is not None and folder.is_dir()
+
+    def _images(self) -> list[Path]:
+        if self._all_images is None:
+            folder = self._folder()
+            if folder is not None and folder.is_dir():
+                self._all_images = sorted(
+                    p
+                    for p in folder.iterdir()
+                    if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
+                )
+            else:
+                self._all_images = []
+        return self._all_images
+
+    def generate_image(
+        self, query: str, filename: str, slide: dict[str, Any] | None = None
+    ) -> str:
+        available = [p for p in self._images() if p not in self._used]
+        if available:
+            text = query
+            if slide is not None:
+                text = f"{slide.get('title', '')} {' '.join(str(c) for c in slide.get('content', []))} {query}"
+            keywords = extract_keywords(text)
+
+            best: Path | None = None
+            best_score = 0
+            for img in available:
+                score = len(extract_keywords(img.stem) & keywords)
+                if score > best_score:
+                    best, best_score = img, score
+
+            if best is not None and best_score > 0:
+                self._used.add(best)
+                try:
+                    shutil.copy2(best, filename)
+                    console.print(f"  - Using local image: {best.name}")
+                    self.matched_last = True
+                    return filename
+                except Exception as e:
+                    err_console.print(f"  - Local image copy error: {e}")
+
+        self.matched_last = False
+        return self._fallback_to_text(query, filename, slide=slide)
+
+    def _fallback_to_text(self, query: str, filename: str, slide: dict[str, Any] | None = None) -> str:
+        """Fall back to a text image, preserving slide content when known."""
+        return TextImageProvider(self.config).generate_image(query, filename, slide=slide)
 
 
 class DalleImageProvider(ImageProvider):
