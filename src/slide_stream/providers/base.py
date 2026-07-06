@@ -81,6 +81,49 @@ class TTSProvider(ABC):
         pass
 
 
+class AvatarProvider(ABC):
+    """Abstract base class for talking-head avatar providers.
+
+    An avatar provider turns a slide's narration audio into a short
+    head-and-shoulders video (lip-synced by real engines; precomputed clips
+    for the no-GPU provider), which media.py composites over the slide.
+    """
+
+    def __init__(self, config: dict[str, Any]):
+        """Initialize the provider with configuration."""
+        self.config = config
+
+    @abstractmethod
+    def generate(
+        self, audio_path: str, output_path: str, slide_num: int
+    ) -> str | None:
+        """Produce a head video for one slide's narration audio.
+
+        Args:
+            audio_path: Path to the slide's narration audio file
+            output_path: Suggested target path for a generated video; providers
+                that already have a file (e.g. precomputed) may return a
+                different existing path instead
+            slide_num: 1-based slide number, used by providers that map slides
+                to pre-supplied clips
+
+        Returns:
+            Path to the head video to composite, or None if unavailable/failed.
+        """
+        pass
+
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """Provider name for identification."""
+        pass
+
+    @abstractmethod
+    def is_available(self) -> bool:
+        """Check if provider is properly configured and available."""
+        pass
+
+
 class LLMProvider(ABC):
     """Abstract base class for LLM providers."""
 
