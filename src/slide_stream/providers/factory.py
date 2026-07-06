@@ -4,7 +4,14 @@ from typing import Any
 
 from rich.console import Console
 
-from .base import ImageProvider, StrictModeError, TTSProvider, is_strict
+from .avatar import NoneAvatarProvider, PrecomputedAvatarProvider
+from .base import (
+    AvatarProvider,
+    ImageProvider,
+    StrictModeError,
+    TTSProvider,
+    is_strict,
+)
 from .images import (
     DalleImageProvider,
     OpenAICompatImageProvider,
@@ -42,6 +49,11 @@ class ProviderFactory:
         "elevenlabs": ElevenLabsTTSProvider,
         "openai": OpenAITTSProvider,
         "openai-compatible": OpenAICompatTTSProvider,
+    }
+
+    AVATAR_PROVIDERS: dict[str, type[AvatarProvider]] = {
+        "none": NoneAvatarProvider,
+        "precomputed": PrecomputedAvatarProvider,
     }
 
     @classmethod
@@ -114,6 +126,40 @@ class ProviderFactory:
         return GTTSProvider(config)
 
     @classmethod
+    def create_avatar_provider(cls, config: dict[str, Any]) -> AvatarProvider:
+        """Create an avatar provider based on configuration."""
+        providers_config = config.get("providers", {})
+        avatar_config = providers_config.get("avatar", {})
+
+        provider_name = avatar_config.get("provider", "none")
+
+        # Try requested provider
+        if provider_name in cls.AVATAR_PROVIDERS:
+            provider_class = cls.AVATAR_PROVIDERS[provider_name]
+            provider = provider_class(config)
+
+            if provider.is_available():
+                if provider.name != "none":
+                    console.print(f"✅ Avatar Provider: {provider.name}")
+                return provider
+            else:
+                err_console.print(
+                    f"❌ {provider.name} avatar not available (missing assets/service?)"
+                )
+        else:
+            err_console.print(f"❌ Unknown avatar provider: {provider_name}")
+
+        if is_strict(config):
+            raise StrictModeError(
+                f"Strict mode: avatar provider '{provider_name}' is not usable "
+                "and fallback is disabled."
+            )
+
+        # Fallback: disable the avatar feature for this run.
+        console.print("🔄 Falling back to: no avatar")
+        return NoneAvatarProvider(config)
+
+    @classmethod
     def list_image_providers(cls) -> dict[str, str]:
         """Get list of available image providers."""
         return {
@@ -136,11 +182,20 @@ class ProviderFactory:
         }
 
     @classmethod
+    def list_avatar_providers(cls) -> dict[str, str]:
+        """Get list of available avatar providers."""
+        return {
+            "none": "Avatar disabled (default)",
+            "precomputed": "Pre-supplied head clips: assets_dir/head_N.mp4 (no GPU or service needed)",
+        }
+
+    @classmethod
     def check_provider_availability(cls, config: dict[str, Any]) -> dict[str, dict[str, bool]]:
         """Check availability of all providers."""
         availability = {
             "images": {},
-            "tts": {}
+            "tts": {},
+            "avatar": {}
         }
 
         # Check image providers
@@ -152,5 +207,10 @@ class ProviderFactory:
         for name, provider_class in cls.TTS_PROVIDERS.items():
             provider = provider_class(config)
             availability["tts"][name] = provider.is_available()
+
+        # Check avatar providers
+        for name, provider_class in cls.AVATAR_PROVIDERS.items():
+            provider = provider_class(config)
+            availability["avatar"][name] = provider.is_available()
 
         return availability

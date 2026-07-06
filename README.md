@@ -305,6 +305,10 @@ sudo apt update && sudo apt install ffmpeg
 - `openai`: Requires `OPENAI_API_KEY`
 - `openai-compatible`: Any OpenAI-compatible speech endpoint via `base_url` (local or hosted)
 
+**Avatar Providers (talking-head overlay):**
+- `none`: Disabled (default)
+- `precomputed`: Composites `head_1.mp4`, `head_2.mp4`, … from `providers.avatar.assets_dir` as a circle in a corner of each slide — no GPU or service needed. Enable per run with `--avatar`, disable with `--no-avatar`; appearance via `settings.avatar` (`position`, `size`, `margin`).
+
 **LLM Providers:**
 - `none`: No content enhancement
 - `openai`: Requires `OPENAI_API_KEY`

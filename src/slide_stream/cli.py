@@ -132,6 +132,16 @@ def create(
             ),
         ),
     ] = False,
+    avatar: Annotated[
+        bool | None,
+        typer.Option(
+            "--avatar/--no-avatar",
+            help=(
+                "Enable or disable the talking-head avatar overlay for this "
+                "run, overriding the config file."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Create a video from a Markdown (.md) or PowerPoint (.pptx) file."""
     console.print(
@@ -152,6 +162,15 @@ def create(
     # so a config file with `strict: true` still applies without the flag.
     if strict:
         config["settings"]["strict"] = True
+
+    if avatar is False:
+        config["providers"]["avatar"]["provider"] = "none"
+    elif avatar is True and config["providers"]["avatar"].get("provider", "none") == "none":
+        err_console.print(
+            "--avatar requires an avatar provider in the config file "
+            "(e.g. providers.avatar.provider: precomputed)."
+        )
+        raise typer.Exit(code=1)
 
     # FFmpeg is required to encode video; fail early with an actionable hint.
     if not shutil.which("ffmpeg"):
@@ -185,6 +204,7 @@ def create(
         try:
             image_provider = ProviderFactory.create_image_provider(config)
             tts_provider = ProviderFactory.create_tts_provider(config)
+            avatar_provider = ProviderFactory.create_avatar_provider(config)
         except StrictModeError as e:
             err_console.print(f"{e}")
             raise typer.Exit(code=1)
@@ -231,6 +251,8 @@ def create(
         video_fragments = []
         audio_failed = 0
         llm_narration_failed = 0
+        avatar_failed = 0
+        avatar_enabled = avatar_provider.name != "none"
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -321,11 +343,30 @@ def create(
                         )
                         raise typer.Exit(code=1)
                     audio_failed += 1
+
+                # Talking-head overlay, driven by the slide's narration audio.
+                head_path = None
+                if avatar_enabled and audio_file:
+                    head_path = avatar_provider.generate(
+                        str(audio_path),
+                        str(temp_dir / f"head_{slide_num}.mp4"),
+                        slide_num,
+                    )
+                    if head_path is None:
+                        if strict_mode:
+                            err_console.print(
+                                f"Slide {slide_num}: avatar generation failed "
+                                "and strict mode is enabled. Aborting."
+                            )
+                            raise typer.Exit(code=1)
+                        avatar_failed += 1
+
                 fragment_file = create_video_fragment(
                     str(img_path),
                     str(audio_path) if audio_file else None,
                     str(fragment_path),
                     config,
+                    head_video=head_path,
                 )
 
                 if fragment_file:
@@ -347,7 +388,9 @@ def create(
         )
         if llm_client:
             summary += f" · [red]{llm_narration_failed}[/red] LLM narration failure(s)"
-        if len(video_fragments) < len(slides) or audio_failed:
+        if avatar_enabled:
+            summary += f" · [yellow]{avatar_failed}[/yellow] slide(s) without avatar"
+        if len(video_fragments) < len(slides) or audio_failed or avatar_failed:
             summary += "  [dim](output is incomplete)[/dim]"
         console.print(summary)
 
@@ -462,6 +505,20 @@ def providers() -> None:
     tts_providers = ProviderFactory.list_tts_providers()
     for name, description in tts_providers.items():
         status = "✅ Available" if availability.get("tts", {}).get(name, False) else "❌ Unavailable"
+        table.add_row(name, status, description)
+
+    console.print(table)
+
+    # Avatar providers
+    console.print("\n[bold]🧑 Avatar Providers[/bold]")
+    table = Table()
+    table.add_column("Provider", style="cyan")
+    table.add_column("Status", style="green")
+    table.add_column("Description")
+
+    avatar_providers = ProviderFactory.list_avatar_providers()
+    for name, description in avatar_providers.items():
+        status = "✅ Available" if availability.get("avatar", {}).get(name, False) else "❌ Unavailable"
         table.add_row(name, status, description)
 
     console.print(table)

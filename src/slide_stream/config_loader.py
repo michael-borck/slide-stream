@@ -32,6 +32,12 @@ DEFAULT_CONFIG = {
             "provider": "gtts",
             "voice": None,
             "base_url": None  # used by the openai-compatible provider
+        },
+        "avatar": {
+            "provider": "none",       # none | precomputed (| musetalk, later)
+            "base_url": None,         # HTTP lip-sync service (later phase)
+            "base_video": None,       # lecturer base footage (later phase)
+            "assets_dir": None        # precomputed head_N.mp4 clips
         }
     },
     "settings": {
@@ -50,6 +56,12 @@ DEFAULT_CONFIG = {
             "content_font_size": 60,
             "font_color": "white",
             "max_line_width": 50
+        },
+        "avatar": {
+            "position": "bottom-right",  # bottom-left | top-left | top-right
+            "size": 0.28,                # circle diameter as fraction of frame height
+            "margin": 24,                # px from the frame edges
+            "shape": "circle"            # circle only in v1
         },
         "temp_dir": "temp_files",
         "cleanup": True,
@@ -176,6 +188,14 @@ providers:
     provider: elevenlabs   # gtts, kokoro, elevenlabs, openai, openai-compatible
     voice: rachel          # voice ID/name (provider-specific)
 
+  # Talking-head avatar overlay (off by default). 'precomputed' composites
+  # ready-made clips named head_1.mp4, head_2.mp4, ... from assets_dir —
+  # no GPU or service needed. Enable per run with --avatar, disable with
+  # --no-avatar. With strict mode on, every slide must get a head clip.
+  # avatar:
+  #   provider: precomputed
+  #   assets_dir: ./heads
+
 # --- Fully offline TTS (no cloud, no API key) ------------------------------
 # Requires: pip install "slide-stream[local-tts]"
 # Model files (~340MB) download once to ~/.cache/slide-stream/kokoro/.
@@ -231,6 +251,12 @@ settings:
     content_font_size: 60
     font_color: white
     max_line_width: 50
+
+  # Talking-head overlay appearance (used when providers.avatar is enabled)
+  avatar:
+    position: bottom-right   # bottom-left, top-left, top-right
+    size: 0.28               # circle diameter as fraction of frame height
+    margin: 24               # px from the frame edges
 
   temp_dir: temp_files
   cleanup: true
