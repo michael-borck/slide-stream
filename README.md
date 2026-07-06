@@ -105,7 +105,19 @@ slide-stream create --config my-config.yaml presentation.pptx video.mp4
 
 ## ⚙️ Configuration
 
-SlideStream uses YAML configuration files for maximum flexibility:
+SlideStream layers configuration so you set shared things (a TTS server URL,
+API keys) once and keep per-deck settings separate. Later layers win:
+
+1. Built-in defaults
+2. **`~/.slidestream.yaml`** — personal: your Chatterbox/LLM server URLs and
+   API-key references, shared across every project
+3. **`./slidestream.yaml`** (or `--config FILE`) — settings for the deck at hand
+4. **CLI flags** (`--voice`, `--tts-base-url`, `--narration-seconds`, …) — win
+   over everything, for one-off runs
+
+Run `slide-stream init` to write a starter `slidestream.yaml`. API keys are
+read from the environment via `${VAR}` expansion, so secrets never live in the
+files. Example:
 
 ```yaml
 # slidestream.yaml

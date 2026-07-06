@@ -13,6 +13,15 @@ from slide_stream.config_loader import (
     validate_config,
 )
 
+
+@pytest.fixture(autouse=True)
+def _no_home_config(monkeypatch):
+    """Isolate tests from a real ~/.slidestream.yaml on the dev machine."""
+    monkeypatch.setattr(
+        "slide_stream.config_loader.find_home_config", lambda: None
+    )
+
+
 # --- expand_env_vars --------------------------------------------------------
 
 
@@ -95,10 +104,10 @@ def test_validate_config_bad_resolution_raises():
 
 
 def test_load_config_returns_defaults_when_no_file(monkeypatch, tmp_path):
-    # Run in an empty dir with no home config so find_config_file returns None.
+    # Run in an empty dir with no home config so no layer applies.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
-        "slide_stream.config_loader.find_config_file", lambda: None
+        "slide_stream.config_loader.find_home_config", lambda: None
     )
     config = load_config()
     assert config["providers"]["tts"]["provider"] == "gtts"
@@ -162,3 +171,88 @@ def test_save_example_config_writes_file(tmp_path):
     save_example_config(str(out))
     assert out.exists()
     assert "providers" in out.read_text()
+
+
+# --- layered config (home + project) ----------------------------------------
+
+
+def test_home_config_layers_under_project(tmp_path, monkeypatch):
+    """Personal home config supplies a server URL; the project config only
+    overrides deck-specific settings; both survive the merge."""
+    home = tmp_path / "home.yaml"
+    home.write_text(
+        "providers:\n"
+        "  tts:\n"
+        "    provider: chatterbox\n"
+        "    base_url: https://voice.example.org\n"
+    )
+    monkeypatch.setattr(
+        "slide_stream.config_loader.find_home_config", lambda: home
+    )
+    project = tmp_path / "proj"
+    project.mkdir()
+    monkeypatch.chdir(project)
+    (project / "slidestream.yaml").write_text(
+        "providers:\n"
+        "  tts:\n"
+        "    voice: Michael.wav\n"
+        "settings:\n"
+        "  cleanup: false\n"
+    )
+
+    config = load_config()
+
+    # Home layer supplies the server; project layer supplies the voice.
+    assert config["providers"]["tts"]["base_url"] == "https://voice.example.org"
+    assert config["providers"]["tts"]["provider"] == "chatterbox"
+    assert config["providers"]["tts"]["voice"] == "Michael.wav"
+    assert config["settings"]["cleanup"] is False
+
+
+def test_project_config_overrides_home(tmp_path, monkeypatch):
+    """When both set the same key, the project layer wins."""
+    home = tmp_path / "home.yaml"
+    home.write_text("providers:\n  tts:\n    voice: HomeVoice.wav\n")
+    monkeypatch.setattr(
+        "slide_stream.config_loader.find_home_config", lambda: home
+    )
+    project = tmp_path / "proj"
+    project.mkdir()
+    monkeypatch.chdir(project)
+    (project / "slidestream.yaml").write_text(
+        "providers:\n  tts:\n    voice: ProjectVoice.wav\n"
+    )
+
+    config = load_config()
+    assert config["providers"]["tts"]["voice"] == "ProjectVoice.wav"
+
+
+def test_explicit_config_still_layers_over_home(tmp_path, monkeypatch):
+    """An explicit --config replaces auto-discovery but keeps the home layer."""
+    home = tmp_path / "home.yaml"
+    home.write_text("providers:\n  tts:\n    base_url: https://voice.example.org\n")
+    monkeypatch.setattr(
+        "slide_stream.config_loader.find_home_config", lambda: home
+    )
+    monkeypatch.chdir(tmp_path)
+    explicit = tmp_path / "deck.yaml"
+    explicit.write_text("providers:\n  tts:\n    voice: Michael.wav\n")
+
+    config = load_config(str(explicit))
+    assert config["providers"]["tts"]["base_url"] == "https://voice.example.org"
+    assert config["providers"]["tts"]["voice"] == "Michael.wav"
+
+
+def test_home_config_alone_applies(tmp_path, monkeypatch):
+    """Home config applies even with no project config present."""
+    home = tmp_path / "home.yaml"
+    home.write_text("settings:\n  strict: true\n")
+    monkeypatch.setattr(
+        "slide_stream.config_loader.find_home_config", lambda: home
+    )
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.chdir(empty)
+
+    config = load_config()
+    assert config["settings"]["strict"] is True

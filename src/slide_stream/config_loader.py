@@ -91,47 +91,88 @@ def expand_env_vars(value: Any) -> Any:
     return value
 
 
-def find_config_file() -> Path | None:
-    """Find configuration file in standard locations."""
-    possible_locations = [
-        Path("./slidestream.yaml"),
-        Path("./slidestream.yml"),
-        Path.home() / ".slidestream.yaml",
-        Path.home() / ".slidestream.yml"
-    ]
-
-    for location in possible_locations:
-        if location.exists():
-            return location
-
+def _first_existing(*candidates: Path) -> Path | None:
+    """Return the first path that exists, or None."""
+    for path in candidates:
+        if path.exists():
+            return path
     return None
 
 
+def find_home_config() -> Path | None:
+    """Find the user-level config (~/.slidestream.yaml) — personal defaults
+    like a TTS server URL and API keys, shared across all projects."""
+    return _first_existing(
+        Path.home() / ".slidestream.yaml",
+        Path.home() / ".slidestream.yml",
+    )
+
+
+def find_project_config() -> Path | None:
+    """Find the project-level config (./slidestream.yaml) — settings for the
+    deck at hand."""
+    return _first_existing(
+        Path("./slidestream.yaml"),
+        Path("./slidestream.yml"),
+    )
+
+
+def find_config_file() -> Path | None:
+    """Find a single config file (project preferred, then home).
+
+    Retained for backwards compatibility; ``load_config`` layers home and
+    project configs rather than using this.
+    """
+    return find_project_config() or find_home_config()
+
+
+def _read_config_file(config_file: Path) -> dict[str, Any] | None:
+    """Read and parse one YAML config file (None if empty)."""
+    try:
+        with open(config_file, encoding="utf-8") as f:
+            return yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        raise ConfigurationError(f"Invalid YAML in config file: {e}")
+    except Exception as e:
+        raise ConfigurationError(f"Error reading config file: {e}")
+
+
 def load_config(config_path: str | None = None) -> dict[str, Any]:
-    """Load configuration from file or return defaults."""
-    config = DEFAULT_CONFIG.copy()
+    """Load configuration by layering, later layers winning:
 
+    1. Built-in defaults
+    2. User-level config (~/.slidestream.yaml) — personal server URLs / keys
+    3. Project-level config — the explicit ``config_path`` if given, otherwise
+       ./slidestream.yaml
+
+    So a personal home config can hold your TTS server and API keys once, and
+    each project's config only needs its deck-specific overrides.
+    """
+    import copy
+
+    config = copy.deepcopy(DEFAULT_CONFIG)
+
+    # Layer sources: (label, path). Home is always layered underneath; an
+    # explicit --config replaces the auto-discovered project file but still
+    # sits on top of home.
+    sources: list[Path] = []
+    if home_config := find_home_config():
+        sources.append(home_config)
     if config_path:
-        config_file = Path(config_path)
-        if not config_file.exists():
+        project_config = Path(config_path)
+        if not project_config.exists():
             raise ConfigurationError(f"Configuration file not found: {config_path}")
-    else:
-        config_file = find_config_file()
+        sources.append(project_config)
+    elif project_config := find_project_config():
+        sources.append(project_config)
 
-    if config_file:
-        try:
-            with open(config_file, encoding='utf-8') as f:
-                file_config = yaml.safe_load(f)
+    for source in sources:
+        file_config = _read_config_file(source)
+        if file_config:
+            config = merge_configs(config, file_config)
+            console.print(f"✅ Loaded configuration from: {source}")
 
-            if file_config:
-                # Deep merge with defaults
-                config = merge_configs(config, file_config)
-                console.print(f"✅ Loaded configuration from: {config_file}")
-        except yaml.YAMLError as e:
-            raise ConfigurationError(f"Invalid YAML in config file: {e}")
-        except Exception as e:
-            raise ConfigurationError(f"Error reading config file: {e}")
-    else:
+    if not sources:
         console.print("📋 Using default configuration")
 
     # Expand environment variables
@@ -181,6 +222,13 @@ def validate_config(config: dict[str, Any]) -> None:
 def create_example_config() -> str:
     """Create example configuration file content."""
     return """# SlideStream Configuration File
+#
+# Config is layered, later winning:
+#   1. built-in defaults
+#   2. ~/.slidestream.yaml   (personal: TTS server URL, API keys — set once)
+#   3. ./slidestream.yaml    (this deck's settings; or pass --config FILE)
+# So keep your server and keys in the home file and only put per-deck
+# overrides here. Any CLI flag (e.g. --voice, --tts-base-url) wins over both.
 
 providers:
   llm:
