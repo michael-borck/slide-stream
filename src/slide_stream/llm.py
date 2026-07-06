@@ -1,11 +1,19 @@
 """LLM integration for Slide Stream."""
 
+import base64
 import os
 from typing import Any
 
 from rich.console import Console
 
 err_console = Console(stderr=True, style="bold red")
+
+# Default Claude model: Haiku is fast, cheap, vision-capable, and more than
+# enough for narration writing. Overridable via --llm-model / CLAUDE_MODEL.
+DEFAULT_CLAUDE_MODEL = "claude-haiku-4-5"
+
+# Providers whose clients can accept an image alongside the prompt.
+VISION_PROVIDERS = ("claude", "openai", "openai-compatible", "ollama", "gemini")
 
 
 def get_llm_client(provider: str, base_url: str | None = None) -> Any:
@@ -150,9 +158,7 @@ def query_llm(
 
         elif provider == "claude":
             # Use provided model or fallback to environment variable or default
-            selected_model = model or os.getenv(
-                "CLAUDE_MODEL", "claude-3-5-sonnet-20241022"
-            )  # Updated default
+            selected_model = model or os.getenv("CLAUDE_MODEL", DEFAULT_CLAUDE_MODEL)
             response = client.messages.create(
                 model=selected_model,
                 max_tokens=1024,
@@ -175,4 +181,95 @@ def query_llm(
 
     except Exception as e:
         err_console.print(f"  - LLM Error: {e}")
+        return None
+
+
+def query_llm_with_image(
+    client: Any,
+    provider: str,
+    prompt_text: str,
+    image_bytes: bytes,
+    media_type: str,
+    rich_console: Console,
+    model: str | None = None,
+) -> str | None:
+    """Query a vision-capable LLM with an image and a prompt.
+
+    Used for image-only slides: the model describes the image and turns it
+    into narration. Returns None when the provider has no vision path or the
+    call fails (callers fall back to text-only narration).
+    """
+    if provider not in VISION_PROVIDERS:
+        err_console.print(
+            f"  - LLM provider '{provider}' does not support image input; "
+            "narrating from the slide title only."
+        )
+        return None
+
+    rich_console.print("  - Querying LLM (with slide image)...")
+    image_b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
+
+    try:
+        if provider == "claude":
+            selected_model = model or os.getenv("CLAUDE_MODEL", DEFAULT_CLAUDE_MODEL)
+            response = client.messages.create(
+                model=selected_model,
+                max_tokens=1024,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": media_type,
+                                    "data": image_b64,
+                                },
+                            },
+                            {"type": "text", "text": prompt_text},
+                        ],
+                    }
+                ],
+            )
+            return response.content[0].text
+
+        elif provider in ["openai", "ollama", "openai-compatible"]:
+            if model:
+                selected_model = model
+            elif provider == "openai":
+                selected_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+            elif provider == "ollama":
+                selected_model = os.getenv("OLLAMA_MODEL", "llama3.2")
+            else:
+                selected_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+            response = client.chat.completions.create(
+                model=selected_model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt_text},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{media_type};base64,{image_b64}"
+                                },
+                            },
+                        ],
+                    }
+                ],
+            )
+            return response.choices[0].message.content
+
+        elif provider == "gemini":
+            response = client.generate_content(
+                [{"mime_type": media_type, "data": image_bytes}, prompt_text]
+            )
+            return response.text
+
+        return None
+
+    except Exception as e:
+        err_console.print(f"  - LLM vision error: {e}")
         return None

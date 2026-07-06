@@ -332,6 +332,46 @@ settings:
   from `slide-stream voices`, which lists server voices and hides ephemeral
   UUID uploads).
 
+### Narration
+
+By default (when an LLM provider is configured) SlideStream writes narration
+that *complements* the slides instead of reading them aloud, choosing a source
+per slide:
+
+1. **Speaker notes** (`.pptx`) — cleaned into speakable prose and fitted to the
+   target length (long notes are summarised, thin ones expanded).
+2. **Slide content** — turned into what a presenter would *say*, not a recital
+   of the bullets.
+3. **Slide image** — image-only slides are described by a vision-capable
+   provider (`claude`, `openai`, `gemini`) and tied to the slide title.
+4. **Title only** — a brief spoken introduction.
+
+Control it per run:
+
+```bash
+# Aim for ~30 seconds of narration per slide
+slide-stream create deck.pptx out.mp4 --llm-provider claude --narration-seconds 30
+
+# Speak the PowerPoint speaker notes exactly as written (no LLM rewriting)
+slide-stream create deck.pptx out.mp4 --verbatim-notes
+
+# Provide your own script: one block per slide, separated by lines of ---
+slide-stream create deck.md out.mp4 --script narration.txt
+```
+
+`--llm-model` selects a specific model (e.g. `claude-haiku-4-5`, the default for
+Claude). API keys are read from the environment (`ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`). A `--script` file looks
+like:
+
+```
+Welcome to the course. Today we cover neural networks.
+---
+A perceptron is the simplest building block of a network.
+---
+Thanks for watching.
+```
+
 **Avatar Providers (talking-head overlay):**
 - `none`: Disabled (default)
 - `precomputed`: Composites `head_1.mp4`, `head_2.mp4`, … from `providers.avatar.assets_dir` as a circle in a corner of each slide — no GPU or service needed. Enable per run with `--avatar`, disable with `--no-avatar`; appearance via `settings.avatar` (`position`, `size`, `margin`).

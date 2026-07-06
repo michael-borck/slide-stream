@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from pptx import Presentation
-from pptx.enum.shapes import PP_PLACEHOLDER
+from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
 
 
 def parse_powerpoint(file_path: str | Path) -> list[dict[str, Any]]:
@@ -29,12 +29,24 @@ def parse_powerpoint(file_path: str | Path) -> list[dict[str, Any]]:
         slide_data = {
             "title": f"Slide {slide_num}",  # Default title
             "content": [],
-            "notes": ""
+            "notes": "",
+            "images": []
         }
 
         # Extract slide content
         title_set = False
         for shape in slide.shapes:
+            # Collect embedded pictures so image-only slides can still be
+            # narrated (via a vision-capable LLM).
+            if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                try:
+                    slide_data["images"].append({
+                        "data": shape.image.blob,  # type: ignore[attr-defined]
+                        "content_type": shape.image.content_type,  # type: ignore[attr-defined]
+                    })
+                except Exception:
+                    pass  # unsupported/linked image formats: skip silently
+                continue
             if not shape.has_text_frame:
                 continue
             text = shape.text.strip()  # type: ignore[attr-defined]
@@ -74,10 +86,16 @@ def parse_powerpoint(file_path: str | Path) -> list[dict[str, Any]]:
                         slide_data["notes"] = notes_text
                         break
 
-        # Keep any slide with body content, speaker notes, or a real (non-default)
-        # title, so title-only / section-divider slides are not silently dropped.
+        # Keep any slide with body content, speaker notes, images, or a real
+        # (non-default) title, so title-only / divider / image-only slides are
+        # not silently dropped.
         has_real_title = slide_data["title"] != f"Slide {slide_num}"
-        if slide_data["content"] or slide_data["notes"] or has_real_title:
+        if (
+            slide_data["content"]
+            or slide_data["notes"]
+            or slide_data["images"]
+            or has_real_title
+        ):
             slides.append(slide_data)
 
     return slides

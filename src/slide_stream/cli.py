@@ -15,8 +15,14 @@ from rich.table import Table
 
 from . import __version__
 from .config_loader import ConfigurationError, load_config, save_example_config
-from .llm import get_llm_client, query_llm
+from .llm import get_llm_client, query_llm, query_llm_with_image
 from .media import create_video_fragment
+from .narration import (
+    build_narration_prompt,
+    narration_source,
+    parse_script_file,
+    target_words,
+)
 from .parser import parse_markdown
 from .powerpoint import format_powerpoint_content_for_llm, parse_powerpoint
 from .providers.base import StrictModeError
@@ -143,6 +149,54 @@ def create(
             ),
         ),
     ] = None,
+    llm_provider: Annotated[
+        str | None,
+        typer.Option(
+            "--llm-provider",
+            help=(
+                "LLM provider for narration (none, openai, gemini, claude, "
+                "groq, ollama, openai-compatible), overriding the config file."
+            ),
+        ),
+    ] = None,
+    llm_model_option: Annotated[
+        str | None,
+        typer.Option(
+            "--llm-model",
+            help="Specific LLM model to use (e.g. claude-haiku-4-5), overriding the config file.",
+        ),
+    ] = None,
+    narration_seconds: Annotated[
+        float | None,
+        typer.Option(
+            "--narration-seconds",
+            help=(
+                "Approximate spoken length per slide in seconds; notes/content "
+                "are summarised or expanded to fit."
+            ),
+        ),
+    ] = None,
+    verbatim_notes: Annotated[
+        bool,
+        typer.Option(
+            "--verbatim-notes",
+            help=(
+                "Speak the PowerPoint speaker notes exactly as written (no LLM "
+                "rewriting). Slides without notes fall back to normal narration."
+            ),
+        ),
+    ] = False,
+    script_file: Annotated[
+        str | None,
+        typer.Option(
+            "--script",
+            help=(
+                "Path to a narration script file: one spoken block per slide, "
+                "blocks separated by a line of three dashes (---). Used "
+                "verbatim, in order, overriding notes and the LLM."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Create a video from a Markdown (.md) or PowerPoint (.pptx) file."""
     console.print(
@@ -163,6 +217,13 @@ def create(
     # so a config file with `strict: true` still applies without the flag.
     if strict:
         config["settings"]["strict"] = True
+
+    if llm_provider:
+        config["providers"]["llm"]["provider"] = llm_provider
+    if llm_model_option:
+        config["providers"]["llm"]["model"] = llm_model_option
+    if narration_seconds is not None:
+        config["settings"].setdefault("narration", {})["target_seconds"] = narration_seconds
 
     if avatar is False:
         config["providers"]["avatar"]["provider"] = "none"
@@ -248,6 +309,22 @@ def create(
             raise typer.Exit(code=1)
         console.print(f"📄 Found [bold yellow]{len(slides)}[/bold yellow] slides.")
 
+        # Optional external narration script (verbatim, one block per slide).
+        script_blocks: list[str] | None = None
+        if script_file:
+            try:
+                script_blocks = parse_script_file(script_file)
+            except OSError as e:
+                err_console.print(f"Could not read script file: {e}")
+                raise typer.Exit(code=1)
+            if len(script_blocks) != len(slides):
+                err_console.print(
+                    f"⚠️  Script has {len(script_blocks)} block(s) but the deck "
+                    f"has {len(slides)} slide(s). Blocks are matched in order; "
+                    "extra slides use their default narration and extra blocks "
+                    "are ignored."
+                )
+
         # Process each slide with Rich progress bar
         video_fragments = []
         audio_failed = 0
@@ -296,17 +373,57 @@ def create(
                     slide["title"], slide.get("content", []), default_title
                 )
 
-                # LLM Processing
-                if llm_client:
-                    if file_extension == ".pptx" and slide.get("notes"):
-                        speech_prompt = f"Convert the following PowerPoint slide into a natural, flowing script for a voiceover. Use the speaker notes as guidance for the narrative style. Speak conversationally. Directly output the script and nothing else.\n\n{raw_text}"
-                    else:
-                        speech_prompt = f"Convert the following slide points into a natural, flowing script for a voiceover. Speak conversationally. Directly output the script and nothing else.\n\n{raw_text}"
-                    natural_speech = query_llm(
-                        llm_client, llm_provider_name, speech_prompt, console, llm_model
+                # Verbatim overrides (no LLM): an external script block for
+                # this slide, or --verbatim-notes when the slide has notes.
+                script_block = (
+                    script_blocks[i]
+                    if script_blocks is not None and i < len(script_blocks)
+                    else None
+                )
+                if script_block:
+                    speech_text = script_block
+                elif verbatim_notes and str(slide.get("notes", "")).strip():
+                    speech_text = str(slide["notes"]).strip()
+
+                # LLM narration, unless a verbatim source already set the text.
+                # Source priority: speaker notes (cleaned up and fitted to the
+                # target length) > slide content (written as presenter speech,
+                # not read aloud) > slide image (vision) > title only.
+                elif llm_client:
+                    narration_settings = config["settings"].get("narration", {})
+                    words = target_words(
+                        narration_settings.get("target_seconds"),
+                        narration_settings.get("wpm", 150),
                     )
+                    source = narration_source(slide)
+                    speech_prompt = build_narration_prompt(
+                        slide, source, words, narration_settings.get("wpm", 150)
+                    )
+
+                    if source == "image":
+                        if slide["title"] == (default_title or ""):
+                            err_console.print(
+                                f"  - Warning: slide {slide_num} is image-only "
+                                "with no title; narration is based on the "
+                                "image alone."
+                            )
+                        image = slide["images"][0]
+                        natural_speech = query_llm_with_image(
+                            llm_client,
+                            llm_provider_name,
+                            speech_prompt,
+                            image["data"],
+                            image["content_type"],
+                            console,
+                            llm_model,
+                        )
+                    else:
+                        natural_speech = query_llm(
+                            llm_client, llm_provider_name, speech_prompt, console, llm_model
+                        )
+
                     if natural_speech:
-                        speech_text = natural_speech
+                        speech_text = natural_speech.strip()
                     else:
                         llm_narration_failed += 1
 

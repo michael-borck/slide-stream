@@ -57,6 +57,13 @@ DEFAULT_CONFIG = {
             "font_color": "white",
             "max_line_width": 50
         },
+        "narration": {
+            # Approximate spoken length per slide in seconds (None = natural
+            # length). Also settable per run with --narration-seconds.
+            "target_seconds": None,
+            # Speaking rate used to convert seconds into a word target.
+            "wpm": 150
+        },
         "avatar": {
             "position": "bottom-right",  # bottom-left | top-left | top-right
             "size": 0.28,                # circle diameter as fraction of frame height
@@ -178,7 +185,13 @@ def create_example_config() -> str:
 providers:
   llm:
     provider: openai        # none, openai, gemini, claude, groq, ollama, openai-compatible
-    model: gpt-4o-mini     # optional: specific model to use
+    model: gpt-4o-mini     # optional: specific model (or --llm-model on the CLI)
+    # API keys come from the environment: OPENAI_API_KEY, ANTHROPIC_API_KEY,
+    # GEMINI_API_KEY, GROQ_API_KEY. Narration uses speaker notes as the
+    # primary source when present (cleaned up and fitted to the target
+    # length); otherwise it writes presenter-style narration from the slide
+    # content instead of reading the bullets aloud. Image-only slides are
+    # narrated via vision-capable providers (claude, openai, gemini).
 
   images:
     provider: dalle3        # text, dalle3, openai-compatible, pexels, unsplash
@@ -269,6 +282,17 @@ settings:
     content_font_size: 60
     font_color: white
     max_line_width: 50
+
+  # Narration length target (approximate seconds of speech per slide).
+  # Long speaker notes are summarised to fit; thin slides are expanded.
+  # Override per run: slide-stream create ... --narration-seconds 30
+  #
+  # For an exact script instead of LLM-written narration:
+  #   --verbatim-notes          speak the PowerPoint speaker notes as written
+  #   --script my_script.txt    one block per slide, separated by --- lines
+  narration:
+    target_seconds: 60
+    wpm: 150
 
   # Talking-head overlay appearance (used when providers.avatar is enabled)
   avatar:
