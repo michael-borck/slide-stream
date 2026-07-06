@@ -115,3 +115,59 @@ Closing paragraph.
     assert content.index("Second list item") < content.index("Subsection")
     assert content.index("Subsection") < content.index("Third list item")
     assert content.index("Fourth list item") < content.index("Closing paragraph.")
+
+
+# --- separator-style and front-matter (ported from slide-vision) ------------
+
+
+def test_parse_separator_style_deck():
+    from slide_stream.parser import parse_markdown
+
+    md = (
+        "# First Slide\n"
+        "- point a\n"
+        "- point b\n"
+        "---\n"
+        "# Second Slide\n"
+        "Some prose here.\n"
+    )
+    slides = parse_markdown(md)
+    assert [s["title"] for s in slides] == ["First Slide", "Second Slide"]
+    assert slides[0]["content"] == ["point a", "point b"]
+    assert slides[1]["content"] == ["Some prose here."]
+
+
+def test_front_matter_is_stripped():
+    from slide_stream.parser import parse_markdown
+
+    md = (
+        "---\n"
+        "title: My Deck\n"
+        "author: Me\n"
+        "---\n"
+        "# Real Slide\n\n"
+        "- a\n"
+    )
+    slides = parse_markdown(md)
+    # Front matter did not become a slide.
+    assert len(slides) == 1
+    assert slides[0]["title"] == "Real Slide"
+
+
+def test_front_matter_not_confused_with_separator_deck():
+    """A deck opening with a --- separator (heading inside) is NOT front matter."""
+    from slide_stream.parser import parse_markdown
+
+    md = "---\n# One\n- a\n---\n# Two\n- b\n"
+    slides = parse_markdown(md)
+    assert [s["title"] for s in slides] == ["One", "Two"]
+
+
+def test_heading_style_unchanged_without_separators():
+    from slide_stream.parser import parse_markdown
+
+    md = "# Only\n\n- x\n\n## Sub\n\n- y\n"
+    slides = parse_markdown(md)
+    assert len(slides) == 1
+    assert slides[0]["title"] == "Only"
+    assert "x" in slides[0]["content"]
