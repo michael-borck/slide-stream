@@ -176,6 +176,40 @@ def create(
             ),
         ),
     ] = None,
+    tts_provider_option: Annotated[
+        str | None,
+        typer.Option(
+            "--tts-provider",
+            help=(
+                "TTS provider (gtts, kokoro, chatterbox, elevenlabs, openai, "
+                "openai-compatible), overriding the config file."
+            ),
+        ),
+    ] = None,
+    tts_base_url: Annotated[
+        str | None,
+        typer.Option(
+            "--tts-base-url",
+            help="TTS server URL (e.g. a Chatterbox or OpenAI-compatible endpoint), overriding the config file.",
+        ),
+    ] = None,
+    voice: Annotated[
+        str | None,
+        typer.Option(
+            "--voice",
+            help="Voice name/ID for the TTS provider, overriding the config file.",
+        ),
+    ] = None,
+    voice_sample: Annotated[
+        str | None,
+        typer.Option(
+            "--voice-sample",
+            help=(
+                "Path to a reference recording for voice cloning (chatterbox); "
+                "uploaded ephemerally per run."
+            ),
+        ),
+    ] = None,
     verbatim_notes: Annotated[
         bool,
         typer.Option(
@@ -224,6 +258,14 @@ def create(
         config["providers"]["llm"]["model"] = llm_model_option
     if narration_seconds is not None:
         config["settings"].setdefault("narration", {})["target_seconds"] = narration_seconds
+    if tts_provider_option:
+        config["providers"]["tts"]["provider"] = tts_provider_option
+    if tts_base_url:
+        config["providers"]["tts"]["base_url"] = tts_base_url
+    if voice:
+        config["providers"]["tts"]["voice"] = voice
+    if voice_sample:
+        config["providers"]["tts"]["voice_sample"] = voice_sample
 
     if avatar is False:
         config["providers"]["avatar"]["provider"] = "none"

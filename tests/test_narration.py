@@ -259,3 +259,28 @@ def test_cli_script_file_is_used_verbatim(tmp_path, mocker, monkeypatch):
     spoken_texts = [c.kwargs.get("text", "") for c in gtts.call_args_list]
     assert "Custom narration for slide one." in spoken_texts
     assert "And slide two." in spoken_texts
+
+
+def test_cli_tts_overrides_reach_the_provider(tmp_path, monkeypatch):
+    """--tts-provider/--tts-base-url/--voice select a Chatterbox server; the
+    provider must be initialised from them (verified via the console output)."""
+    monkeypatch.chdir(tmp_path)
+    runner = CliRunner()
+    md = tmp_path / "d.md"
+    md.write_text("# One\n\n- a\n")
+
+    # chatterbox with a base_url is 'available'; --strict makes an unreachable
+    # server abort at synthesis rather than silently using gtts — proving the
+    # override took effect (default gtts would never reach a server).
+    result = runner.invoke(
+        app,
+        [
+            "create", str(md), str(tmp_path / "out.mp4"),
+            "--tts-provider", "chatterbox",
+            "--tts-base-url", "http://127.0.0.1:1/v1",
+            "--voice", "Emily.wav",
+            "--strict",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "chatterbox" in result.output.lower()
