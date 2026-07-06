@@ -14,6 +14,7 @@ from slide_stream.providers.images import (
 from slide_stream.providers.tts import (
     ElevenLabsTTSProvider,
     GTTSProvider,
+    KokoroTTSProvider,
     OpenAICompatTTSProvider,
 )
 
@@ -480,3 +481,72 @@ def test_image_non_strict_falls_back_to_text(config, tmp_path, monkeypatch):
     result = DalleImageProvider(config).generate_image("query", str(out))
     assert result == str(out)
     assert out.exists()
+
+
+# --- Font loading (text slides must not use the tiny bitmap fallback) -------
+
+
+def test_load_font_returns_scalable_font_at_requested_size():
+    """load_font must yield a real scalable font at the asked-for size; the
+    old code silently fell back to Pillow's unsized ~10px bitmap font on
+    systems without arial.ttf/DejaVuSans.ttf on Pillow's search path (macOS)."""
+    from slide_stream.providers.images import load_font
+
+    font = load_font(72)
+    assert getattr(font, "size", None) == 72
+
+
+# --- Kokoro local TTS --------------------------------------------------------
+
+
+def test_kokoro_unavailable_without_optional_deps(config, monkeypatch):
+    import importlib.util as ilu
+
+    monkeypatch.setattr(ilu, "find_spec", lambda name: None)
+    assert KokoroTTSProvider(config).is_available() is False
+
+
+def test_kokoro_available_when_deps_installed(config, monkeypatch):
+    import importlib.util as ilu
+
+    monkeypatch.setattr(ilu, "find_spec", lambda name: object())
+    assert KokoroTTSProvider(config).is_available() is True
+
+
+def test_kokoro_uses_configured_model_paths_without_download(config):
+    """Explicit model_path/voices_path must be used as-is (no network, no
+    cache directory)."""
+    config["providers"]["tts"]["model_path"] = "/models/kokoro.onnx"
+    config["providers"]["tts"]["voices_path"] = "/models/voices.bin"
+
+    provider = KokoroTTSProvider(config)
+    assert provider._model_files() == ("/models/kokoro.onnx", "/models/voices.bin")
+
+
+def test_kokoro_strict_failure_returns_none(config, monkeypatch):
+    """If kokoro_onnx is not importable, strict mode must refuse the gTTS
+    fallback and return None."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name.startswith("kokoro_onnx") or name == "soundfile":
+            raise ImportError(name)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    config["settings"]["strict"] = True
+
+    assert KokoroTTSProvider(config).synthesize("hello", "unused.mp3") is None
+
+
+def test_factory_strict_raises_for_unavailable_kokoro(config, monkeypatch):
+    import importlib.util as ilu
+
+    monkeypatch.setattr(ilu, "find_spec", lambda name: None)
+    config["settings"]["strict"] = True
+    config["providers"]["tts"]["provider"] = "kokoro"
+
+    with pytest.raises(StrictModeError):
+        ProviderFactory.create_tts_provider(config)

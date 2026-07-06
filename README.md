@@ -299,9 +299,11 @@ sudo apt update && sudo apt install ffmpeg
 - `unsplash`: Requires `UNSPLASH_ACCESS_KEY`
 
 **TTS Providers:**
-- `gtts`: Free, always available
+- `gtts`: Free, always available (needs internet)
+- `kokoro`: Fully offline, no API key — `pip install "slide-stream[local-tts]"` (~340MB one-time model download; voices include `af_sarah`, `af_bella`, `am_adam`, `am_michael`)
 - `elevenlabs`: Requires `ELEVENLABS_API_KEY`
 - `openai`: Requires `OPENAI_API_KEY`
+- `openai-compatible`: Any OpenAI-compatible speech endpoint via `base_url` (local or hosted)
 
 **LLM Providers:**
 - `none`: No content enhancement

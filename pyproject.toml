@@ -35,7 +35,7 @@ dependencies = [
     "requests>=2.31.0",
     "gtts>=2.4.0",
     "moviepy>=2.0.0,<3.0.0",
-    "pillow>=10.0.0",
+    "pillow>=10.1.0",
     "typing-extensions>=4.8.0",
     "pyyaml>=6.0.0",
     "python-pptx>=1.0.2",
@@ -48,6 +48,11 @@ openai = ["openai>=1.0.0"]
 claude = ["anthropic>=0.7.0"]
 groq = ["groq>=0.4.0"]
 elevenlabs = ["elevenlabs>=1.5.0,<3.0.0"]
+# Fully offline TTS (Kokoro-82M via ONNX; ~340MB one-time model download)
+local-tts = [
+    "kokoro-onnx>=0.4.0",
+    "soundfile>=0.12.0",
+]
 all-ai = [
     "google-generativeai>=0.3.0",
     "openai>=1.0.0",

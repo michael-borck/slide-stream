@@ -15,6 +15,7 @@ from .images import (
 from .tts import (
     ElevenLabsTTSProvider,
     GTTSProvider,
+    KokoroTTSProvider,
     OpenAICompatTTSProvider,
     OpenAITTSProvider,
 )
@@ -37,6 +38,7 @@ class ProviderFactory:
 
     TTS_PROVIDERS: dict[str, type[TTSProvider]] = {
         "gtts": GTTSProvider,
+        "kokoro": KokoroTTSProvider,
         "elevenlabs": ElevenLabsTTSProvider,
         "openai": OpenAITTSProvider,
         "openai-compatible": OpenAICompatTTSProvider,
@@ -127,6 +129,7 @@ class ProviderFactory:
         """Get list of available TTS providers."""
         return {
             "gtts": "Google Text-to-Speech (free, no API key; requires an internet connection)",
+            "kokoro": "Kokoro local TTS — fully offline (pip install 'slide-stream[local-tts]'; ~340MB one-time model download)",
             "elevenlabs": "ElevenLabs premium TTS (requires ElevenLabs API key)",
             "openai": "OpenAI TTS (requires OpenAI API key)",
             "openai-compatible": "Any OpenAI-compatible speech endpoint (set base_url; local or hosted)",

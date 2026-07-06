@@ -14,6 +14,32 @@ from .base import ImageProvider, StrictModeError, is_strict
 console = Console()
 err_console = Console(stderr=True, style="bold red")
 
+# Pillow only searches a handful of directories by name, and on macOS Arial
+# lives in /System/Library/Fonts/Supplemental where it does not look, so
+# absolute paths are included alongside plain names.
+FONT_CANDIDATES = [
+    "arial.ttf",
+    "Arial.ttf",
+    "/System/Library/Fonts/Supplemental/Arial.ttf",  # macOS
+    "Helvetica.ttc",  # macOS
+    "DejaVuSans.ttf",  # Linux
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+]
+
+
+def load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    """Load a scalable font at the requested size.
+
+    Falls back to Pillow's built-in scalable font (Pillow >= 10.1) rather than
+    the unsized bitmap default, which renders ~10px glyphs on a 1080p canvas.
+    """
+    for candidate in FONT_CANDIDATES:
+        try:
+            return ImageFont.truetype(candidate, size)
+        except OSError:
+            continue
+    return ImageFont.load_default(size=size)
+
 
 class TextImageProvider(ImageProvider):
     """Generate text-based images for slides."""
@@ -47,17 +73,8 @@ class TextImageProvider(ImageProvider):
         img = Image.new("RGB", resolution, color=bg_color)
         draw = ImageDraw.Draw(img)
 
-        # Try to load fonts
-        try:
-            title_font = ImageFont.truetype("arial.ttf", title_font_size)
-            content_font = ImageFont.truetype("arial.ttf", content_font_size)
-        except OSError:
-            try:
-                title_font = ImageFont.truetype("DejaVuSans.ttf", title_font_size)
-                content_font = ImageFont.truetype("DejaVuSans.ttf", content_font_size)
-            except OSError:
-                title_font = ImageFont.load_default()
-                content_font = ImageFont.load_default()
+        title_font = load_font(title_font_size)
+        content_font = load_font(content_font_size)
 
         if slide is not None:
             title = (slide.get("title") or "").strip() or "Slide"

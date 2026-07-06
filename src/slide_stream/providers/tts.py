@@ -1,13 +1,27 @@
 """Text-to-speech provider implementations."""
 
+import importlib.util
 import os
+from pathlib import Path
+from typing import Any
 
+import requests
 from rich.console import Console
 
 from .base import TTSProvider, is_strict
 
 console = Console()
 err_console = Console(stderr=True, style="bold red")
+
+# Kokoro-82M ONNX model files, downloaded once on first use.
+KOKORO_MODEL_URL = (
+    "https://github.com/thewh1teagle/kokoro-onnx/releases/download/"
+    "model-files-v1.0/kokoro-v1.0.onnx"
+)
+KOKORO_VOICES_URL = (
+    "https://github.com/thewh1teagle/kokoro-onnx/releases/download/"
+    "model-files-v1.0/voices-v1.0.bin"
+)
 
 
 class GTTSProvider(TTSProvider):
@@ -34,6 +48,141 @@ class GTTSProvider(TTSProvider):
         except Exception as e:
             err_console.print(f"  - gTTS error: {e}")
             return None
+
+
+class KokoroTTSProvider(TTSProvider):
+    """Fully offline TTS using the Kokoro-82M model via ONNX (CPU-friendly).
+
+    Requires the optional dependencies: pip install "slide-stream[local-tts]".
+    Model files (~340 MB total) are downloaded once to
+    ~/.cache/slide-stream/kokoro/ on first use; set
+    ``providers.tts.model_path`` and ``voices_path`` to use existing files.
+    After that, synthesis needs no network and no API key.
+    """
+
+    # Loading the ~310 MB model is expensive; keep one engine per provider
+    # instance so a multi-slide run pays the cost once.
+    _engine: Any = None
+
+    @property
+    def name(self) -> str:
+        return "kokoro"
+
+    def is_available(self) -> bool:
+        """Available when the optional local-tts dependencies are installed."""
+        return (
+            importlib.util.find_spec("kokoro_onnx") is not None
+            and importlib.util.find_spec("soundfile") is not None
+        )
+
+    def _tts_config(self) -> dict[str, Any]:
+        return self.config.get("providers", {}).get("tts", {})
+
+    def _cache_dir(self) -> Path:
+        return Path(
+            os.getenv("SLIDE_STREAM_CACHE") or Path.home() / ".cache" / "slide-stream"
+        )
+
+    def _espeak_config(self) -> Any:
+        """Build an espeak config whose data path fits espeak-ng's limits.
+
+        espeak-ng stores its data path in a fixed ~160-byte buffer; the
+        espeakng_loader data dir inside a deeply nested site-packages can
+        exceed that, which makes the C library fall back to a nonexistent
+        compiled-in path and exit(1) the whole process. When the real path is
+        too long, copy the data (~19MB, one-time) to our short cache path.
+        A symlink is not enough: phonemizer resolves it back to the long path.
+        """
+        import shutil
+
+        import espeakng_loader  # type: ignore[import-not-found]
+        from kokoro_onnx import EspeakConfig  # type: ignore[import-not-found]
+
+        data_path = Path(espeakng_loader.get_data_path())
+        if len(str(data_path)) > 140:
+            short_copy = self._cache_dir() / "espeak-ng-data"
+            if not (short_copy / "phontab").exists():
+                short_copy.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(data_path, short_copy, dirs_exist_ok=True)
+            data_path = short_copy
+        return EspeakConfig(
+            lib_path=espeakng_loader.get_library_path(), data_path=str(data_path)
+        )
+
+    def _model_files(self) -> tuple[str, str]:
+        """Return (model_path, voices_path), downloading them if needed."""
+        tts_config = self._tts_config()
+        model_path = tts_config.get("model_path")
+        voices_path = tts_config.get("voices_path")
+        if model_path and voices_path:
+            return str(model_path), str(voices_path)
+
+        cache_dir = self._cache_dir() / "kokoro"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        model = cache_dir / "kokoro-v1.0.onnx"
+        voices = cache_dir / "voices-v1.0.bin"
+        for target, url in ((model, KOKORO_MODEL_URL), (voices, KOKORO_VOICES_URL)):
+            if not target.exists():
+                self._download(url, target)
+        return str(model), str(voices)
+
+    @staticmethod
+    def _download(url: str, target: Path) -> None:
+        console.print(f"  - Downloading {target.name} (one-time setup)...")
+        # Stream to a .part file and rename, so an interrupted download can
+        # never be mistaken for a complete model file on the next run.
+        partial = target.with_suffix(target.suffix + ".part")
+        with requests.get(url, stream=True, timeout=60) as response:
+            response.raise_for_status()
+            with open(partial, "wb") as f:
+                for chunk in response.iter_content(chunk_size=1 << 20):
+                    f.write(chunk)
+        partial.rename(target)
+
+    def synthesize(self, text: str, filename: str) -> str | None:
+        """Convert text to speech locally with Kokoro."""
+        try:
+            import soundfile as sf  # type: ignore[import-not-found]
+            from kokoro_onnx import Kokoro  # type: ignore[import-not-found]
+
+            tts_config = self._tts_config()
+            voice = tts_config.get("voice") or "af_sarah"
+            speed = float(tts_config.get("speed") or 1.0)
+            lang = tts_config.get("lang") or "en-us"
+
+            if self._engine is None:
+                model_path, voices_path = self._model_files()
+                self._engine = Kokoro(
+                    model_path, voices_path, espeak_config=self._espeak_config()
+                )
+
+            samples, sample_rate = self._engine.create(
+                text, voice=voice, speed=speed, lang=lang
+            )
+            # The pipeline names audio files .mp3, but WAV data is fine:
+            # ffmpeg (via moviepy) probes content, not the extension.
+            sf.write(filename, samples, sample_rate)
+            console.print(f"  - Generated audio with Kokoro ({voice})")
+            return filename
+
+        except ImportError:
+            err_console.print(
+                '  - Kokoro not installed. Install with: pip install "slide-stream[local-tts]"'
+            )
+            return self._fallback_to_gtts(text, filename)
+        except Exception as e:
+            err_console.print(f"  - Kokoro error: {e}. Using gTTS fallback.")
+            return self._fallback_to_gtts(text, filename)
+
+    def _fallback_to_gtts(self, text: str, filename: str) -> str | None:
+        """Fallback to gTTS, unless strict mode disables fallbacks."""
+        if is_strict(self.config):
+            err_console.print(
+                f"  - Strict mode: not falling back to gTTS after {self.name} failed."
+            )
+            return None
+        gtts_provider = GTTSProvider(self.config)
+        return gtts_provider.synthesize(text, filename)
 
 
 class ElevenLabsTTSProvider(TTSProvider):

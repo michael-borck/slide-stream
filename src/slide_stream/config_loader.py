@@ -173,8 +173,19 @@ providers:
     fallback: text         # fallback when primary fails
 
   tts:
-    provider: elevenlabs   # gtts, elevenlabs, openai, openai-compatible
+    provider: elevenlabs   # gtts, kokoro, elevenlabs, openai, openai-compatible
     voice: rachel          # voice ID/name (provider-specific)
+
+# --- Fully offline TTS (no cloud, no API key) ------------------------------
+# Requires: pip install "slide-stream[local-tts]"
+# Model files (~340MB) download once to ~/.cache/slide-stream/kokoro/.
+# Voices include af_sarah, af_bella (female) and am_adam, am_michael (male).
+#
+# providers:
+#   tts:
+#     provider: kokoro
+#     voice: af_sarah
+# ---------------------------------------------------------------------------
 
 # --- Fully local / self-hosted stack -------------------------------------
 # Point every layer at an OpenAI-compatible server (LocalAI, vLLM,
