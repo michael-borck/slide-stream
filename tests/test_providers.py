@@ -728,3 +728,70 @@ def test_chatterbox_converts_m4a_sample_to_wav(config, tmp_path, mocker):
     assert result == str(out)
     assert uploaded["name"].endswith(".wav")
     assert uploaded["head"] == b"RIFF"  # genuinely converted to WAV
+
+
+# --- Gemini/Imagen image provider --------------------------------------------
+
+
+def test_gemini_image_availability_follows_key(config, monkeypatch):
+    from slide_stream.providers.images import GeminiImageProvider
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    config["api_keys"] = {}
+    assert GeminiImageProvider(config).is_available() is False
+
+    config["api_keys"] = {"gemini": "g-test"}
+    assert GeminiImageProvider(config).is_available() is True
+
+
+def test_gemini_image_falls_back_to_text_without_sdk(config, tmp_path, monkeypatch):
+    """No google-genai installed -> text fallback (still produces an image)."""
+    from slide_stream.providers.images import GeminiImageProvider
+
+    config["api_keys"] = {"gemini": "g-test"}
+    out = tmp_path / "img.png"
+    # google-genai is not installed in the test env, so the import fails.
+    result = GeminiImageProvider(config).generate_image(
+        "Quantum", str(out), slide={"title": "Quantum", "content": ["a"]}
+    )
+    assert result == str(out)
+    assert out.exists()  # text card
+
+
+def test_gemini_image_success_with_mocked_sdk(config, tmp_path, monkeypatch, mocker):
+    """Inject a fake google-genai and verify the Imagen bytes are written."""
+    import sys
+
+    from slide_stream.providers.images import GeminiImageProvider
+
+    config["api_keys"] = {"gemini": "g-test"}
+    config["providers"]["images"]["model"] = "imagen-4.0-fast-generate-001"
+
+    fake_image = mocker.MagicMock()
+    fake_image.image.image_bytes = b"\x89PNG-imagen"
+    fake_response = mocker.MagicMock(generated_images=[fake_image])
+    fake_client = mocker.MagicMock()
+    fake_client.models.generate_images.return_value = fake_response
+
+    genai_mod = mocker.MagicMock()
+    genai_mod.Client.return_value = fake_client
+    types_mod = mocker.MagicMock()
+    google_mod = mocker.MagicMock()
+    google_mod.genai = genai_mod
+    monkeypatch.setitem(sys.modules, "google", google_mod)
+    monkeypatch.setitem(sys.modules, "google.genai", genai_mod)
+    monkeypatch.setitem(sys.modules, "google.genai.types", types_mod)
+
+    out = tmp_path / "img.png"
+    result = GeminiImageProvider(config).generate_image("Neurons", str(out))
+
+    assert result == str(out)
+    assert out.read_bytes() == b"\x89PNG-imagen"
+    # Configured model + landscape aspect ratio were passed through.
+    kwargs = fake_client.models.generate_images.call_args.kwargs
+    assert kwargs["model"] == "imagen-4.0-fast-generate-001"
+
+
+def test_factory_registers_gemini_image_provider():
+    assert "gemini" in ProviderFactory.list_image_providers()

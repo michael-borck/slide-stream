@@ -43,7 +43,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # AI providers
-gemini = ["google-generativeai>=0.3.0"]
+gemini = ["google-generativeai>=0.3.0", "google-genai>=1.0.0"]
 openai = ["openai>=1.0.0"]
 claude = ["anthropic>=0.7.0"]
 groq = ["groq>=0.4.0"]
@@ -55,6 +55,7 @@ local-tts = [
 ]
 all-ai = [
     "google-generativeai>=0.3.0",
+    "google-genai>=1.0.0",
     "openai>=1.0.0",
     "anthropic>=0.7.0",
     "groq>=0.4.0",

@@ -14,6 +14,7 @@ from .base import (
 )
 from .images import (
     DalleImageProvider,
+    GeminiImageProvider,
     LocalImageProvider,
     OpenAICompatImageProvider,
     PexelsImageProvider,
@@ -41,6 +42,7 @@ class ProviderFactory:
         "text": TextImageProvider,
         "local": LocalImageProvider,
         "dalle3": DalleImageProvider,
+        "gemini": GeminiImageProvider,
         "openai-compatible": OpenAICompatImageProvider,
         "pexels": PexelsImageProvider,
         "unsplash": UnsplashImageProvider,
@@ -170,6 +172,7 @@ class ProviderFactory:
             "text": "Text-based images (always available)",
             "local": "Local folder images matched by filename keywords (set providers.images.folder)",
             "dalle3": "DALL-E 3 AI image generation (requires OpenAI API key)",
+            "gemini": "Google Imagen generation, cheap (~$0.02/image; requires GEMINI_API_KEY and slide-stream[gemini])",
             "openai-compatible": "Any OpenAI-compatible image endpoint (set base_url; local or hosted)",
             "pexels": "Pexels stock photos (requires Pexels API key)",
             "unsplash": "Unsplash stock photos (requires Unsplash API key)",

@@ -211,6 +211,86 @@ class LocalImageProvider(ImageProvider):
         return TextImageProvider(self.config).generate_image(query, filename, slide=slide)
 
 
+class GeminiImageProvider(ImageProvider):
+    """Generate images with Google Imagen via the google-genai SDK.
+
+    Cheap cloud generation (Imagen 4 Fast is ~$0.02/image). Set
+    ``providers.images.model`` to pick the Imagen model (default the Fast
+    tier). Requires ``pip install 'slide-stream[gemini]'`` and a
+    ``GEMINI_API_KEY`` (or ``GOOGLE_API_KEY``). Falls back to a text image on
+    any error.
+    """
+
+    @property
+    def name(self) -> str:
+        return "gemini"
+
+    def _api_key(self) -> str | None:
+        api_keys = self.config.get("api_keys", {})
+        return (
+            api_keys.get("gemini")
+            or api_keys.get("google")
+            or os.getenv("GEMINI_API_KEY")
+            or os.getenv("GOOGLE_API_KEY")
+        )
+
+    def is_available(self) -> bool:
+        return bool(self._api_key())
+
+    def generate_image(self, query: str, filename: str, slide: dict[str, Any] | None = None) -> str:
+        """Generate an image with Google Imagen."""
+        try:
+            from google import genai  # type: ignore[import-not-found]
+            from google.genai import types  # type: ignore[import-not-found]
+
+            api_key = self._api_key()
+            if not api_key:
+                raise ValueError("Gemini API key not found")
+
+            settings = self.config.get("providers", {}).get("images", {})
+            model = settings.get("model") or "imagen-4.0-fast-generate-001"
+            video_settings = self.config.get("settings", {}).get("video", {})
+            resolution = video_settings.get("resolution", [1920, 1080])
+            aspect_ratio = "16:9" if resolution[0] >= resolution[1] else "9:16"
+
+            client = genai.Client(api_key=api_key)
+            prompt = (
+                f"A professional, clean image for a presentation slide about: "
+                f"{query}. High quality, suitable for business presentation, "
+                f"no text overlay."
+            )
+            response = client.models.generate_images(
+                model=model,
+                prompt=prompt,
+                config=types.GenerateImagesConfig(
+                    number_of_images=1, aspect_ratio=aspect_ratio
+                ),
+            )
+            generated = getattr(response, "generated_images", None)
+            if not generated:
+                raise ValueError("Imagen returned no image")
+            image_bytes = generated[0].image.image_bytes
+            with open(filename, "wb") as f:
+                f.write(image_bytes)
+
+            console.print(f"  - Generated Imagen image: {query}")
+            return filename
+
+        except ImportError:
+            err_console.print(
+                "  - google-genai not installed. Install with: "
+                "pip install 'slide-stream[gemini]'"
+            )
+            return self._fallback_to_text(query, filename, slide=slide)
+        except Exception as e:
+            err_console.print(f"  - Imagen error: {e}. Using text fallback.")
+            return self._fallback_to_text(query, filename, slide=slide)
+
+    def _fallback_to_text(self, query: str, filename: str, slide: dict[str, Any] | None = None) -> str:
+        """Fall back to a text image, preserving slide content when known."""
+        return TextImageProvider(self.config).generate_image(query, filename, slide=slide)
+
+
 class DalleImageProvider(ImageProvider):
     """Generate images using DALL-E 3 via OpenAI API."""
 

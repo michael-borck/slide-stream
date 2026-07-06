@@ -243,9 +243,10 @@ providers:
     # narrated via vision-capable providers (claude, openai, gemini).
 
   images:
-    provider: dalle3        # text, local, dalle3, openai-compatible, pexels, unsplash
+    provider: dalle3        # text, local, dalle3, gemini, openai-compatible, pexels, unsplash
     fallback: text         # fallback when primary fails
     # folder: ./images     # for the 'local' provider — matched by filename keywords
+    # model: imagen-4.0-fast-generate-001   # for the 'gemini' (Imagen) provider
 
   tts:
     provider: elevenlabs   # gtts, kokoro, elevenlabs, openai, openai-compatible

@@ -308,6 +308,7 @@ sudo apt update && sudo apt install ffmpeg
 - `text`: Always available, no setup required
 - `local`: Pick images from a local folder by filename keywords (`providers.images.folder`); pair with `slide-stream scan` to AI-name them
 - `dalle3`: Requires `OPENAI_API_KEY`
+- `gemini`: Google Imagen generation, cheap (~$0.02/image) — `pip install "slide-stream[gemini]"` + `GEMINI_API_KEY`; set `providers.images.model` for the Imagen tier (default Fast)
 - `pexels`: Requires `PEXELS_API_KEY`  
 - `unsplash`: Requires `UNSPLASH_ACCESS_KEY`
 
