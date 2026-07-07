@@ -145,7 +145,8 @@ slide-stream serve</code></pre>
     if (pick) {
       main.href = DL(ALL[pick].file);
       main.textContent = "⬇ Download for " + ALL[pick].label;
-      hero.textContent = "⬇ Download for " + ALL[pick].label.replace(" (Apple Silicon)", "") + " — and more";
+      hero.textContent = "⬇ Download for " +
+        ALL[pick].label.replace(/ \((Apple Silicon|AppImage)\)/, "") + " — and more";
     }
     var others = Object.keys(ALL).filter(function (k) { return k !== pick; })
       .map(function (k) { return '<a href="' + DL(ALL[k].file) + '">' + ALL[k].label + "</a>"; });
