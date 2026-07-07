@@ -131,6 +131,10 @@ pythonPlatform = "All"
 typeCheckingMode = "basic"
 reportMissingImports = true
 reportMissingTypeStubs = false
+# pytest autouse fixtures are invoked by the framework, not by name.
+executionEnvironments = [
+    { root = "tests", reportUnusedFunction = false },
+]
 reportUnusedImport = true
 reportUnusedClass = true
 reportUnusedFunction = true
@@ -182,4 +186,9 @@ dev = [
     "pytest-mock>=3.14.1",
     "ruff>=0.12.0",
     "twine>=6.1.0",
+    # serve extra, needed to lint/type/test the web UI in CI
+    "fastapi>=0.110.0",
+    "uvicorn>=0.29.0",
+    "python-multipart>=0.0.9",
+    "httpx>=0.27.0",
 ]

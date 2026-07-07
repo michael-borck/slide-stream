@@ -2215,7 +2215,7 @@ wheels = [
 
 [[package]]
 name = "slide-stream"
-version = "2.8.0"
+version = "2.9.0"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
@@ -2282,11 +2282,15 @@ serve = [
 dev = [
     { name = "basedpyright" },
     { name = "build" },
+    { name = "fastapi" },
+    { name = "httpx" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-mock" },
+    { name = "python-multipart" },
     { name = "ruff" },
     { name = "twine" },
+    { name = "uvicorn" },
 ]
 
 [package.metadata]
@@ -2336,11 +2340,15 @@ provides-extras = ["gemini", "openai", "claude", "groq", "elevenlabs", "local-tt
 dev = [
     { name = "basedpyright", specifier = ">=1.29.4" },
     { name = "build", specifier = ">=1.2.2.post1" },
+    { name = "fastapi", specifier = ">=0.110.0" },
+    { name = "httpx", specifier = ">=0.27.0" },
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "pytest-cov", specifier = ">=6.2.1" },
     { name = "pytest-mock", specifier = ">=3.14.1" },
+    { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "ruff", specifier = ">=0.12.0" },
     { name = "twine", specifier = ">=6.1.0" },
+    { name = "uvicorn", specifier = ">=0.29.0" },
 ]
 
 [[package]]

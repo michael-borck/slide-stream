@@ -120,6 +120,7 @@ def test_fragment_head_overlay_changes_pixels(config, slide_image, tmp_path):
     with VideoFileClip(str(plain)) as a, VideoFileClip(str(with_head)) as b:
         frame_a = a.get_frame(0.4)
         frame_b = b.get_frame(0.4)
+    assert frame_a is not None and frame_b is not None
     # Bottom-right corner (default position) must differ; top-left must not.
     h, w = frame_a.shape[:2]
     corner_a = frame_a[int(h * 0.75) :, int(w * 0.75) :]
