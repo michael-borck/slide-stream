@@ -27,8 +27,20 @@ KOKORO_VOICES_URL = (
 )
 
 
+# gTTS renders English accents by routing through a Google TLD. Free accents.
+GTTS_ACCENTS = {
+    "australian": "com.au",
+    "british": "co.uk",
+    "american": "us",
+    "canadian": "ca",
+    "indian": "co.in",
+    "irish": "ie",
+    "south-african": "co.za",
+}
+
+
 class GTTSProvider(TTSProvider):
-    """Google Text-to-Speech provider (free)."""
+    """Google Text-to-Speech provider (free), with English accent selection."""
 
     @property
     def name(self) -> str:
@@ -43,9 +55,16 @@ class GTTSProvider(TTSProvider):
         try:
             from gtts import gTTS
 
-            tts = gTTS(text=text, lang="en")
+            tts_config = self.config.get("providers", {}).get("tts", {})
+            # An accent name (australian/british/...) picks the Google TLD;
+            # a raw tld also works. Unknown -> default 'com'.
+            accent = str(tts_config.get("accent") or "").lower()
+            tld = tts_config.get("tld") or GTTS_ACCENTS.get(accent, "com")
+
+            tts = gTTS(text=text, lang="en", tld=tld)
             tts.save(filename)
-            console.print("  - Generated audio with gTTS")
+            label = f" ({accent})" if accent in GTTS_ACCENTS else ""
+            console.print(f"  - Generated audio with gTTS{label}")
             return filename
 
         except Exception as e:

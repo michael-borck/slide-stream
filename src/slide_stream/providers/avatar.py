@@ -11,6 +11,7 @@ from typing import Any
 import requests
 from rich.console import Console
 
+from ..avatars import resolve_avatar
 from .base import AvatarProvider
 
 # Proven SadTalker ComfyUI workflow (see docs referenced by sadtalker-api.md):
@@ -122,6 +123,53 @@ class PrecomputedAvatarProvider(AvatarProvider):
         return str(head)
 
 
+class StaticAvatarProvider(AvatarProvider):
+    """A static mascot image held in the corner — no lip-sync, no GPU.
+
+    Composites the avatar image (a built-in character name like ``teddy`` or a
+    file path) as the corner circle for each slide. Reliable and free: ideal
+    for the fun character defaults, which stylized-face lip-sync engines can't
+    animate. An obviously-not-human mascot plus a fun accent dodges the
+    uncanny valley by design.
+
+    Config: ``provider: static``, ``source: teddy`` (or a path/URL-less file).
+    """
+
+    @property
+    def name(self) -> str:
+        return "static"
+
+    def _source(self) -> str | None:
+        cfg = self.config.get("providers", {}).get("avatar", {})
+        return resolve_avatar(cfg.get("source") or cfg.get("source_image"))
+
+    def is_available(self) -> bool:
+        source = self._source()
+        return bool(source and Path(source).is_file())
+
+    def generate(
+        self, audio_path: str, output_path: str, slide_num: int
+    ) -> str | None:
+        try:
+            from moviepy import ImageClip
+
+            source = self._source()
+            if not source or not Path(source).is_file():
+                raise FileNotFoundError(f"avatar source not found: {source}")
+            # A short still clip; media.py freezes its last frame to fill the
+            # slide, so the mascot simply sits in the corner while audio plays.
+            clip = ImageClip(source, duration=1.0)
+            clip.write_videofile(
+                output_path, fps=24, codec="libx264", logger=None
+            )
+            clip.close()
+            console.print(f"  - Static avatar: {Path(source).name}")
+            return output_path
+        except Exception as e:
+            err_console.print(f"  - Static avatar error: {e}")
+            return None
+
+
 class DIDAvatarProvider(AvatarProvider):
     """Generate a lip-synced talking head via the D-ID Talks API (BYOK).
 
@@ -170,7 +218,7 @@ class DIDAvatarProvider(AvatarProvider):
         """Return a D-ID-usable source image URL, uploading a local file once."""
         if self._source_url:
             return self._source_url
-        source = self._source_image()
+        source = resolve_avatar(self._source_image())
         if source is None:
             raise ValueError("no source_image configured")
         if source.startswith(("http://", "https://")):
@@ -316,7 +364,7 @@ class _ComfyUIAvatar(AvatarProvider):
         """Return the input/ filename for the source, uploading it once."""
         if self._source_name:
             return self._source_name
-        source = self._source()
+        source = resolve_avatar(self._source())
         if source is None:
             raise ValueError("no avatar source configured")
         path = Path(source)

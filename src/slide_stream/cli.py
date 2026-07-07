@@ -946,6 +946,26 @@ def serve(
 
 
 @app.command()
+def avatars() -> None:
+    """List the built-in character avatars (use as providers.avatar.source)."""
+    from .avatars import BUILTIN_AVATARS
+
+    console.print("\n[bold cyan]🧸 Built-in avatars[/bold cyan]\n")
+    table = Table()
+    table.add_column("Name", style="cyan")
+    table.add_column("Character")
+    for name, (_file, label) in BUILTIN_AVATARS.items():
+        table.add_row(name, label)
+    console.print(table)
+    console.print(
+        "\n[dim]Use with the 'static' avatar provider (image in the corner, no "
+        "GPU) or a stylized-capable lip-sync engine like d-id:\n"
+        "  providers.avatar: {provider: static, source: teddy}\n"
+        "Stylized faces do NOT lip-sync on SadTalker/Wav2Lip (human faces only).[/dim]"
+    )
+
+
+@app.command()
 def providers() -> None:
     """List available providers and their status."""
     try:

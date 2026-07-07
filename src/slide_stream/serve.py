@@ -68,25 +68,31 @@ def _build_job_config(base: dict[str, Any], workdir: Path, options: dict[str, An
         )
     if options.get("image_provider"):
         cfg["providers"]["images"]["provider"] = options["image_provider"]
+    if options.get("accent"):
+        cfg["providers"]["tts"]["accent"] = options["accent"]
 
     # A per-job voice sample turns on ephemeral Chatterbox cloning.
     if voice_path is not None:
         cfg["providers"]["tts"]["voice_sample"] = str(voice_path)
 
-    # A per-job photo OR short video drives the avatar. The uploaded file is
-    # routed by type so whichever engine the server configures works: image ->
-    # d-id/sadtalker, video -> wav2lip, or the 'comfyui' auto-router (source).
-    if photo_path is not None and options.get("avatar", True):
+    # Avatar: a built-in character (static mascot, no GPU) wins over an
+    # uploaded file; an uploaded photo/video routes by type to the engine the
+    # server configures (image -> d-id/sadtalker, video -> wav2lip, or the
+    # 'comfyui' auto-router). No avatar, or avatar off -> no head.
+    av = cfg["providers"]["avatar"]
+    if options.get("avatar_name"):
+        av["provider"] = "static"
+        av["source"] = options["avatar_name"]
+    elif photo_path is not None and options.get("avatar", True):
         from .providers.avatar import _source_kind
 
-        av = cfg["providers"]["avatar"]
         av["source"] = str(photo_path)
         if _source_kind(str(photo_path)) == "video":
             av["source_video"] = str(photo_path)
         else:
             av["source_image"] = str(photo_path)
     else:
-        cfg["providers"]["avatar"]["provider"] = "none"
+        av["provider"] = "none"
 
     job_yaml = workdir / "job.yaml"
     job_yaml.write_text(yaml.safe_dump(cfg), encoding="utf-8")
@@ -178,8 +184,19 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
 
     @app.get("/api/config")
     def api_config() -> dict[str, Any]:
-        # Public so the UI can bootstrap (whether a token is needed, demo mode).
-        return {"auth_required": bool(auth_token), "demo": demo_mode}
+        # Public so the UI can bootstrap: token/demo, and the choices this
+        # server actually supports (built-in avatars; accents only if the
+        # configured TTS provider offers them — currently gTTS).
+        from .avatars import avatar_names
+        from .providers.tts import GTTS_ACCENTS
+
+        tts_provider = base_config.get("providers", {}).get("tts", {}).get("provider")
+        return {
+            "auth_required": bool(auth_token),
+            "demo": demo_mode,
+            "avatars": avatar_names(),
+            "accents": list(GTTS_ACCENTS) if tts_provider == "gtts" else [],
+        }
 
     @app.post("/api/jobs")
     async def create_job(
@@ -189,6 +206,8 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
         narration_seconds: str | None = Form(default=None),
         image_provider: str | None = Form(default=None),
         avatar: str | None = Form(default=None),
+        avatar_name: str | None = Form(default=None),
+        accent: str | None = Form(default=None),
         _: None = Depends(require_token),
     ) -> JSONResponse:
         suffix = Path(deck.filename or "deck.md").suffix.lower()
@@ -214,6 +233,8 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
             "narration_seconds": narration_seconds,
             "image_provider": image_provider,
             "avatar": (avatar or "true").lower() != "false",
+            "avatar_name": avatar_name,
+            "accent": accent,
         }
         job_yaml = _build_job_config(base_config, workdir, options, voice_path, photo_path)
 
@@ -273,9 +294,14 @@ INDEX_HTML = """<!doctype html>
  <p class="muted">Stored in this browser only.</p></div>
 <label>Deck (.md or .pptx)</label><input id="deck" type="file" accept=".md,.pptx">
 <label>Your voice sample (optional, 10–30s)</label><input id="voice" type="file" accept="audio/*">
-<label>Your photo or short video (optional, front-facing)</label><input id="photo" type="file" accept="image/*,video/*">
+<label>Fun avatar (optional)</label>
+<select id="avatarName"><option value="">— none —</option></select>
+<p class="muted">A friendly character in the corner. Escapes the "not quite me" uncanny valley.</p>
+<label>...or your photo / short video (optional, front-facing)</label><input id="photo" type="file" accept="image/*,video/*">
 <p class="muted" id="remembered"></p>
 <div class="row"><input id="avatar" type="checkbox"><label style="margin:0">Talking-head avatar</label></div>
+<label id="accentRow" style="display:none">Accent</label>
+<select id="accent" style="display:none"><option value="">— default —</option></select>
 <label>Narration seconds per slide (optional)</label><input id="secs" type="number" min="10" placeholder="e.g. 30">
 <button id="go">Create video</button>
 <p id="status"></p><div id="log"></div>
@@ -286,7 +312,11 @@ $("token").oninput=e=>localStorage.setItem("ss_token",e.target.value);
 // Bootstrap: show the token field only if required, and the demo banner if on.
 fetch("/api/config").then(r=>r.json()).then(c=>{
  if(c.auth_required)$("tokrow").style.display="block";
- if(c.demo)$("demo").style.display="block";}).catch(()=>{});
+ if(c.demo)$("demo").style.display="block";
+ (c.avatars||[]).forEach(a=>{const o=document.createElement("option");o.value=a;o.textContent=a;$("avatarName").appendChild(o)});
+ if((c.accents||[]).length){$("accentRow").style.display="block";$("accent").style.display="block";
+  c.accents.forEach(a=>{const o=document.createElement("option");o.value=a;o.textContent=a;$("accent").appendChild(o)})}
+}).catch(()=>{});
 // IndexedDB: remember voice + photo across jobs (client-side only).
 let db;const openDB=()=>new Promise(r=>{const q=indexedDB.open("ss",1);
  q.onupgradeneeded=()=>q.result.createObjectStore("files");q.onsuccess=()=>{db=q.result;r()}});
@@ -306,6 +336,8 @@ $("go").onclick=async()=>{
  const fd=new FormData();fd.append("deck",deck);
  if(voice)fd.append("voice",voice);if(photo)fd.append("photo",photo);
  fd.append("avatar",$("avatar").checked?"true":"false");
+ if($("avatarName").value)fd.append("avatar_name",$("avatarName").value);
+ if($("accent").value)fd.append("accent",$("accent").value);
  if($("secs").value)fd.append("narration_seconds",$("secs").value);
  $("status").textContent="Uploading…";$("log").textContent="";
  let res=await fetch("/api/jobs",{method:"POST",headers:auth(),body:fd});

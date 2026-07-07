@@ -10,6 +10,7 @@ from .avatar import (
     NoneAvatarProvider,
     PrecomputedAvatarProvider,
     SadTalkerAvatarProvider,
+    StaticAvatarProvider,
     Wav2LipAvatarProvider,
 )
 from .base import (
@@ -68,6 +69,7 @@ class ProviderFactory:
 
     AVATAR_PROVIDERS: dict[str, type[AvatarProvider]] = {
         "none": NoneAvatarProvider,
+        "static": StaticAvatarProvider,
         "precomputed": PrecomputedAvatarProvider,
         "d-id": DIDAvatarProvider,
         "sadtalker": SadTalkerAvatarProvider,
@@ -209,6 +211,7 @@ class ProviderFactory:
         """Get list of available avatar providers."""
         return {
             "none": "Avatar disabled (default)",
+            "static": "A static mascot image in the corner — no lip-sync, no GPU (source: a built-in name like 'teddy', or a path)",
             "precomputed": "Pre-supplied head clips: assets_dir/head_N.mp4 (no GPU or service needed)",
             "d-id": "D-ID lip-synced talking head from a source image (BYOK; requires DID_API_KEY + source_image)",
             "sadtalker": "Self-hosted SadTalker (photo) via a ComfyUI server (base_url + source_image)",

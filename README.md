@@ -358,7 +358,7 @@ slide-stream scan ./pics --provider claude --apply  # actually rename + write re
 ```
 
 **TTS Providers:**
-- `gtts`: Free, always available (needs internet)
+- `gtts`: Free, always available (needs internet). English accent via `providers.tts.accent` (`australian`, `british`, `american`, `canadian`, `indian`, `irish`, `south-african`).
 - `kokoro`: Fully offline, no API key — `pip install "slide-stream[local-tts]"` (~340MB one-time model download; voices include `af_sarah`, `af_bella`, `am_adam`, `am_michael`)
 - `chatterbox`: Voice cloning via a self-hosted [Chatterbox TTS Server](https://github.com/devnen/Chatterbox-TTS-Server) (`base_url`); see "Privacy-first voice cloning" below
 - `elevenlabs`: Requires `ELEVENLABS_API_KEY`
@@ -433,6 +433,7 @@ Thanks for watching.
 
 **Avatar Providers (talking-head overlay):**
 - `none`: Disabled (default)
+- `static`: A **static mascot image** in the corner (no lip-sync, no GPU). Use a built-in character (`slide-stream avatars` lists `teddy`, `panda`, `koala`, `robot`, `wizard`, `owl`) or your own image: `providers.avatar: {provider: static, source: teddy}`. A fun character + a chosen accent dodges the "looks like me but isn't quite me" uncanny valley. **Note:** SadTalker/Wav2Lip only lip-sync *photorealistic human* faces — stylized/animal mascots stay static here, or lip-sync via a stylized-capable engine like `d-id`.
 - `precomputed`: Composites `head_1.mp4`, `head_2.mp4`, … from `providers.avatar.assets_dir` as a circle in a corner of each slide — no GPU or service needed.
 - `sadtalker`: Self-hosted talking head from a **photo**, via [SadTalker](https://github.com/OpenTalker/SadTalker) as a ComfyUI node — `providers.avatar.base_url` + `source_image`.
 - `wav2lip`: Self-hosted talking head from a short **video**, via Wav2Lip as a ComfyUI node — `base_url` + `source_video` (a ~15s idle clip; loops under longer narration). More natural than a photo; see [docs/wav2lip-api.md](docs/wav2lip-api.md).
