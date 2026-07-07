@@ -17,8 +17,10 @@ services:
     ports:
       - "${PORT:-8080}:8080"
     environment:
-      # Required on a public host: gate access with a token.
-      SLIDESTREAM_TOKEN: ${SLIDESTREAM_TOKEN:?set a token in .env}
+      # Token gates private/full instances. The demo (SLIDESTREAM_DEMO=true)
+      # is open instead: no token, but rate-limited (3 videos/hour per IP)
+      # and capped at 5 slides per deck.
+      SLIDESTREAM_TOKEN: ${SLIDESTREAM_TOKEN:-}
       # Show the "install locally for full control" banner on the hosted demo.
       SLIDESTREAM_DEMO: ${SLIDESTREAM_DEMO:-true}
       # Cloud provider keys (see .env.example). The LLM that writes the

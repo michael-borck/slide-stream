@@ -49,6 +49,38 @@ class Job:
 _JOBS: dict[str, Job] = {}
 _LOCK = threading.Lock()
 
+# Demo-mode guardrails: friction-free (no token) but bounded.
+DEMO_MAX_SLIDES = 5
+DEMO_JOBS_PER_HOUR = 3
+_DEMO_HITS: dict[str, list[float]] = {}  # client ip -> job timestamps
+
+
+def _demo_rate_ok(ip: str, now: float | None = None) -> bool:
+    """True if this IP may start another demo job (and record the hit)."""
+    t = now if now is not None else time.time()
+    with _LOCK:
+        hits = [h for h in _DEMO_HITS.get(ip, []) if t - h < 3600]
+        if len(hits) >= DEMO_JOBS_PER_HOUR:
+            _DEMO_HITS[ip] = hits
+            return False
+        hits.append(t)
+        _DEMO_HITS[ip] = hits
+        return True
+
+
+def _count_slides(deck_path: Path) -> int | None:
+    """Best-effort slide count for the demo cap; None if unparseable."""
+    try:
+        if deck_path.suffix.lower() == ".pptx":
+            from pptx import Presentation  # type: ignore[import-untyped]
+
+            return len(Presentation(str(deck_path)).slides)
+        from .parser import parse_markdown
+
+        return len(parse_markdown(deck_path.read_text(encoding="utf-8")))
+    except Exception:
+        return None
+
 
 def _build_job_config(base: dict[str, Any], workdir: Path, options: dict[str, Any],
                       voice_path: Path | None, photo_path: Path | None) -> Path:
@@ -152,6 +184,7 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
             Form,
             Header,
             HTTPException,
+            Request,
             UploadFile,
         )
         from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -172,11 +205,20 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
     app = FastAPI(title="SlideStream")
 
     def require_token(authorization: str | None = Header(default=None)) -> None:
-        if not auth_token:
-            return  # no token configured (local, trusted) -> open
+        # Demo mode is friction-free: no token, guarded by rate/slide limits
+        # instead. A token only gates private/full instances.
+        if demo_mode or not auth_token:
+            return
         expected = f"Bearer {auth_token}"
         if authorization != expected:
             raise HTTPException(status_code=401, detail="Invalid or missing token")
+
+    def client_ip(request: Request) -> str:
+        # Behind a reverse proxy (NPM) the real IP is in X-Forwarded-For.
+        fwd = request.headers.get("x-forwarded-for")
+        if fwd:
+            return fwd.split(",")[0].strip()
+        return request.client.host if request.client else "unknown"
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
@@ -192,14 +234,20 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
 
         tts_provider = base_config.get("providers", {}).get("tts", {}).get("provider")
         return {
-            "auth_required": bool(auth_token),
+            "auth_required": bool(auth_token) and not demo_mode,
             "demo": demo_mode,
+            "limits": (
+                {"max_slides": DEMO_MAX_SLIDES, "jobs_per_hour": DEMO_JOBS_PER_HOUR}
+                if demo_mode
+                else None
+            ),
             "avatars": avatar_names(),
             "accents": list(GTTS_ACCENTS) if tts_provider == "gtts" else [],
         }
 
     @app.post("/api/jobs")
     async def create_job(
+        request: Request,
         deck: UploadFile = File(...),
         voice: UploadFile | None = File(default=None),
         photo: UploadFile | None = File(default=None),
@@ -214,11 +262,28 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
         if suffix not in (".md", ".pptx"):
             raise HTTPException(status_code=400, detail="Deck must be .md or .pptx")
 
+        if demo_mode and not _demo_rate_ok(client_ip(request)):
+            raise HTTPException(
+                status_code=429,
+                detail=f"Demo limit: {DEMO_JOBS_PER_HOUR} videos per hour. "
+                "Install locally for unlimited renders: pip install slide-stream",
+            )
+
         job_id = uuid.uuid4().hex
         workdir = jobs_root / job_id
         workdir.mkdir(parents=True)
         deck_path = workdir / f"deck{suffix}"
         deck_path.write_bytes(await deck.read())
+
+        if demo_mode:
+            n = _count_slides(deck_path)
+            if n is not None and n > DEMO_MAX_SLIDES:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Demo limit: {DEMO_MAX_SLIDES} slides per deck "
+                    f"(yours has {n}). Install locally for unlimited decks: "
+                    "pip install slide-stream",
+                )
 
         voice_path = None
         if voice is not None and voice.filename:
@@ -257,7 +322,8 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
                    authorization: str | None = Header(default=None)):
         # A browser download link can't set an Authorization header, so accept
         # the token via the ?t= query param here as well.
-        if auth_token and authorization != f"Bearer {auth_token}" and t != auth_token:
+        if (not demo_mode and auth_token
+                and authorization != f"Bearer {auth_token}" and t != auth_token):
             raise HTTPException(status_code=401, detail="Invalid or missing token")
         job = _JOBS.get(job_id)
         if job is None or job.status != "done" or job.output_path is None:
@@ -272,39 +338,92 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
 # so the lecturer never re-picks them; the server stores neither at rest.
 INDEX_HTML = """<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SlideStream</title>
+<title>SlideStream — slides in, narrated video out</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,500;0,600;1,500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
- body{font:16px system-ui,sans-serif;max-width:640px;margin:2rem auto;padding:0 1rem;color:#222}
- h1{font-size:1.5rem} label{display:block;margin:.8rem 0 .2rem;font-weight:600}
- input,select,button{font:inherit;padding:.5rem;width:100%;box-sizing:border-box}
- button{background:#2563eb;color:#fff;border:0;border-radius:6px;margin-top:1rem;cursor:pointer}
- .row{display:flex;gap:.5rem;align-items:center} .row input{width:auto}
- .muted{color:#666;font-size:.85rem} #log{white-space:pre-wrap;background:#f4f4f4;padding:.6rem;border-radius:6px;font-size:.8rem;max-height:220px;overflow:auto}
- .badge{display:inline-block;padding:.1rem .5rem;border-radius:99px;font-size:.8rem}
-</style></head><body>
-<h1>🎬 SlideStream</h1>
-<div id="demo" style="display:none;background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:.7rem 1rem;margin-bottom:1rem;font-size:.9rem">
- <strong>Hosted demo.</strong> This instance runs a limited set of free tools.
- For full control over voice, image and video generation, install locally:
- <code>pip install slide-stream</code> — see
- <a href="https://github.com/michael-borck/slide-stream">the docs</a>.
+:root{--bg:#faf9f6;--ink:#1e1b18;--muted:#6b645c;--line:#e7e2d9;--accent:#c2410c;
+ --accent-soft:#c2410c14;--card:#ffffff;--radius:14px}
+@media (prefers-color-scheme: dark){
+ :root{--bg:#17150f;--ink:#f2ede3;--muted:#a89f92;--line:#2c2820;--card:#201d16;
+  --accent-soft:#c2410c26}}
+*{box-sizing:border-box}
+body{margin:0;font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--ink);line-height:1.55}
+.wrap{max-width:660px;margin:0 auto;padding:2.2rem 1.25rem 3rem}
+h1{font-family:Fraunces,Georgia,serif;font-weight:600;font-size:1.9rem;margin:0;letter-spacing:-.01em}
+h1 em{font-style:italic;color:var(--accent)}
+.tag{color:var(--muted);margin:.3rem 0 1.6rem;font-size:.98rem}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+ padding:1.4rem 1.5rem;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+label{display:block;margin:1.05rem 0 .3rem;font-weight:600;font-size:.92rem}
+label:first-child{margin-top:0}
+input,select{font:inherit;color:inherit;width:100%;padding:.55rem .7rem;border:1px solid var(--line);
+ border-radius:9px;background:var(--bg)}
+input[type=file]{padding:.45rem .5rem;cursor:pointer}
+input[type=file]::file-selector-button{font:inherit;font-weight:600;margin-right:.8rem;
+ padding:.4rem .9rem;border:0;border-radius:7px;background:var(--accent-soft);color:var(--accent);cursor:pointer}
+input:focus,select:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:transparent}
+button{font:inherit;font-weight:600;width:100%;margin-top:1.4rem;padding:.75rem 1.2rem;
+ border:0;border-radius:10px;background:var(--accent);color:#fff;cursor:pointer;transition:transform .06s}
+button:active{transform:translateY(1px)}
+.row{display:flex;gap:.55rem;align-items:center;margin-top:1rem}
+.row input{width:auto;accent-color:var(--accent)} .row label{margin:0}
+.muted{color:var(--muted);font-size:.85rem;margin:.35rem 0 0}
+.banner{display:none;background:var(--accent-soft);border:1px solid var(--accent);
+ border-radius:var(--radius);padding:.85rem 1.1rem;margin-bottom:1.2rem;font-size:.92rem}
+.banner a{color:var(--accent);font-weight:600;text-decoration:none}
+.banner code{font-family:ui-monospace,Menlo,monospace;font-size:.88em;
+ background:rgba(120,120,120,.14);padding:.08em .4em;border-radius:5px}
+#status{margin:1rem 0 .4rem;font-weight:500}
+#status a{color:var(--accent);font-weight:600}
+.badge{display:inline-block;padding:.12rem .65rem;border-radius:99px;font-size:.8rem;
+ background:var(--accent-soft);color:var(--accent);font-weight:600}
+#log{display:none;white-space:pre-wrap;background:var(--bg);border:1px solid var(--line);
+ padding:.7rem .8rem;border-radius:9px;font-family:ui-monospace,Menlo,monospace;
+ font-size:.75rem;max-height:220px;overflow:auto;color:var(--muted)}
+#log.on{display:block}
+footer{margin-top:2rem;padding-top:1.1rem;border-top:1px solid var(--line);
+ font-size:.85rem;color:var(--muted);display:flex;gap:1.2rem;flex-wrap:wrap}
+footer a{color:var(--muted);text-decoration:none;font-weight:500}
+footer a:hover{color:var(--accent)}
+</style></head><body><div class="wrap">
+<h1>🎬 Slide<em>Stream</em></h1>
+<p class="tag">Slides in, narrated video out — in your voice, or a friendly mascot's.</p>
+<div id="demo" class="banner">
+ <strong>Hosted demo</strong> — <span id="limits">limited</span>, nothing stored.
+ Want unlimited renders, your own AI providers and full privacy?
+ <code>pip install slide-stream</code> &middot;
+ <a href="https://slidestream.eduserver.au">learn more</a> &middot;
+ <a href="https://github.com/michael-borck/slide-stream">GitHub</a>
 </div>
+<div class="card">
 <div id="tokrow" style="display:none"><label>Access token</label>
  <input id="token" type="password" placeholder="paste your token">
  <p class="muted">Stored in this browser only.</p></div>
-<label>Deck (.md or .pptx)</label><input id="deck" type="file" accept=".md,.pptx">
-<label>Your voice sample (optional, 10–30s)</label><input id="voice" type="file" accept="audio/*">
-<label>Fun avatar (optional)</label>
-<select id="avatarName"><option value="">— none —</option></select>
-<p class="muted">A friendly character in the corner. Escapes the "not quite me" uncanny valley.</p>
-<label>...or your photo / short video (optional, front-facing)</label><input id="photo" type="file" accept="image/*,video/*">
+<label>Slide deck <span style="font-weight:400;color:var(--muted)">(.md or .pptx)</span></label>
+<input id="deck" type="file" accept=".md,.pptx">
+<label>Your voice <span style="font-weight:400;color:var(--muted)">(optional — a 10–30s sample clones it for this render only)</span></label>
+<input id="voice" type="file" accept="audio/*">
+<label>Presenter</label>
+<select id="avatarName"><option value="">No mascot — use my photo/video below</option></select>
+<p class="muted">A friendly character presents in the corner — or upload yourself below.</p>
+<label>Your photo or short video <span style="font-weight:400;color:var(--muted)">(optional, front-facing)</span></label>
+<input id="photo" type="file" accept="image/*,video/*">
 <p class="muted" id="remembered"></p>
-<div class="row"><input id="avatar" type="checkbox"><label style="margin:0">Talking-head avatar</label></div>
+<div class="row"><input id="avatar" type="checkbox"><label>Animate as a talking head</label></div>
 <label id="accentRow" style="display:none">Accent</label>
 <select id="accent" style="display:none"><option value="">— default —</option></select>
-<label>Narration seconds per slide (optional)</label><input id="secs" type="number" min="10" placeholder="e.g. 30">
+<label>Seconds of narration per slide <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
+<input id="secs" type="number" min="10" placeholder="e.g. 30">
 <button id="go">Create video</button>
 <p id="status"></p><div id="log"></div>
+</div>
+<footer>
+ <a href="https://slidestream.eduserver.au">About</a>
+ <a href="https://pypi.org/project/slide-stream/">pip install slide-stream</a>
+ <a href="https://github.com/michael-borck/slide-stream">GitHub</a>
+</footer>
+</div>
 <script>
 const $=id=>document.getElementById(id);
 $("token").value=localStorage.getItem("ss_token")||"";
@@ -312,7 +431,9 @@ $("token").oninput=e=>localStorage.setItem("ss_token",e.target.value);
 // Bootstrap: show the token field only if required, and the demo banner if on.
 fetch("/api/config").then(r=>r.json()).then(c=>{
  if(c.auth_required)$("tokrow").style.display="block";
- if(c.demo)$("demo").style.display="block";
+ if(c.demo){$("demo").style.display="block";
+  if(c.limits)$("limits").textContent=
+   c.limits.max_slides+" slides per deck, "+c.limits.jobs_per_hour+" videos per hour";}
  (c.avatars||[]).forEach(a=>{const o=document.createElement("option");o.value=a;o.textContent=a;$("avatarName").appendChild(o)});
  if((c.accents||[]).length){$("accentRow").style.display="block";$("accent").style.display="block";
   c.accents.forEach(a=>{const o=document.createElement("option");o.value=a;o.textContent=a;$("accent").appendChild(o)})}
@@ -345,7 +466,8 @@ $("go").onclick=async()=>{
  const {job_id}=await res.json();poll(job_id)};
 async function poll(id){
  const r=await fetch("/api/jobs/"+id,{headers:auth()});const j=await r.json();
- $("status").innerHTML='<span class="badge">'+j.status+'</span>';$("log").textContent=j.log||"";
+ $("status").innerHTML='<span class="badge">'+j.status+'</span>';
+ $("log").textContent=j.log||"";$("log").classList.toggle("on",!!j.log);
  if(j.status==="done"){$("status").innerHTML+=' <a href="/api/jobs/'+id+'/result?t='+
    encodeURIComponent($("token").value)+'" download>⬇ download video</a>';return}
  if(j.status==="error"){$("status").textContent="Failed: "+(j.error||"see log");return}

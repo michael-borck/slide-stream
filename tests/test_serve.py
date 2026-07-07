@@ -161,3 +161,65 @@ def test_download_accepts_token_query_param(base_config, tmp_path, monkeypatch):
     r = client.get("/api/jobs/j1/result", params={"t": "secret"})
     assert r.status_code == 200
     assert r.content == b"VID"
+
+
+# --- demo mode: friction-free but guard-railed --------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _clear_demo_hits():
+    serve._DEMO_HITS.clear()
+    yield
+    serve._DEMO_HITS.clear()
+
+
+def test_demo_mode_needs_no_token(base_config):
+    """Demo mode is open even when a token is configured."""
+    client = TestClient(serve.create_app(config=base_config, token="secret", demo=True))
+    cfg = client.get("/api/config").json()
+    assert cfg["auth_required"] is False
+    assert cfg["demo"] is True
+    assert cfg["limits"] == {
+        "max_slides": serve.DEMO_MAX_SLIDES,
+        "jobs_per_hour": serve.DEMO_JOBS_PER_HOUR,
+    }
+    # protected endpoint reachable without a token
+    assert client.get("/api/jobs/whatever").status_code == 404
+
+
+def test_demo_slide_cap(base_config, mocker):
+    client = TestClient(serve.create_app(config=base_config, demo=True))
+    mocker.patch.object(serve, "_run_job")
+    big_deck = "".join(f"# Slide {i}\n- point\n" for i in range(10))
+    r = client.post("/api/jobs", files={"deck": ("deck.md", big_deck.encode())})
+    assert r.status_code == 400
+    assert "5 slides" in r.json()["detail"]
+    # a small deck is accepted
+    ok = client.post("/api/jobs", files={"deck": ("deck.md", b"# One\n- a\n")})
+    assert ok.status_code == 200
+
+
+def test_demo_rate_limit(base_config, mocker):
+    client = TestClient(serve.create_app(config=base_config, demo=True))
+    mocker.patch.object(serve, "_run_job")
+    deck = {"deck": ("deck.md", b"# One\n- a\n")}
+    for _ in range(serve.DEMO_JOBS_PER_HOUR):
+        assert client.post("/api/jobs", files=deck).status_code == 200
+    over = client.post("/api/jobs", files=deck)
+    assert over.status_code == 429
+    assert "per hour" in over.json()["detail"]
+
+
+def test_demo_rate_window_expires():
+    now = 1_000_000.0
+    ip = "1.2.3.4"
+    for _ in range(serve.DEMO_JOBS_PER_HOUR):
+        assert serve._demo_rate_ok(ip, now=now)
+    assert not serve._demo_rate_ok(ip, now=now + 10)
+    # an hour later the window has rolled over
+    assert serve._demo_rate_ok(ip, now=now + 3601)
+
+
+def test_non_demo_still_requires_token(base_config):
+    client = TestClient(serve.create_app(config=base_config, token="secret", demo=False))
+    assert client.get("/api/jobs/whatever").status_code == 401
