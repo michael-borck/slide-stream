@@ -516,14 +516,114 @@ def test_sadtalker_workflow_error_returns_none(config, tmp_path, mocker, monkeyp
     assert result is None
 
 
-def test_find_show_video_path():
-    from slide_stream.providers.avatar import _find_show_video_path
+def test_find_output_path():
+    from slide_stream.providers.avatar import _find_output_path
 
-    assert _find_show_video_path(
-        {"4": {"show_video_path": ["/out/x.mp4"]}}
+    # image kind -> ShowVideo node's show_video_path
+    assert _find_output_path(
+        "image", {"4": {"show_video_path": ["/out/x.mp4"]}}
     ) == "/out/x.mp4"
-    assert _find_show_video_path({"9": {"images": []}}) is None
+    assert _find_output_path("image", {"9": {"images": []}}) is None
+    # video kind -> VHS_VideoCombine's gifs filename
+    assert _find_output_path(
+        "video", {"4": {"gifs": [{"filename": "w.mp4", "fullpath": "/out/w.mp4"}]}}
+    ) == "w.mp4"
 
 
 def test_factory_registers_sadtalker():
     assert "sadtalker" in ProviderFactory.list_avatar_providers()
+
+
+# --- Wav2Lip (video) + ComfyUI auto-router -----------------------------------
+
+
+def test_source_kind_detects_video_vs_image():
+    from slide_stream.providers.avatar import _source_kind
+
+    assert _source_kind("/x/me.mp4") == "video"
+    assert _source_kind("/x/me.MOV") == "video"
+    assert _source_kind("/x/me.png") == "image"
+    assert _source_kind("/x/me.jpg") == "image"
+    assert _source_kind("bareword") == "image"  # default
+
+
+def test_wav2lip_uses_video_workflow(config, tmp_path, mocker, monkeypatch):
+    from slide_stream.providers.avatar import Wav2LipAvatarProvider
+
+    vid = tmp_path / "idle.mp4"
+    vid.write_bytes(b"vid")
+    audio = tmp_path / "a.wav"
+    audio.write_bytes(b"w")
+    config["providers"]["avatar"] = {
+        "provider": "wav2lip", "base_url": "https://c.org",
+        "source_video": str(vid), "poll_interval": 0,
+    }
+    monkeypatch.setattr("slide_stream.providers.avatar.shutil.which", lambda _: None)
+
+    vid_up = mocker.MagicMock()
+    vid_up.json.return_value = {"name": "idle.mp4"}
+    aud_up = mocker.MagicMock()
+    aud_up.json.return_value = {"name": "a.wav"}
+    submit = mocker.MagicMock()
+    submit.json.return_value = {"prompt_id": "p"}
+    post = mocker.patch(
+        "slide_stream.providers.avatar.requests.post",
+        side_effect=[vid_up, aud_up, submit],
+    )
+    done = mocker.MagicMock()
+    done.json.return_value = {
+        "p": {
+            "status": {"status_str": "success"},
+            "outputs": {"4": {"gifs": [{"filename": "wav2lip_out.mp4",
+                                        "fullpath": "/out/wav2lip_out.mp4"}]}},
+        }
+    }
+    clip = mocker.MagicMock(content=b"MP4V")
+    get = mocker.patch(
+        "slide_stream.providers.avatar.requests.get", side_effect=[done, clip]
+    )
+    mocker.patch("slide_stream.providers.avatar.time.sleep")
+
+    out = tmp_path / "head.mp4"
+    result = Wav2LipAvatarProvider(config).generate(str(audio), str(out), 1)
+
+    assert result == str(out)
+    assert out.read_bytes() == b"MP4V"
+    # It used the Wav2Lip (VHS) workflow, not SadTalker.
+    wf = post.call_args_list[2][1]["json"]["prompt"]
+    assert wf["1"]["class_type"] == "VHS_LoadVideo"
+    assert wf["1"]["inputs"]["video"] == "idle.mp4"
+    assert wf["3"]["class_type"] == "Wav2Lip"
+    # Downloaded the gifs output by filename.
+    assert get.call_args_list[-1][1]["params"]["filename"] == "wav2lip_out.mp4"
+
+
+def test_comfyui_router_picks_engine_by_source(config, tmp_path):
+    from slide_stream.providers.avatar import ComfyUIAvatarProvider
+
+    # A photo source -> image kind (SadTalker).
+    config["providers"]["avatar"] = {
+        "provider": "comfyui", "base_url": "https://c.org", "source": str(tmp_path / "me.png"),
+    }
+    assert ComfyUIAvatarProvider(config)._kind() == "image"
+    # A video source -> video kind (Wav2Lip).
+    config["providers"]["avatar"]["source"] = str(tmp_path / "me.mp4")
+    assert ComfyUIAvatarProvider(config)._kind() == "video"
+
+
+def test_comfyui_router_builds_matching_workflow(config, tmp_path):
+    from slide_stream.providers.avatar import ComfyUIAvatarProvider
+
+    config["providers"]["avatar"] = {"provider": "comfyui", "base_url": "https://c.org"}
+    p = ComfyUIAvatarProvider(config)
+    img_wf = p._build_workflow("image", "me.png", "a.wav")
+    assert img_wf["3"]["class_type"] == "SadTalker"
+    vid_wf = p._build_workflow("video", "me.mp4", "a.wav")
+    assert vid_wf["3"]["class_type"] == "Wav2Lip"
+    assert vid_wf["4"]["inputs"]["pingpong"] is True
+
+
+def test_factory_registers_wav2lip_and_comfyui():
+    names = ProviderFactory.list_avatar_providers()
+    assert "wav2lip" in names
+    assert "comfyui" in names

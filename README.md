@@ -434,7 +434,9 @@ Thanks for watching.
 **Avatar Providers (talking-head overlay):**
 - `none`: Disabled (default)
 - `precomputed`: Composites `head_1.mp4`, `head_2.mp4`, … from `providers.avatar.assets_dir` as a circle in a corner of each slide — no GPU or service needed.
-- `sadtalker`: Self-hosted talking head from a photo, via [SadTalker](https://github.com/OpenTalker/SadTalker) running as a ComfyUI node — set `providers.avatar.base_url` (ComfyUI server) and `source_image` (lecturer photo). Free per clip; see [docs/talking-head-options.md](docs/talking-head-options.md) and [docs/sadtalker-api.md](docs/sadtalker-api.md).
+- `sadtalker`: Self-hosted talking head from a **photo**, via [SadTalker](https://github.com/OpenTalker/SadTalker) as a ComfyUI node — `providers.avatar.base_url` + `source_image`.
+- `wav2lip`: Self-hosted talking head from a short **video**, via Wav2Lip as a ComfyUI node — `base_url` + `source_video` (a ~15s idle clip; loops under longer narration). More natural than a photo; see [docs/wav2lip-api.md](docs/wav2lip-api.md).
+- `comfyui`: **Auto-router** — set `base_url` + a `source` that's either a photo or a video, and it picks SadTalker or Wav2Lip automatically. Ideal for the web UI. See [docs/talking-head-options.md](docs/talking-head-options.md).
 - `d-id`: Lip-synced talking head generated from a source image via the [D-ID](https://www.d-id.com/) API (BYOK) — set `providers.avatar.source_image` (lecturer photo) and `api_key`/`DID_API_KEY`. Bills per minute of video (~$1–2/min), so pricier than voice/images.
 
 Enable per run with `--avatar`, disable with `--no-avatar`; appearance via `settings.avatar` (`position`, `size`, `margin`).

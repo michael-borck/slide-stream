@@ -39,6 +39,32 @@ SADTALKER_WORKFLOW: dict[str, Any] = {
     "4": {"class_type": "ShowVideo", "inputs": {"show_video_path": ["3", 1]}},
 }
 
+# Proven Wav2Lip ComfyUI workflow (see docs/wav2lip-api.md): load a reference
+# video -> re-sync its mouth to new audio -> encode MP4. Family 2 (video mouth
+# swap); the source frames loop under longer narration.
+WAV2LIP_WORKFLOW: dict[str, Any] = {
+    "1": {"class_type": "VHS_LoadVideo", "inputs": {
+        "video": "reference.mp4", "force_rate": 0, "custom_width": 0,
+        "custom_height": 0, "frame_load_cap": 0, "skip_first_frames": 0,
+        "select_every_nth": 1}},
+    "2": {"class_type": "LoadAudio", "inputs": {"audio": "voice.wav"}},
+    "3": {"class_type": "Wav2Lip", "inputs": {
+        "images": ["1", 0], "mode": "repetitive",
+        "face_detect_batch": 8, "audio": ["2", 0]}},
+    "4": {"class_type": "VHS_VideoCombine", "inputs": {
+        "images": ["3", 0], "audio": ["3", 1], "frame_rate": 25,
+        "loop_count": 0, "filename_prefix": "wav2lip_out",
+        "format": "video/h264-mp4", "pingpong": True, "save_output": True}},
+}
+
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+VIDEO_EXTS = {".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v"}
+
+
+def _source_kind(path: str) -> str:
+    """'video' if the path looks like a video file, else 'image'."""
+    return "video" if Path(path).suffix.lower() in VIDEO_EXTS else "image"
+
 console = Console()
 err_console = Console(stderr=True, style="bold red")
 
@@ -236,32 +262,20 @@ class DIDAvatarProvider(AvatarProvider):
             return None
 
 
-class SadTalkerAvatarProvider(AvatarProvider):
-    """Self-hosted talking head via SadTalker running as a ComfyUI node.
+class _ComfyUIAvatar(AvatarProvider):
+    """Shared base for ComfyUI-driven talking heads (SadTalker / Wav2Lip).
 
-    Drives a ComfyUI server's native /prompt API with the proven SadTalker
-    workflow: the lecturer photo + each slide's narration audio -> a lip-synced
-    clip, composited by media.py. Family 1 (photo -> full-head synthesis);
-    ``stillMode`` defaults on to minimise head-bob jank in the corner circle.
-
-    Config (``providers.avatar``):
-      provider: sadtalker
-      base_url: https://comfyui.example.org
-      source_image: ./lecturer.png   # local path (uploaded once) or input/ name
-      api_key: "${COMFYUI_TOKEN}"    # optional Bearer, if fronted by auth
-    Optional SadTalker tuning: ``still_mode`` (bool), ``preprocess``,
-    ``face_resolution`` ("256"/"512"), ``pose_style`` (int),
-    ``face_enhancer`` (bool). Plus ``timeout`` (default 600s), ``poll_interval``.
+    Both drive a ComfyUI server the same way — upload the source and audio,
+    POST a workflow to ``/prompt``, poll ``/history``, download via ``/view``.
+    They differ only in the source type (photo vs video) and the workflow
+    graph, both keyed off ``_kind()`` ('image' -> SadTalker, 'video' ->
+    Wav2Lip). Subclasses set the provider name and the source.
     """
 
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)
-        # The source image is uploaded once per run; cache the input filename.
+        # The source is uploaded once per run; cache the input filename.
         self._source_name: str | None = None
-
-    @property
-    def name(self) -> str:
-        return "sadtalker"
 
     def _avatar_config(self) -> dict[str, Any]:
         return self.config.get("providers", {}).get("avatar", {})
@@ -274,12 +288,17 @@ class SadTalkerAvatarProvider(AvatarProvider):
         api_key = self._avatar_config().get("api_key") or os.getenv("COMFYUI_TOKEN")
         return {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
-    def _source_image(self) -> str | None:
-        return self._avatar_config().get("source_image")
+    def _source(self) -> str | None:
+        """Path/name of the source photo or video (subclass-specific)."""
+        raise NotImplementedError
+
+    def _kind(self) -> str:
+        """'image' or 'video' — detected from the source by default."""
+        return _source_kind(self._source() or "")
 
     def is_available(self) -> bool:
-        """Available when a ComfyUI URL and a source image are configured."""
-        return bool(self._base_url() and self._source_image())
+        """Available when a ComfyUI URL and a source are configured."""
+        return bool(self._base_url() and self._source())
 
     def _upload(self, path: Path) -> str:
         """Upload a file to ComfyUI's input/ dir; return its stored name."""
@@ -294,26 +313,35 @@ class SadTalkerAvatarProvider(AvatarProvider):
         return response.json()["name"]
 
     def _ensure_source(self) -> str:
-        """Return the input/ filename for the source image, uploading once."""
+        """Return the input/ filename for the source, uploading it once."""
         if self._source_name:
             return self._source_name
-        source = self._source_image()
+        source = self._source()
         if source is None:
-            raise ValueError("no source_image configured")
+            raise ValueError("no avatar source configured")
         path = Path(source)
         # A bare filename that is not a local file is assumed to already live in
         # ComfyUI's input/ directory.
         self._source_name = self._upload(path) if path.is_file() else source
         if path.is_file():
-            console.print("  - Uploaded avatar source image to ComfyUI")
+            console.print("  - Uploaded avatar source to ComfyUI")
         return self._source_name
 
-    def _build_workflow(self, image_name: str, audio_name: str) -> dict[str, Any]:
+    def _build_workflow(self, kind: str, source_name: str, audio_name: str) -> dict[str, Any]:
         import copy
 
         cfg = self._avatar_config()
+        if kind == "video":
+            wf = copy.deepcopy(WAV2LIP_WORKFLOW)
+            wf["1"]["inputs"]["video"] = source_name
+            wf["2"]["inputs"]["audio"] = audio_name
+            wf["3"]["inputs"]["mode"] = cfg.get("wav2lip_mode") or "repetitive"
+            wf["3"]["inputs"]["face_detect_batch"] = int(cfg.get("face_detect_batch") or 8)
+            wf["4"]["inputs"]["frame_rate"] = int(cfg.get("frame_rate") or 25)
+            wf["4"]["inputs"]["pingpong"] = bool(cfg.get("pingpong", True))
+            return wf
         wf = copy.deepcopy(SADTALKER_WORKFLOW)
-        wf["1"]["inputs"]["image"] = image_name
+        wf["1"]["inputs"]["image"] = source_name
         wf["2"]["inputs"]["audio"] = audio_name
         sad = wf["3"]["inputs"]
         sad["stillMode"] = bool(cfg.get("still_mode", True))
@@ -335,17 +363,18 @@ class SadTalkerAvatarProvider(AvatarProvider):
             poll_interval = float(cfg.get("poll_interval") or 5)
             headers = self._headers()
 
-            image_name = self._ensure_source()
-            # SadTalker loads audio at 16kHz; some installs crash resampling
+            source_name = self._ensure_source()
+            kind = self._kind()
+            # These nodes load audio at 16kHz; some installs crash resampling
             # from other rates (librosa/resampy/numba mismatch). Feed 16kHz
-            # mono WAV so it never resamples.
+            # mono WAV so they never resample.
             audio_16k, is_temp = _to_16k_wav(audio_path)
             try:
                 audio_name = self._upload(Path(audio_16k))
             finally:
                 if is_temp:
                     Path(audio_16k).unlink(missing_ok=True)
-            workflow = self._build_workflow(image_name, audio_name)
+            workflow = self._build_workflow(kind, source_name, audio_name)
 
             # 1. Submit the workflow.
             submit = requests.post(
@@ -370,14 +399,14 @@ class SadTalkerAvatarProvider(AvatarProvider):
                 if entry:
                     status_str = entry.get("status", {}).get("status_str")
                     if status_str == "success":
-                        video_path = _find_show_video_path(entry.get("outputs", {}))
+                        video_path = _find_output_path(kind, entry.get("outputs", {}))
                         break
                     if status_str == "error":
                         raise ValueError(f"ComfyUI workflow error: {entry.get('status')}")
                 time.sleep(poll_interval)
 
             if not video_path:
-                raise TimeoutError(f"SadTalker render timed out after {timeout:.0f}s")
+                raise TimeoutError(f"{self.name} render timed out after {timeout:.0f}s")
 
             # 3. Download the result via /view.
             clip = requests.get(
@@ -389,12 +418,70 @@ class SadTalkerAvatarProvider(AvatarProvider):
             clip.raise_for_status()
             with open(output_path, "wb") as f:
                 f.write(clip.content)
-            console.print(f"  - Generated SadTalker talking head (slide {slide_num})")
+            console.print(f"  - Generated {self.name} talking head (slide {slide_num})")
             return output_path
 
         except Exception as e:
-            err_console.print(f"  - SadTalker avatar error: {e}")
+            err_console.print(f"  - {self.name} avatar error: {e}")
             return None
+
+
+class SadTalkerAvatarProvider(_ComfyUIAvatar):
+    """SadTalker (photo -> talking head) via ComfyUI. Family 1.
+
+    Config (``providers.avatar``): ``provider: sadtalker``, ``base_url``,
+    ``source_image`` (photo), optional ``api_key`` (Bearer). Tuning:
+    ``still_mode``, ``preprocess``, ``face_resolution``, ``pose_style``,
+    ``face_enhancer``. ``still_mode`` on by default to reduce corner-circle jank.
+    """
+
+    @property
+    def name(self) -> str:
+        return "sadtalker"
+
+    def _source(self) -> str | None:
+        return self._avatar_config().get("source_image")
+
+    def _kind(self) -> str:
+        return "image"
+
+
+class Wav2LipAvatarProvider(_ComfyUIAvatar):
+    """Wav2Lip (video -> lip-synced) via ComfyUI. Family 2.
+
+    Config (``providers.avatar``): ``provider: wav2lip``, ``base_url``,
+    ``source_video`` (a short idle clip of the lecturer), optional ``api_key``.
+    The source loops (pingpong) under longer narration. Tuning: ``wav2lip_mode``,
+    ``face_detect_batch``, ``frame_rate``, ``pingpong``.
+    """
+
+    @property
+    def name(self) -> str:
+        return "wav2lip"
+
+    def _source(self) -> str | None:
+        return self._avatar_config().get("source_video")
+
+    def _kind(self) -> str:
+        return "video"
+
+
+class ComfyUIAvatarProvider(_ComfyUIAvatar):
+    """Auto-routing talking head: photo -> SadTalker, video -> Wav2Lip.
+
+    Detects the source type from its extension, so one provider handles both.
+    Config (``providers.avatar``): ``provider: comfyui``, ``base_url``, and a
+    ``source`` (or ``source_image`` / ``source_video``) that may be either a
+    photo or a video. Ideal for the web UI, where the user uploads either.
+    """
+
+    @property
+    def name(self) -> str:
+        return "comfyui"
+
+    def _source(self) -> str | None:
+        cfg = self._avatar_config()
+        return cfg.get("source") or cfg.get("source_image") or cfg.get("source_video")
 
 
 def _to_16k_wav(audio_path: str) -> tuple[str, bool]:
@@ -419,10 +506,21 @@ def _to_16k_wav(audio_path: str) -> tuple[str, bool]:
     return converted, True
 
 
-def _find_show_video_path(outputs: dict[str, Any]) -> str | None:
-    """Pull the ShowVideo node's output path out of a ComfyUI history entry."""
+def _find_output_path(kind: str, outputs: dict[str, Any]) -> str | None:
+    """Pull the output video path from a ComfyUI history entry.
+
+    SadTalker's ShowVideo node reports ``show_video_path``; Wav2Lip's
+    VHS_VideoCombine reports ``gifs`` (with filename/fullpath).
+    """
     for node_output in outputs.values():
-        paths = node_output.get("show_video_path") if isinstance(node_output, dict) else None
-        if paths:
-            return paths[0]
+        if not isinstance(node_output, dict):
+            continue
+        if kind == "video":
+            gifs = node_output.get("gifs")
+            if gifs:
+                return gifs[0].get("filename") or Path(gifs[0]["fullpath"]).name
+        else:
+            paths = node_output.get("show_video_path")
+            if paths:
+                return paths[0]
     return None

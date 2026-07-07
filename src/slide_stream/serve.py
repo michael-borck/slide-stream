@@ -73,10 +73,18 @@ def _build_job_config(base: dict[str, Any], workdir: Path, options: dict[str, An
     if voice_path is not None:
         cfg["providers"]["tts"]["voice_sample"] = str(voice_path)
 
-    # A per-job photo drives the avatar (provider comes from the server config,
-    # e.g. sadtalker/d-id). No photo, or avatar off -> no head.
+    # A per-job photo OR short video drives the avatar. The uploaded file is
+    # routed by type so whichever engine the server configures works: image ->
+    # d-id/sadtalker, video -> wav2lip, or the 'comfyui' auto-router (source).
     if photo_path is not None and options.get("avatar", True):
-        cfg["providers"]["avatar"]["source_image"] = str(photo_path)
+        from .providers.avatar import _source_kind
+
+        av = cfg["providers"]["avatar"]
+        av["source"] = str(photo_path)
+        if _source_kind(str(photo_path)) == "video":
+            av["source_video"] = str(photo_path)
+        else:
+            av["source_image"] = str(photo_path)
     else:
         cfg["providers"]["avatar"]["provider"] = "none"
 
@@ -265,7 +273,7 @@ INDEX_HTML = """<!doctype html>
  <p class="muted">Stored in this browser only.</p></div>
 <label>Deck (.md or .pptx)</label><input id="deck" type="file" accept=".md,.pptx">
 <label>Your voice sample (optional, 10–30s)</label><input id="voice" type="file" accept="audio/*">
-<label>Your photo (optional, front-facing)</label><input id="photo" type="file" accept="image/*">
+<label>Your photo or short video (optional, front-facing)</label><input id="photo" type="file" accept="image/*,video/*">
 <p class="muted" id="remembered"></p>
 <div class="row"><input id="avatar" type="checkbox"><label style="margin:0">Talking-head avatar</label></div>
 <label>Narration seconds per slide (optional)</label><input id="secs" type="number" min="10" placeholder="e.g. 30">

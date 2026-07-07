@@ -35,12 +35,13 @@ DEFAULT_CONFIG = {
             "base_url": None  # used by the openai-compatible provider
         },
         "avatar": {
-            "provider": "none",       # none | precomputed | d-id (| musetalk, later)
-            "base_url": None,         # HTTP lip-sync service (later phase)
-            "base_video": None,       # lecturer base footage (later phase)
+            "provider": "none",       # none|precomputed|d-id|sadtalker|wav2lip|comfyui
+            "base_url": None,         # comfyui server (sadtalker/wav2lip/comfyui)
             "assets_dir": None,       # precomputed head_N.mp4 clips
-            "source_image": None,     # d-id: lecturer photo (path or URL)
-            "api_key": None           # d-id: DID_API_KEY / ${VAR}
+            "source_image": None,     # photo: d-id / sadtalker
+            "source_video": None,     # short clip: wav2lip
+            "source": None,           # comfyui auto-router: photo OR video
+            "api_key": None           # bearer/DID key / ${VAR}
         }
     },
     "settings": {
@@ -266,10 +267,18 @@ providers:
   #   provider: precomputed
   #   assets_dir: ./heads
   #
-  # Talking-head from a photo:
-  #   provider: sadtalker           # self-hosted via a ComfyUI server
+  # Talking-head avatar (self-hosted via a ComfyUI server):
+  #   provider: sadtalker           # from a PHOTO
   #   base_url: https://comfyui.example.org
   #   source_image: ./me.png
+  # ...or from a short VIDEO (more natural; loops under longer narration):
+  #   provider: wav2lip
+  #   base_url: https://comfyui.example.org
+  #   source_video: ./me_idle.mp4
+  # ...or auto-route (photo -> SadTalker, video -> Wav2Lip):
+  #   provider: comfyui
+  #   base_url: https://comfyui.example.org
+  #   source: ./me.png              # or ./me_idle.mp4
   # ...or the hosted BYOK option (bills per minute of video):
   #   provider: d-id
   #   source_image: ./me.png

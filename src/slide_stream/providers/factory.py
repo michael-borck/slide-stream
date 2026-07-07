@@ -5,10 +5,12 @@ from typing import Any
 from rich.console import Console
 
 from .avatar import (
+    ComfyUIAvatarProvider,
     DIDAvatarProvider,
     NoneAvatarProvider,
     PrecomputedAvatarProvider,
     SadTalkerAvatarProvider,
+    Wav2LipAvatarProvider,
 )
 from .base import (
     AvatarProvider,
@@ -69,6 +71,8 @@ class ProviderFactory:
         "precomputed": PrecomputedAvatarProvider,
         "d-id": DIDAvatarProvider,
         "sadtalker": SadTalkerAvatarProvider,
+        "wav2lip": Wav2LipAvatarProvider,
+        "comfyui": ComfyUIAvatarProvider,
     }
 
     @classmethod
@@ -207,7 +211,9 @@ class ProviderFactory:
             "none": "Avatar disabled (default)",
             "precomputed": "Pre-supplied head clips: assets_dir/head_N.mp4 (no GPU or service needed)",
             "d-id": "D-ID lip-synced talking head from a source image (BYOK; requires DID_API_KEY + source_image)",
-            "sadtalker": "Self-hosted SadTalker via a ComfyUI server (set base_url + source_image; no per-image cost)",
+            "sadtalker": "Self-hosted SadTalker (photo) via a ComfyUI server (base_url + source_image)",
+            "wav2lip": "Self-hosted Wav2Lip (video) via a ComfyUI server (base_url + source_video)",
+            "comfyui": "Auto: photo -> SadTalker, video -> Wav2Lip, via a ComfyUI server (base_url + source)",
         }
 
     @classmethod
