@@ -37,6 +37,7 @@ from .tts import (
     KokoroTTSProvider,
     OpenAICompatTTSProvider,
     OpenAITTSProvider,
+    VoiceboxTTSProvider,
 )
 
 console = Console()
@@ -62,6 +63,7 @@ class ProviderFactory:
         "gtts": GTTSProvider,
         "kokoro": KokoroTTSProvider,
         "chatterbox": ChatterboxTTSProvider,
+        "voicebox": VoiceboxTTSProvider,
         "elevenlabs": ElevenLabsTTSProvider,
         "openai": OpenAITTSProvider,
         "openai-compatible": OpenAICompatTTSProvider,
@@ -201,6 +203,7 @@ class ProviderFactory:
             "gtts": "Google Text-to-Speech (free, no API key; requires an internet connection)",
             "kokoro": "Kokoro local TTS — fully offline (pip install 'slide-stream[local-tts]'; ~340MB one-time model download)",
             "chatterbox": "Self-hosted Chatterbox voice cloning (set base_url; voice_sample uploads ephemerally per run)",
+            "voicebox": "Self-hosted Voicebox studio (set base_url + profile_id; multi-engine: kokoro/chatterbox/qwen/...)",
             "elevenlabs": "ElevenLabs premium TTS (requires ElevenLabs API key)",
             "openai": "OpenAI TTS (requires OpenAI API key)",
             "openai-compatible": "Any OpenAI-compatible speech endpoint (set base_url; local or hosted)",

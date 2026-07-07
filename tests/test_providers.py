@@ -878,3 +878,91 @@ def test_swarmui_no_model_falls_back_to_text(config, tmp_path, mocker):
 
 def test_factory_registers_swarmui_provider():
     assert "swarmui" in ProviderFactory.list_image_providers()
+
+
+# --- Voicebox TTS provider (network mocked) ----------------------------------
+
+
+def test_voicebox_availability_needs_url_and_profile(config, monkeypatch):
+    from slide_stream.providers.tts import VoiceboxTTSProvider
+
+    monkeypatch.delenv("VOICEBOX_BASE_URL", raising=False)
+    config["providers"]["tts"] = {"provider": "voicebox"}
+    assert VoiceboxTTSProvider(config).is_available() is False
+
+    config["providers"]["tts"] = {"provider": "voicebox", "base_url": "https://vb.org"}
+    assert VoiceboxTTSProvider(config).is_available() is False
+
+    config["providers"]["tts"]["profile_id"] = "p1"
+    assert VoiceboxTTSProvider(config).is_available() is True
+
+
+def test_voicebox_sync_generation(config, tmp_path, mocker):
+    from slide_stream.providers.tts import VoiceboxTTSProvider
+
+    config["providers"]["tts"] = {
+        "provider": "voicebox", "base_url": "https://vb.org",
+        "profile_id": "p1", "engine": "kokoro",
+    }
+    gen = mocker.MagicMock()
+    gen.json.return_value = {"id": "g1", "status": "completed"}
+    post = mocker.patch("slide_stream.providers.tts.requests.post", return_value=gen)
+    audio = mocker.MagicMock(content=b"AUDIO")
+    get = mocker.patch("slide_stream.providers.tts.requests.get", return_value=audio)
+
+    out = tmp_path / "a.mp3"
+    result = VoiceboxTTSProvider(config).synthesize("hello", str(out))
+
+    assert result == str(out)
+    assert out.read_bytes() == b"AUDIO"
+    body = post.call_args[1]["json"]
+    assert body["profile_id"] == "p1"
+    assert body["engine"] == "kokoro"
+    assert get.call_args[0][0] == "https://vb.org/audio/g1"
+
+
+def test_voicebox_polls_until_done(config, tmp_path, mocker):
+    from slide_stream.providers.tts import VoiceboxTTSProvider
+
+    config["providers"]["tts"] = {
+        "provider": "voicebox", "base_url": "https://vb.org",
+        "profile_id": "p1", "poll_interval": 0,
+    }
+    gen = mocker.MagicMock()
+    gen.json.return_value = {"id": "g1", "status": "generating"}
+    mocker.patch("slide_stream.providers.tts.requests.post", return_value=gen)
+
+    generating = mocker.MagicMock()
+    generating.json.return_value = {"status": "generating"}
+    done = mocker.MagicMock()
+    done.json.return_value = {"status": "completed"}
+    audio = mocker.MagicMock(content=b"OK")
+    get = mocker.patch(
+        "slide_stream.providers.tts.requests.get",
+        side_effect=[generating, done, audio],
+    )
+    mocker.patch("slide_stream.providers.tts.time.sleep")
+
+    out = tmp_path / "a.mp3"
+    assert VoiceboxTTSProvider(config).synthesize("hi", str(out)) == str(out)
+    assert out.read_bytes() == b"OK"
+    # Last GET fetched the audio after polling status twice.
+    assert get.call_args_list[-1][0][0] == "https://vb.org/audio/g1"
+
+
+def test_voicebox_strict_failure_returns_none(config, tmp_path, mocker):
+    from slide_stream.providers.tts import VoiceboxTTSProvider
+
+    config["providers"]["tts"] = {
+        "provider": "voicebox", "base_url": "https://vb.org", "profile_id": "p1",
+    }
+    config["settings"]["strict"] = True
+    mocker.patch(
+        "slide_stream.providers.tts.requests.post",
+        side_effect=RuntimeError("down"),
+    )
+    assert VoiceboxTTSProvider(config).synthesize("x", str(tmp_path / "a.mp3")) is None
+
+
+def test_factory_registers_voicebox():
+    assert "voicebox" in ProviderFactory.list_tts_providers()

@@ -256,8 +256,14 @@ providers:
     # steps: 20
 
   tts:
-    provider: elevenlabs   # gtts, kokoro, elevenlabs, openai, openai-compatible
+    provider: elevenlabs   # gtts, kokoro, chatterbox, voicebox, elevenlabs, openai, openai-compatible
     voice: rachel          # voice ID/name (provider-specific)
+    # gtts free accents: accent: australian|british|american|canadian|indian|irish
+    # self-hosted Voicebox studio (free, multi-engine):
+    #   provider: voicebox
+    #   base_url: https://voice.example.org
+    #   profile_id: "<id from POST /profiles>"
+    #   engine: kokoro      # or chatterbox / qwen / luxtts / tada
 
   # Talking-head avatar overlay (off by default). 'precomputed' composites
   # ready-made clips named head_1.mp4, head_2.mp4, ... from assets_dir —

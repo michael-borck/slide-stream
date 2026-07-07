@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -372,6 +373,108 @@ class ChatterboxTTSProvider(TTSProvider):
 
         except Exception as e:
             err_console.print(f"  - Chatterbox error: {e}. Using gTTS fallback.")
+            return self._fallback_to_gtts(text, filename)
+
+    def _fallback_to_gtts(self, text: str, filename: str) -> str | None:
+        """Fallback to gTTS, unless strict mode disables fallbacks."""
+        if is_strict(self.config):
+            err_console.print(
+                f"  - Strict mode: not falling back to gTTS after {self.name} failed."
+            )
+            return None
+        gtts_provider = GTTSProvider(self.config)
+        return gtts_provider.synthesize(text, filename)
+
+
+class VoiceboxTTSProvider(TTSProvider):
+    """Self-hosted Voicebox voice studio as a TTS provider.
+
+    Generates speech against a pre-created Voicebox *profile* (a preset or
+    cloned voice), with a selectable engine. Free to run (self-hosted; engines
+    like Kokoro/Qwen are open). Set up a profile once on the server, then:
+
+    Config (``providers.tts``):
+      provider: voicebox
+      base_url: https://voice.example.org   # or VOICEBOX_BASE_URL
+      profile_id: "<id from POST /profiles>"
+      engine: kokoro          # qwen|qwen_custom_voice|luxtts|chatterbox|
+                              # chatterbox_turbo|tada|kokoro
+      api_key: "${VOICEBOX_TOKEN}"          # optional Bearer, if proxied
+    """
+
+    @property
+    def name(self) -> str:
+        return "voicebox"
+
+    def _tts_config(self) -> dict[str, Any]:
+        return self.config.get("providers", {}).get("tts", {})
+
+    def _base_url(self) -> str | None:
+        base_url = self._tts_config().get("base_url") or os.getenv("VOICEBOX_BASE_URL")
+        return base_url.rstrip("/") if base_url else None
+
+    def _headers(self) -> dict[str, str]:
+        api_key = self._tts_config().get("api_key") or os.getenv("VOICEBOX_TOKEN")
+        return {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+    def is_available(self) -> bool:
+        """Available when a server URL and a profile are configured."""
+        tts_config = self._tts_config()
+        return bool(self._base_url() and tts_config.get("profile_id"))
+
+    def synthesize(self, text: str, filename: str) -> str | None:
+        """Convert text to speech via a Voicebox profile."""
+        try:
+            tts_config = self._tts_config()
+            base_url = self._base_url()
+            profile_id = tts_config.get("profile_id")
+            if not base_url or not profile_id:
+                raise ValueError("Voicebox base_url and profile_id are required")
+            headers = self._headers()
+            timeout = float(tts_config.get("timeout") or 300)
+            poll_interval = float(tts_config.get("poll_interval") or 1)
+
+            # 1. Request generation.
+            gen = requests.post(
+                f"{base_url}/generate",
+                headers=headers,
+                json={
+                    "profile_id": profile_id,
+                    "text": text,
+                    "language": tts_config.get("language") or "en",
+                    "engine": tts_config.get("engine") or "kokoro",
+                    "normalize": True,
+                },
+                timeout=timeout,
+            )
+            gen.raise_for_status()
+            data = gen.json()
+            gen_id = data["id"]
+
+            # 2. Poll until finished (generation may be async).
+            deadline = time.monotonic() + timeout
+            status = data.get("status")
+            while status == "generating" and time.monotonic() < deadline:
+                time.sleep(poll_interval)
+                st = requests.get(
+                    f"{base_url}/generate/{gen_id}/status", headers=headers, timeout=30
+                )
+                st.raise_for_status()
+                status = st.json().get("status")
+
+            # 3. Fetch the audio.
+            audio = requests.get(
+                f"{base_url}/audio/{gen_id}", headers=headers, timeout=timeout
+            )
+            audio.raise_for_status()
+            with open(filename, "wb") as f:
+                f.write(audio.content)
+            engine = tts_config.get("engine") or "kokoro"
+            console.print(f"  - Generated audio with Voicebox ({engine})")
+            return filename
+
+        except Exception as e:
+            err_console.print(f"  - Voicebox error: {e}. Using gTTS fallback.")
             return self._fallback_to_gtts(text, filename)
 
     def _fallback_to_gtts(self, text: str, filename: str) -> str | None:
