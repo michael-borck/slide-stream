@@ -199,9 +199,29 @@ slide-stream init [config_file]
 # List available providers and their status
 slide-stream providers
 
+# Web UI: upload a deck + voice + photo in the browser, render, download
+slide-stream serve                    # needs: pip install "slide-stream[serve]"
+
 # Show help
 slide-stream --help
 ```
+
+### Web UI
+
+```bash
+pip install "slide-stream[serve]"
+slide-stream serve                    # local: binds 127.0.0.1, opens a browser
+slide-stream serve --host 0.0.0.0 --token "$(openssl rand -hex 24)"   # VPS, token-gated
+```
+
+Upload a deck (`.md`/`.pptx`) plus an optional **voice sample** and **photo**;
+it renders as a background job and returns a video. Token-authenticated (set
+`--token` / `SLIDESTREAM_TOKEN`; auto-minted on a non-local bind). The server
+is **stateless about biometric data** — an uploaded voice/photo is used only
+for that render and deleted afterwards; the lecturer's **browser** remembers
+them (IndexedDB) so they need not re-pick each job, keeping the data on their
+own laptop. Voice server, image provider, avatar engine, and API keys come
+from the server's own layered config (`~/.slidestream.yaml`).
 
 ### Examples
 

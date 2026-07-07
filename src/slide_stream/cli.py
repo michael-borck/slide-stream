@@ -1,5 +1,6 @@
 """Command line interface for Slide Stream."""
 
+import os
 import re
 import shutil
 import tempfile
@@ -866,6 +867,72 @@ def voices(
         "providers.tts.voice_sample: /path/to/you.wav for an ephemeral, "
         "privacy-first clone of your own voice (10-30s of clean speech).[/dim]"
     )
+
+
+@app.command()
+def serve(
+    host: Annotated[
+        str, typer.Option("--host", help="Address to bind (127.0.0.1 = local only).")
+    ] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port", help="Port to listen on.")] = 8080,
+    token: Annotated[
+        str | None,
+        typer.Option(
+            "--token",
+            help="Access token (or SLIDESTREAM_TOKEN). Generated if omitted when not local.",
+        ),
+    ] = None,
+    config_file: Annotated[
+        str | None, typer.Option("--config", "-c", help="Server config file (YAML).")
+    ] = None,
+    workers: Annotated[
+        int, typer.Option("--workers", help="Concurrent renders (keep low; GPU/CPU heavy).")
+    ] = 1,
+    no_browser: Annotated[
+        bool, typer.Option("--no-browser", help="Do not auto-open a browser.")
+    ] = False,
+) -> None:
+    """Launch the web UI: upload a deck + voice + photo, render, download."""
+    try:
+        import uvicorn
+
+        from .serve import create_app
+    except (ImportError, RuntimeError):
+        err_console.print(
+            'The web UI needs extra packages. Install with: pip install "slide-stream[serve]"'
+        )
+        raise typer.Exit(code=1)
+
+    try:
+        config = load_config(config_file)
+    except ConfigurationError as e:
+        err_console.print(f"Configuration Error: {e}")
+        raise typer.Exit(code=1)
+
+    resolved_token = token or os.getenv("SLIDESTREAM_TOKEN")
+    # On a non-local bind with no token, mint one so the server isn't wide open.
+    if not resolved_token and host not in ("127.0.0.1", "localhost"):
+        import secrets
+
+        resolved_token = secrets.token_urlsafe(24)
+        console.print(f"🔑 Generated access token: [bold yellow]{resolved_token}[/bold yellow]")
+
+    app_instance = create_app(config=config, token=resolved_token, max_workers=workers)
+
+    url = f"http://{host}:{port}"
+    console.print(
+        Panel.fit(
+            f"[bold cyan]🎬 SlideStream server[/bold cyan]\n{url}"
+            + ("\n[dim]token required[/dim]" if resolved_token else "\n[dim]no token (local)[/dim]"),
+            border_style="green",
+        )
+    )
+    if not no_browser and host in ("127.0.0.1", "localhost"):
+        import webbrowser
+
+        webbrowser.open(url)
+
+    uvicorn.run(app_instance, host=host, port=port, log_level="warning")
 
 
 @app.command()
