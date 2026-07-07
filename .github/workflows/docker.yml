@@ -1,20 +1,21 @@
 name: Build and publish Docker image
 
 # Builds the self-host image (deploy/Dockerfile) and pushes it to the GitHub
-# Container Registry (ghcr.io/michael-borck/slide-stream), so the VPS can pull
-# a prebuilt image instead of building. Run this after publishing a release to
-# PyPI (pass the version), or it rebuilds `latest` when the Dockerfile changes.
+# Container Registry (ghcr.io/michael-borck/slide-stream). Runs automatically
+# when a release lands on main (the version is read from pyproject.toml and
+# the build waits for PyPI to serve it), or manually via workflow_dispatch.
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "slide-stream version to bake in (blank = latest on PyPI)"
+        description: "slide-stream version to bake in (blank = read pyproject.toml)"
         required: false
         default: ""
   push:
     branches: [main]
     paths:
+      - 'pyproject.toml'
       - 'deploy/Dockerfile'
       - '.github/workflows/docker.yml'
 
@@ -31,6 +32,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Resolve version
+        id: ver
+        run: |
+          V="${{ inputs.version }}"
+          if [ -z "$V" ]; then
+            V=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "Building slide-stream $V"
+
+      - name: Wait for the version on PyPI
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          for i in $(seq 1 18); do
+            if curl -fsS "https://pypi.org/pypi/slide-stream/$V/json" > /dev/null; then
+              echo "PyPI has $V"; exit 0
+            fi
+            echo "PyPI does not have $V yet (attempt $i/18); waiting 10s..."
+            sleep 10
+          done
+          echo "::error::slide-stream $V never appeared on PyPI — publish first (twine), then re-run."
+          exit 1
+
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
@@ -39,20 +63,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Compute image tags
-        id: meta
-        run: |
-          V="${{ inputs.version }}"
-          if [ -n "$V" ]; then
-            echo "tags=${IMAGE}:latest,${IMAGE}:${V}" >> "$GITHUB_OUTPUT"
-          else
-            echo "tags=${IMAGE}:latest" >> "$GITHUB_OUTPUT"
-          fi
-
       - uses: docker/build-push-action@v6
         with:
           context: deploy
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: ${{ env.IMAGE }}:latest,${{ env.IMAGE }}:${{ steps.ver.outputs.version }}
           build-args: |
-            SLIDE_STREAM_VERSION=${{ inputs.version }}
+            SLIDE_STREAM_VERSION=${{ steps.ver.outputs.version }}

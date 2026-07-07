@@ -35,7 +35,7 @@ MOUTH_BOXES: dict[str, tuple[float, float, float, float]] = {
     "koala": (0.50, 0.60, 0.11, 0.06),
     "robot": (0.50, 0.62, 0.14, 0.06),
     "wizard": (0.50, 0.60, 0.10, 0.05),
-    "owl": (0.50, 0.33, 0.07, 0.06),
+    "owl": (0.50, 0.55, 0.10, 0.06),
 }
 DEFAULT_MOUTH_BOX = (0.50, 0.60, 0.12, 0.06)
 
