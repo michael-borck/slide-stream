@@ -128,7 +128,8 @@ def test_job_config_ephemeral_voice_and_photo(base_config, tmp_path):
     assert cfg["settings"]["narration"]["target_seconds"] == 25.0
 
 
-def test_job_config_avatar_off_when_unchecked(base_config, tmp_path):
+def test_job_config_photo_not_animated_becomes_static_self(base_config, tmp_path):
+    """Photo + animate off = a still of themselves, not 'no head'."""
     workdir = tmp_path / "job"
     workdir.mkdir()
     photo = workdir / "photo.png"
@@ -139,7 +140,50 @@ def test_job_config_avatar_off_when_unchecked(base_config, tmp_path):
     import yaml
 
     cfg = yaml.safe_load(job_yaml.read_text())
+    assert cfg["providers"]["avatar"]["provider"] == "static"
+    assert cfg["providers"]["avatar"]["source"] == str(photo)
+
+
+def test_job_config_no_presenter_means_no_head(base_config, tmp_path):
+    workdir = tmp_path / "job"
+    workdir.mkdir()
+    job_yaml = serve._build_job_config(base_config, workdir, {"avatar": True}, None, None)
+    import yaml
+
+    cfg = yaml.safe_load(job_yaml.read_text())
     assert cfg["providers"]["avatar"]["provider"] == "none"
+
+
+def test_job_config_mascot_animate_toggle(base_config, tmp_path):
+    """Mascot: animate -> puppet mouth-flap; off -> static."""
+    import yaml
+
+    workdir = tmp_path / "job"
+    workdir.mkdir()
+    on = yaml.safe_load(serve._build_job_config(
+        base_config, workdir, {"avatar": True, "avatar_name": "teddy"}, None, None
+    ).read_text())
+    assert on["providers"]["avatar"]["provider"] == "puppet"
+    assert on["providers"]["avatar"]["source"] == "teddy"
+    off = yaml.safe_load(serve._build_job_config(
+        base_config, workdir, {"avatar": False, "avatar_name": "teddy"}, None, None
+    ).read_text())
+    assert off["providers"]["avatar"]["provider"] == "static"
+
+
+def test_job_config_video_always_animates(base_config, tmp_path):
+    """A video presenter uses the video engine even with animate off."""
+    import yaml
+
+    workdir = tmp_path / "job"
+    workdir.mkdir()
+    clip = workdir / "me.mp4"
+    clip.write_bytes(b"v")
+    cfg = yaml.safe_load(serve._build_job_config(
+        base_config, workdir, {"avatar": False}, None, clip
+    ).read_text())
+    assert cfg["providers"]["avatar"].get("provider") != "static"
+    assert cfg["providers"]["avatar"]["source_video"] == str(clip)
 
 
 def test_download_accepts_token_query_param(base_config, tmp_path, monkeypatch):

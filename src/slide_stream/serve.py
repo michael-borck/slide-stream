@@ -107,22 +107,29 @@ def _build_job_config(base: dict[str, Any], workdir: Path, options: dict[str, An
     if voice_path is not None:
         cfg["providers"]["tts"]["voice_sample"] = str(voice_path)
 
-    # Avatar: a built-in character (static mascot, no GPU) wins over an
-    # uploaded file; an uploaded photo/video routes by type to the engine the
-    # server configures (image -> d-id/sadtalker, video -> wav2lip, or the
-    # 'comfyui' auto-router). No avatar, or avatar off -> no head.
+    # Presenter: a built-in mascot wins over an uploaded file. The 'animate'
+    # toggle then picks the engine per source:
+    #   mascot  + animate -> puppet (mouth-flap, no GPU);  else static mascot
+    #   photo   + animate -> server's engine (d-id/sadtalker/comfyui);
+    #                        else static photo (a still of themselves)
+    #   video             -> always the video engine (a clip is inherently
+    #                        animated; wav2lip/comfyui)
+    #   nothing           -> no head
     av = cfg["providers"]["avatar"]
+    animate = options.get("avatar", True)
     if options.get("avatar_name"):
-        av["provider"] = "static"
+        av["provider"] = "puppet" if animate else "static"
         av["source"] = options["avatar_name"]
-    elif photo_path is not None and options.get("avatar", True):
+    elif photo_path is not None:
         from .providers.avatar import _source_kind
 
         av["source"] = str(photo_path)
         if _source_kind(str(photo_path)) == "video":
             av["source_video"] = str(photo_path)
-        else:
+        elif animate:
             av["source_image"] = str(photo_path)
+        else:
+            av["provider"] = "static"
     else:
         av["provider"] = "none"
 
@@ -410,7 +417,9 @@ footer a:hover{color:var(--accent)}
 <label>Your photo or short video <span style="font-weight:400;color:var(--muted)">(optional, front-facing)</span></label>
 <input id="photo" type="file" accept="image/*,video/*">
 <p class="muted" id="remembered"></p>
-<div class="row"><input id="avatar" type="checkbox"><label>Animate as a talking head</label></div>
+<div class="row"><input id="avatar" type="checkbox" checked><label>Animate the presenter</label></div>
+<p class="muted">On: a mascot gets a cartoon mouth-flap; your photo becomes an AI talking head.
+Off: the presenter appears as a still image in the corner.</p>
 <label id="accentRow" style="display:none">Accent</label>
 <select id="accent" style="display:none"><option value="">— default —</option></select>
 <label>Seconds of narration per slide <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
