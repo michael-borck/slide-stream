@@ -1,0 +1,17 @@
+[package]
+name = "slidestream-desktop"
+version = "0.1.0"
+description = "SlideStream Desktop — slides in, narrated video out"
+authors = ["Michael Borck"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde_json = "1"
+
+[profile.release]
+strip = true
+lto = true

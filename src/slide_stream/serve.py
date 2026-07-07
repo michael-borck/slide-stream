@@ -49,6 +49,10 @@ class Job:
 _JOBS: dict[str, Job] = {}
 _LOCK = threading.Lock()
 
+def _shutdown() -> None:  # pragma: no cover - kills the process
+    os._exit(0)
+
+
 # Demo-mode guardrails: friction-free (no token) but bounded.
 DEMO_MAX_SLIDES = 5
 DEMO_JOBS_PER_HOUR = 3
@@ -175,13 +179,49 @@ def _run_job(job: Job, deck_path: Path, job_yaml: Path,
                 Path(p).unlink(missing_ok=True)
 
 
+SETTINGS_TEMPLATE = """\
+# SlideStream settings (~/.slidestream.yaml)
+# Uncomment and edit what you use. Keys can reference environment variables
+# as ${VAR}. Full docs: https://github.com/michael-borck/slide-stream
+providers:
+  llm:
+    provider: gemini            # gemini | openai | claude | groq | ollama | none
+    model: gemini-2.0-flash
+  tts:
+    provider: gtts              # free; or kokoro (offline), chatterbox,
+                                # voicebox, elevenlabs, openai
+    # accent: australian        # gtts: australian|british|american|...
+    # base_url: https://chatterbox.example.org   # chatterbox/voicebox
+    # api_key: "${CHATTERBOX_TOKEN}"
+  images:
+    provider: text              # text (no AI) | gemini | dalle3 | swarmui |
+                                # local | pexels | unsplash
+    # base_url: https://swarmui.example.org
+    # model: juggernautXL_v9
+  avatar:
+    provider: none              # none | static | puppet | sadtalker |
+                                # wav2lip | comfyui | d-id
+    # source: teddy             # built-in mascot, or a photo/video path
+    # base_url: https://comfyui.example.org
+settings:
+  strict: false
+  narration:
+    target_seconds: 45
+"""
+
+
 def create_app(config: dict[str, Any] | None = None, token: str | None = None,
-               max_workers: int = 1, demo: bool | None = None):
+               max_workers: int = 1, demo: bool | None = None,
+               local: bool | None = None):
     """Build the FastAPI app. Requires the ``[serve]`` extra.
 
     ``demo`` (or the ``SLIDESTREAM_DEMO`` env var) shows a banner in the UI
     inviting users to install locally for full control over the LLM, image,
     and video generation — used on the hosted VPS instance.
+
+    ``local`` (or ``SLIDESTREAM_LOCAL=1``) is desktop/laptop mode: no token,
+    no demo limits, and a Settings page that edits ~/.slidestream.yaml. Used
+    by the Tauri desktop shell.
     """
     try:
         from fastapi import (
@@ -202,10 +242,13 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
         ) from e
 
     base_config = config if config is not None else load_config()
-    auth_token = token or os.getenv("SLIDESTREAM_TOKEN") or ""
+    if local is None:
+        local = os.getenv("SLIDESTREAM_LOCAL", "").lower() in ("1", "true", "yes")
+    local_mode = bool(local)
+    auth_token = "" if local_mode else (token or os.getenv("SLIDESTREAM_TOKEN") or "")
     if demo is None:
         demo = os.getenv("SLIDESTREAM_DEMO", "").lower() in ("1", "true", "yes")
-    demo_mode = bool(demo)
+    demo_mode = bool(demo) and not local_mode
     executor = ThreadPoolExecutor(max_workers=max_workers)
     jobs_root = Path(tempfile.mkdtemp(prefix="slidestream_serve_"))
 
@@ -243,6 +286,7 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
         return {
             "auth_required": bool(auth_token) and not demo_mode,
             "demo": demo_mode,
+            "local": local_mode,
             "limits": (
                 {"max_slides": DEMO_MAX_SLIDES, "jobs_per_hour": DEMO_JOBS_PER_HOUR}
                 if demo_mode
@@ -251,6 +295,44 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
             "avatars": avatar_names(),
             "accents": list(GTTS_ACCENTS) if tts_provider == "gtts" else [],
         }
+
+    settings_path = Path.home() / ".slidestream.yaml"
+
+    @app.post("/api/quit")
+    def quit_app() -> dict[str, Any]:
+        # Desktop mode only: the Tauri shell calls this when the window
+        # closes so the sidecar server (and its render subprocesses' parent)
+        # exits cleanly even if the process kill only reaches the launcher.
+        if not local_mode:
+            raise HTTPException(status_code=404, detail="Not available")
+        threading.Timer(0.2, _shutdown).start()
+        return {"ok": True}
+
+    @app.get("/api/settings")
+    def get_settings() -> dict[str, Any]:
+        # Desktop mode only: read the user's config for the Settings page.
+        if not local_mode:
+            raise HTTPException(status_code=404, detail="Not available")
+        text = ""
+        if settings_path.exists():
+            text = settings_path.read_text(encoding="utf-8")
+        return {"path": str(settings_path), "yaml": text,
+                "template": SETTINGS_TEMPLATE}
+
+    @app.put("/api/settings")
+    async def put_settings(request: Request) -> dict[str, Any]:
+        if not local_mode:
+            raise HTTPException(status_code=404, detail="Not available")
+        body = await request.json()
+        text = body.get("yaml", "")
+        try:
+            parsed = yaml.safe_load(text) if text.strip() else None
+            if parsed is not None and not isinstance(parsed, dict):
+                raise ValueError("top level must be a mapping")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid YAML: {e}") from e
+        settings_path.write_text(text, encoding="utf-8")
+        return {"ok": True, "path": str(settings_path)}
 
     @app.post("/api/jobs")
     async def create_job(
@@ -308,7 +390,10 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
             "avatar_name": avatar_name,
             "accent": accent,
         }
-        job_yaml = _build_job_config(base_config, workdir, options, voice_path, photo_path)
+        # Desktop mode re-reads ~/.slidestream.yaml per job so Settings edits
+        # apply without restarting the app.
+        job_base = load_config() if local_mode else base_config
+        job_yaml = _build_job_config(job_base, workdir, options, voice_path, photo_path)
 
         job = Job(id=job_id, workdir=workdir, created_at=time.time())
         with _LOCK:
@@ -404,9 +489,37 @@ footer{margin-top:2rem;padding-top:1.1rem;border-top:1px solid var(--line);
  font-size:.85rem;color:var(--muted);display:flex;gap:1.2rem;flex-wrap:wrap}
 footer a{color:var(--muted);text-decoration:none;font-weight:500}
 footer a:hover{color:var(--accent)}
+.head{display:flex;align-items:baseline;justify-content:space-between}
+#gear{display:none;font:inherit;width:auto;margin:0;padding:.4rem .8rem;
+ background:transparent;border:1px solid var(--line);border-radius:9px;color:var(--muted)}
+#gear:hover{color:var(--accent);border-color:var(--accent)}
+#settings{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:20}
+#settings.on{display:block}
+.panel{position:absolute;top:0;right:0;bottom:0;width:min(560px,94vw);background:var(--card);
+ border-left:1px solid var(--line);padding:1.3rem 1.4rem;overflow:auto;display:flex;flex-direction:column}
+.panel h2{font-family:Fraunces,Georgia,serif;font-weight:600;margin:0 0 .2rem;font-size:1.3rem}
+.panel textarea{flex:1;min-height:320px;font-family:ui-monospace,Menlo,monospace;font-size:.8rem;
+ line-height:1.5;width:100%;padding:.7rem;border:1px solid var(--line);border-radius:9px;
+ background:var(--bg);color:inherit;resize:vertical;margin:.8rem 0}
+.panel .btns{display:flex;gap:.6rem}
+.panel .btns button{margin:0;width:auto;padding:.55rem 1rem}
+.panel .ghost{background:transparent;border:1px solid var(--line);color:var(--ink)}
+#saveMsg{font-size:.85rem;margin:.5rem 0 0}
 </style></head><body><div class="wrap">
-<h1>🎬 Slide<em>Stream</em></h1>
+<div class="head"><h1>🎬 Slide<em>Stream</em></h1>
+<button id="gear" title="Providers &amp; settings">⚙ Settings</button></div>
 <p class="tag">Slides in, narrated video out — in your voice, or a friendly mascot's.</p>
+<div id="settings"><div class="panel">
+<h2>Settings</h2>
+<p class="muted" id="setPath">Edits your ~/.slidestream.yaml — providers, servers, keys.</p>
+<textarea id="setYaml" spellcheck="false" placeholder="# empty — click 'Insert template' to start"></textarea>
+<div class="btns">
+ <button id="setSave">Save</button>
+ <button id="setTpl" class="ghost">Insert template</button>
+ <button id="setClose" class="ghost">Close</button>
+</div>
+<p id="saveMsg"></p>
+</div></div>
 <div id="demo" class="banner">
  <strong>Hosted demo</strong> — <span id="limits">limited</span>, nothing stored.
  Want unlimited renders, your own AI providers and full privacy?
@@ -463,6 +576,7 @@ fetch("/api/config").then(r=>r.json()).then(c=>{
  if(c.demo){$("demo").style.display="block";
   if(c.limits)$("limits").textContent=
    c.limits.max_slides+" slides per deck, "+c.limits.jobs_per_hour+" videos per hour";}
+ if(c.local)$("gear").style.display="inline-block";
  (c.avatars||[]).forEach(a=>{const o=document.createElement("option");o.value=a;o.textContent=a;$("avatarName").appendChild(o)});
  if((c.accents||[]).length){$("accentRow").style.display="block";$("accent").style.display="block";
   c.accents.forEach(a=>{const o=document.createElement("option");o.value=a;o.textContent=a;$("accent").appendChild(o)})}
@@ -494,6 +608,23 @@ $("go").onclick=async()=>{
  let res=await fetch("/api/jobs",{method:"POST",headers:auth(),body:fd});
  if(!res.ok){$("status").textContent="Error: "+(await res.text());return}
  const {job_id}=await res.json();poll(job_id)};
+// Settings (desktop/local mode): edit ~/.slidestream.yaml in-app.
+let setTemplate="";
+$("gear").onclick=async()=>{
+ const r=await fetch("/api/settings");if(!r.ok)return;
+ const s=await r.json();setTemplate=s.template||"";
+ $("setYaml").value=s.yaml||"";$("setPath").textContent="Edits "+s.path+" — providers, servers, keys.";
+ $("saveMsg").textContent="";$("settings").classList.add("on")};
+$("setClose").onclick=()=>$("settings").classList.remove("on");
+$("settings").onclick=e=>{if(e.target.id==="settings")$("settings").classList.remove("on")};
+$("setTpl").onclick=()=>{if(!$("setYaml").value.trim()||confirm("Replace current contents with the template?"))
+ $("setYaml").value=setTemplate};
+$("setSave").onclick=async()=>{
+ const r=await fetch("/api/settings",{method:"PUT",headers:{"Content-Type":"application/json"},
+  body:JSON.stringify({yaml:$("setYaml").value})});
+ const j=await r.json().catch(()=>({}));
+ $("saveMsg").textContent=r.ok?"✓ Saved — applies to your next video.":("✗ "+(j.detail||"Save failed"));
+ $("saveMsg").style.color=r.ok?"":"var(--accent)"};
 async function poll(id){
  const r=await fetch("/api/jobs/"+id,{headers:auth()});const j=await r.json();
  $("status").innerHTML='<span class="badge">'+j.status+'</span>';

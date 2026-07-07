@@ -1,0 +1,66 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<title>SlideStream</title>
+<style>
+:root{--bg:#faf9f6;--ink:#1e1b18;--muted:#6b645c;--line:#e7e2d9;--accent:#c2410c;
+ --accent-soft:#c2410c14;--card:#ffffff}
+@media (prefers-color-scheme: dark){
+ :root{--bg:#17150f;--ink:#f2ede3;--muted:#a89f92;--line:#2c2820;--card:#201d16;
+  --accent-soft:#c2410c26}}
+*{box-sizing:border-box}
+body{margin:0;font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--ink);
+ min-height:100vh;display:grid;place-items:center}
+.box{max-width:480px;width:92vw;text-align:center}
+h1{font-family:Georgia,serif;font-weight:600;font-size:2rem;margin:0 0 .3rem}
+h1 em{font-style:italic;color:var(--accent)}
+#msg{color:var(--muted);min-height:3em;margin:.4rem 0 1rem}
+.spin{width:34px;height:34px;margin:1.2rem auto;border:3px solid var(--line);
+ border-top-color:var(--accent);border-radius:50%;animation:r 0.9s linear infinite}
+@keyframes r{to{transform:rotate(360deg)}}
+#log{display:none;text-align:left;font-family:ui-monospace,Menlo,monospace;font-size:.7rem;
+ color:var(--muted);background:var(--card);border:1px solid var(--line);border-radius:10px;
+ padding:.6rem .8rem;max-height:150px;overflow:auto;white-space:pre-wrap;margin-top:1rem}
+button{display:none;font:inherit;font-weight:600;padding:.65rem 1.3rem;margin:.3rem;
+ border:0;border-radius:10px;background:var(--accent);color:#fff;cursor:pointer}
+button.ghost{background:transparent;border:1.5px solid var(--line);color:var(--ink)}
+#note{display:none;font-size:.85rem;color:var(--muted);background:var(--accent-soft);
+ border-radius:10px;padding:.6rem .9rem;margin-top:1rem}
+</style></head><body>
+<div class="box">
+ <h1>🎬 Slide<em>Stream</em></h1>
+ <div class="spin" id="spin"></div>
+ <p id="msg">Starting…</p>
+ <button id="installUv">Install uv (Python manager)</button>
+ <button id="retry" class="ghost">Retry</button>
+ <div id="note"></div>
+ <div id="log"></div>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+const T=window.__TAURI__;
+const show=(el,on)=>{el.style.display=on?(el.tagName==="BUTTON"?"inline-block":"block"):"none"};
+function reset(){show($("installUv"),false);show($("retry"),false);show($("spin"),true)}
+T.event.listen("status",e=>{
+ const {phase,msg,url}=e.payload;
+ if(phase==="note"){$("note").textContent=msg;show($("note"),true);return}
+ $("msg").textContent=msg;
+ if(phase==="ready"){location.replace(url);return}
+ if(phase==="uv-missing"){
+  $("msg").textContent="SlideStream needs the free 'uv' Python manager (a one-time, ~15MB install).";
+  show($("spin"),false);show($("installUv"),true);show($("retry"),true)}
+ if(phase==="error"){show($("spin"),false);show($("retry"),true);show($("log"),true)}
+});
+T.event.listen("log",e=>{
+ const l=$("log");l.textContent=(l.textContent+"\n"+e.payload).split("\n").slice(-200).join("\n");
+ l.scrollTop=l.scrollHeight;
+ if($("msg").textContent.startsWith("Preparing"))show(l,true);
+});
+$("installUv").onclick=async()=>{
+ reset();$("msg").textContent="Installing uv…";
+ try{await T.core.invoke("install_uv");$("msg").textContent="uv installed — starting…";
+  T.core.invoke("bootstrap")}
+ catch(err){$("msg").textContent="Install failed: "+err+" — install manually from docs.astral.sh/uv";
+  show($("spin"),false);show($("retry"),true)}};
+$("retry").onclick=()=>{reset();T.core.invoke("bootstrap")};
+T.core.invoke("bootstrap");
+</script></body></html>

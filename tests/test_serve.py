@@ -267,3 +267,51 @@ def test_demo_rate_window_expires():
 def test_non_demo_still_requires_token(base_config):
     client = TestClient(serve.create_app(config=base_config, token="secret", demo=False))
     assert client.get("/api/jobs/whatever").status_code == 401
+
+
+# --- local (desktop) mode ------------------------------------------------------
+
+
+def test_local_mode_open_and_no_demo_limits(base_config):
+    """Desktop mode: no token, demo limits off even if both are set."""
+    client = TestClient(serve.create_app(
+        config=base_config, token="secret", demo=True, local=True))
+    cfg = client.get("/api/config").json()
+    assert cfg["local"] is True
+    assert cfg["auth_required"] is False
+    assert cfg["demo"] is False
+    assert client.get("/api/jobs/whatever").status_code == 404  # open
+
+
+def test_settings_hidden_unless_local(base_config):
+    client = TestClient(serve.create_app(config=base_config, local=False))
+    assert client.get("/api/settings").status_code == 404
+
+
+def test_settings_roundtrip(base_config, tmp_path, monkeypatch):
+    from pathlib import Path as _P
+
+    monkeypatch.setattr(_P, "home", staticmethod(lambda: tmp_path))
+    client = TestClient(serve.create_app(config=base_config, local=True))
+
+    s = client.get("/api/settings").json()
+    assert s["yaml"] == ""  # nothing saved yet
+    assert "providers:" in s["template"]
+
+    ok = client.put("/api/settings",
+                    json={"yaml": "providers:\n  tts:\n    provider: gtts\n"})
+    assert ok.status_code == 200
+    assert (tmp_path / ".slidestream.yaml").exists()
+    assert "gtts" in client.get("/api/settings").json()["yaml"]
+
+
+def test_settings_rejects_bad_yaml(base_config, tmp_path, monkeypatch):
+    from pathlib import Path as _P
+
+    monkeypatch.setattr(_P, "home", staticmethod(lambda: tmp_path))
+    client = TestClient(serve.create_app(config=base_config, local=True))
+    bad = client.put("/api/settings", json={"yaml": "a: [unclosed"})
+    assert bad.status_code == 400
+    assert not (tmp_path / ".slidestream.yaml").exists()
+    notdict = client.put("/api/settings", json={"yaml": "- just\n- a list\n"})
+    assert notdict.status_code == 400
