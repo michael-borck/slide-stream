@@ -38,8 +38,8 @@
           images, and optionally fronted by a talking-head avatar of you.
         </p>
         <div class="cta-row">
-          <a class="btn btn-primary" href="https://app.slidestream.eduserver.au">▶ Try the hosted app</a>
-          <a class="btn btn-ghost" href="#get">Install locally</a>
+          <a class="btn btn-primary" id="dlHero" href="#get">⬇ Download the app</a>
+          <a class="btn btn-ghost" href="https://app.slidestream.eduserver.au">▶ Try it in the browser</a>
         </div>
         <p class="privacy-tag">Open source. Self-host it, run it on your laptop, or bring your own AI keys — your decks and your voice stay yours.</p>
       </div>
@@ -87,11 +87,14 @@
     <div class="container get-grid">
       <div>
         <h2>Get it</h2>
-        <p class="sub">Free and open source. Install locally for full control over the LLM, image, and video generation — or try the hosted app first.</p>
+        <p class="sub">Free and open source. The desktop app runs everything on your machine — no account, no terminal.<span id="dlVer"></span></p>
         <div class="cta-row">
-          <a class="btn btn-primary" href="https://app.slidestream.eduserver.au">▶ Try the hosted app</a>
-          <a class="btn btn-ghost" href="https://github.com/michael-borck/slide-stream">View source</a>
+          <a class="btn btn-primary" id="dlMain" href="https://github.com/michael-borck/slide-stream/releases/latest">⬇ Download the desktop app</a>
+          <a class="btn btn-ghost" href="https://app.slidestream.eduserver.au">▶ Try the hosted app</a>
         </div>
+        <p class="dl-others" id="dlOthers"></p>
+        <p class="muted-note">macOS: the build is unsigned for now — first launch via right-click → Open.
+        Prefer the terminal? The pip install is on the right. <a href="https://github.com/michael-borck/slide-stream">View source</a>.</p>
       </div>
       <div class="install-card">
         <div class="install-head">Install with pip</div>
@@ -114,5 +117,48 @@ slide-stream serve</code></pre>
       <a href="https://github.com/michael-borck/slide-stream">github.com/michael-borck/slide-stream</a>
     </div>
   </footer>
+
+  <script>
+  // Platform-detected desktop downloads. Assets have stable names, so the
+  // links work without any API call; the version label is a nice-to-have.
+  (function () {
+    var REPO = "michael-borck/slide-stream";
+    var DL = function (n) { return "https://github.com/" + REPO + "/releases/latest/download/" + n; };
+    var ALL = {
+      "mac-arm":  { label: "macOS (Apple Silicon)", file: "SlideStream-macos-apple-silicon.dmg" },
+      "mac-intel":{ label: "macOS (Intel)",         file: "SlideStream-macos-intel.dmg" },
+      "windows":  { label: "Windows",               file: "SlideStream-windows-setup.exe" },
+      "linux":    { label: "Linux (AppImage)",      file: "SlideStream-linux.AppImage" },
+      "linux-deb":{ label: "Linux (.deb)",          file: "SlideStream-linux.deb" }
+    };
+    function detect() {
+      var ua = (navigator.userAgent || "").toLowerCase();
+      if (ua.indexOf("mac") !== -1) return "mac-arm";     // arch not detectable; default modern
+      if (ua.indexOf("win") !== -1) return "windows";
+      if (ua.indexOf("linux") !== -1) return "linux";
+      return null;
+    }
+    var main = document.getElementById("dlMain"), hero = document.getElementById("dlHero");
+    var pick = detect();
+    if (pick) {
+      main.href = DL(ALL[pick].file);
+      main.textContent = "⬇ Download for " + ALL[pick].label;
+      hero.href = main.href;
+      hero.textContent = "⬇ Download for " + ALL[pick].label.replace(" (Apple Silicon)", "");
+    }
+    var others = Object.keys(ALL).filter(function (k) { return k !== pick; })
+      .map(function (k) { return '<a href="' + DL(ALL[k].file) + '">' + ALL[k].label + "</a>"; });
+    document.getElementById("dlOthers").innerHTML = "Also for: " + others.join(" · ");
+    // Optional version badge (graceful if rate-limited).
+    fetch("https://api.github.com/repos/" + REPO + "/releases/latest")
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (rel) {
+        if (rel && rel.tag_name) {
+          document.getElementById("dlVer").textContent =
+            " Latest: " + rel.tag_name.replace("desktop-", "") + ".";
+        }
+      }).catch(function () {});
+  })();
+  </script>
 </body>
 </html>

@@ -51,26 +51,34 @@ jobs:
         working-directory: desktop
         run: npx --yes @tauri-apps/cli@^2 build
 
+      # Stable asset names so the landing page can deep-link
+      # .../releases/latest/download/<name> without version numbers or API calls.
+      - name: Rename bundles to stable names
+        shell: bash
+        working-directory: desktop/src-tauri/target/release/bundle
+        run: |
+          mkdir -p out
+          case "${{ matrix.name }}" in
+            macos-arm64) mv dmg/*.dmg out/SlideStream-macos-apple-silicon.dmg ;;
+            macos-x64)   mv dmg/*.dmg out/SlideStream-macos-intel.dmg ;;
+            linux-x64)
+              mv appimage/*.AppImage out/SlideStream-linux.AppImage
+              mv deb/*.deb out/SlideStream-linux.deb
+              mv rpm/*.rpm out/SlideStream-linux.rpm ;;
+            windows-x64)
+              mv nsis/*-setup.exe out/SlideStream-windows-setup.exe
+              mv msi/*.msi out/SlideStream-windows.msi || true ;;
+          esac
+          ls -la out/
+
       - uses: actions/upload-artifact@v4
         with:
           name: slidestream-desktop-${{ matrix.name }}
-          path: |
-            desktop/src-tauri/target/release/bundle/dmg/*.dmg
-            desktop/src-tauri/target/release/bundle/appimage/*.AppImage
-            desktop/src-tauri/target/release/bundle/deb/*.deb
-            desktop/src-tauri/target/release/bundle/rpm/*.rpm
-            desktop/src-tauri/target/release/bundle/nsis/*.exe
-            desktop/src-tauri/target/release/bundle/msi/*.msi
+          path: desktop/src-tauri/target/release/bundle/out/*
           if-no-files-found: warn
 
       - name: Attach to release (tag builds)
         if: startsWith(github.ref, 'refs/tags/desktop-v')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            desktop/src-tauri/target/release/bundle/dmg/*.dmg
-            desktop/src-tauri/target/release/bundle/appimage/*.AppImage
-            desktop/src-tauri/target/release/bundle/deb/*.deb
-            desktop/src-tauri/target/release/bundle/rpm/*.rpm
-            desktop/src-tauri/target/release/bundle/nsis/*.exe
-            desktop/src-tauri/target/release/bundle/msi/*.msi
+          files: desktop/src-tauri/target/release/bundle/out/*

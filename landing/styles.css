@@ -87,3 +87,9 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em;back
 /* footer */
 .footer{border-top:1px solid var(--line);padding:2rem 0}
 .footer-inner{display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;color:var(--muted);font-size:.9rem}
+
+/* desktop download links */
+.dl-others{font-size:.9rem;color:var(--muted);margin:.9rem 0 0}
+.dl-others a{color:var(--accent-2);margin-right:.15rem}
+.muted-note{font-size:.85rem;color:var(--muted);margin-top:.7rem;max-width:46ch}
+#dlVer{color:var(--accent);font-weight:600}

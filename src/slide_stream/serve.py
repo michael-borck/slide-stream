@@ -523,9 +523,9 @@ footer a:hover{color:var(--accent)}
 <div id="demo" class="banner">
  <strong>Hosted demo</strong> — <span id="limits">limited</span>, nothing stored.
  Want unlimited renders, your own AI providers and full privacy?
+ <a id="dlBanner" href="https://github.com/michael-borck/slide-stream/releases/latest">⬇ Get the desktop app</a> &middot;
  <code>pip install slide-stream</code> &middot;
- <a href="https://slidestream.eduserver.au">learn more</a> &middot;
- <a href="https://github.com/michael-borck/slide-stream">GitHub</a>
+ <a href="https://slidestream.eduserver.au">learn more</a>
 </div>
 <div class="paths">
  <div><span>Minimal</span>Just a slide deck → narrated video with a stock voice.</div>
@@ -562,12 +562,20 @@ Off: the presenter appears as a still image in the corner.</p>
 </div>
 <footer>
  <a href="https://slidestream.eduserver.au">About</a>
+ <a id="dlFoot" href="https://github.com/michael-borck/slide-stream/releases/latest">Desktop app</a>
  <a href="https://pypi.org/project/slide-stream/">pip install slide-stream</a>
  <a href="https://github.com/michael-borck/slide-stream">GitHub</a>
 </footer>
 </div>
 <script>
 const $=id=>document.getElementById(id);
+// Platform-detected desktop download (stable release asset names).
+(()=>{const ua=(navigator.userAgent||"").toLowerCase();
+ const f=ua.includes("mac")?"SlideStream-macos-apple-silicon.dmg":
+   ua.includes("win")?"SlideStream-windows-setup.exe":
+   ua.includes("linux")?"SlideStream-linux.AppImage":null;
+ if(f){const u="https://github.com/michael-borck/slide-stream/releases/latest/download/"+f;
+  $("dlBanner").href=u;$("dlFoot").href=u}})();
 $("token").value=localStorage.getItem("ss_token")||"";
 $("token").oninput=e=>localStorage.setItem("ss_token",e.target.value);
 // Bootstrap: show the token field only if required, and the demo banner if on.
