@@ -891,6 +891,13 @@ def serve(
     no_browser: Annotated[
         bool, typer.Option("--no-browser", help="Do not auto-open a browser.")
     ] = False,
+    demo: Annotated[
+        bool,
+        typer.Option(
+            "--demo",
+            help="Show a 'hosted demo — install locally for full control' banner (or SLIDESTREAM_DEMO).",
+        ),
+    ] = False,
 ) -> None:
     """Launch the web UI: upload a deck + voice + photo, render, download."""
     try:
@@ -917,7 +924,10 @@ def serve(
         resolved_token = secrets.token_urlsafe(24)
         console.print(f"🔑 Generated access token: [bold yellow]{resolved_token}[/bold yellow]")
 
-    app_instance = create_app(config=config, token=resolved_token, max_workers=workers)
+    app_instance = create_app(
+        config=config, token=resolved_token, max_workers=workers,
+        demo=demo or None,
+    )
 
     url = f"http://{host}:{port}"
     console.print(

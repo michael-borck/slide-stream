@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SlideStream — turn slides into narrated videos in your own voice</title>
+  <meta name="description" content="Turn Markdown or PowerPoint decks into narrated video presentations — in your own cloned voice, with AI images and an optional talking-head avatar. Self-hosted or run locally. Open source.">
+  <meta property="og:title" content="SlideStream — slides to narrated video, in your voice">
+  <meta property="og:description" content="Markdown/PowerPoint → narrated video, with your cloned voice, AI images, and a talking-head avatar. Open source, self-hostable.">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <nav class="nav">
+    <div class="container nav-inner">
+      <a class="wordmark" href="#top">🎬 SlideStream</a>
+      <div class="nav-links">
+        <a href="#how">How it works</a>
+        <a href="#features">Features</a>
+        <a href="#get">Get it</a>
+        <a href="https://github.com/michael-borck/slide-stream">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <header class="hero" id="top">
+    <div class="container hero-grid">
+      <div class="hero-copy">
+        <p class="eyebrow">Narrate · Illustrate · Present</p>
+        <h1>Turn your slides into a video <em>that speaks in your voice.</em></h1>
+        <p class="sub">
+          SlideStream turns a Markdown or PowerPoint deck into a narrated video
+          presentation — written as real spoken narration (not read-aloud
+          bullets), voiced by a clone of your own voice, illustrated with AI
+          images, and optionally fronted by a talking-head avatar of you.
+        </p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="https://app.slidestream.eduserver.au">▶ Try the hosted app</a>
+          <a class="btn btn-ghost" href="#get">Install locally</a>
+        </div>
+        <p class="privacy-tag">Open source. Self-host it, run it on your laptop, or bring your own AI keys — your decks and your voice stay yours.</p>
+      </div>
+
+      <div class="hero-visual" aria-hidden="true">
+        <div class="slide-card">
+          <div class="slide-bar"><span></span><span></span><span></span></div>
+          <div class="slide-body">
+            <h3>Photosynthesis</h3>
+            <ul><li>Light reactions</li><li>The Calvin cycle</li><li>Chloroplasts</li></ul>
+            <div class="avatar-bubble">🗣️</div>
+          </div>
+          <div class="waveform"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <section class="section" id="how">
+    <div class="container">
+      <h2>From deck to video in one step</h2>
+      <div class="steps">
+        <div class="step"><div class="step-n">1</div><h3>Bring a deck</h3><p>A Markdown file or a PowerPoint <code>.pptx</code> — speaker notes become the narration source when present.</p></div>
+        <div class="step"><div class="step-n">2</div><h3>Add your voice &amp; face</h3><p>A 20-second voice sample and a photo (both optional). Used once per render, never stored.</p></div>
+        <div class="step"><div class="step-n">3</div><h3>Get a video</h3><p>Presenter-style narration, AI or stock images per slide, and an optional talking head — rendered to MP4.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section alt" id="features">
+    <div class="container">
+      <h2>Everything is swappable — and yours</h2>
+      <div class="feature-grid">
+        <div class="feature"><h3>🗣️ Your own voice</h3><p>Self-hosted Chatterbox voice cloning from a short sample, offline Kokoro, or bring your own ElevenLabs / OpenAI key. Never reads the slides aloud — it writes real narration.</p></div>
+        <div class="feature"><h3>🖼️ Images that fit</h3><p>Local folder, self-hosted SwarmUI/FLUX, Google Imagen, DALL·E, or free Pexels/Unsplash stock — matched to each slide.</p></div>
+        <div class="feature"><h3>🎭 Talking-head avatar</h3><p>A lip-synced head of you in the corner — self-hosted SadTalker, or hosted D-ID. Optional, off by default.</p></div>
+        <div class="feature"><h3>📝 Narration you control</h3><p>Presenter-style from notes or content, a length target per slide, verbatim speaker notes, or your own exact script.</p></div>
+        <div class="feature"><h3>🔒 Privacy-first</h3><p>Runs on your machine or your server. Voice samples and photos are used per-render and deleted — no biometric data at rest.</p></div>
+        <div class="feature"><h3>🧩 Two outputs, one deck</h3><p><code>enrich</code> a deck with images (Markdown or PPTX), or <code>create</code> the full narrated video.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="get">
+    <div class="container get-grid">
+      <div>
+        <h2>Get it</h2>
+        <p class="sub">Free and open source. Install locally for full control over the LLM, image, and video generation — or try the hosted app first.</p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="https://app.slidestream.eduserver.au">▶ Try the hosted app</a>
+          <a class="btn btn-ghost" href="https://github.com/michael-borck/slide-stream">View source</a>
+        </div>
+      </div>
+      <div class="install-card">
+        <div class="install-head">Install with pip</div>
+        <pre><code># everything, including the web UI
+pip install "slide-stream[all-ai,serve]"
+
+# make a video
+slide-stream create deck.md out.mp4
+
+# or open the web UI in your browser
+slide-stream serve</code></pre>
+        <p class="muted">Python 3.10+ and FFmpeg required. Provider keys are optional and read from your environment.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <div class="container footer-inner">
+      <span>🎬 SlideStream — open source, MIT licensed.</span>
+      <a href="https://github.com/michael-borck/slide-stream">github.com/michael-borck/slide-stream</a>
+    </div>
+  </footer>
+</body>
+</html>

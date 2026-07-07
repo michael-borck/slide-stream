@@ -1,0 +1,27 @@
+# Server-side layered config for the hosted web UI. Copy to slidestream.yaml.
+# Secrets come from the environment via ${VAR} expansion (see .env), so this
+# file holds no plaintext keys and is safe to commit if you wish.
+#
+# This is a modest "free/demo" stack. For a full instance, point tts/images/
+# avatar at your own servers (Chatterbox, SwarmUI, ComfyUI/SadTalker).
+
+providers:
+  llm:
+    provider: gemini          # writes the narration (or 'none' to skip)
+    model: gemini-2.0-flash
+
+  tts:
+    provider: gtts            # free, no key; swap for chatterbox/elevenlabs
+
+  images:
+    provider: gemini          # Imagen, ~$0.02/image; or pexels (free) / text
+    model: imagen-4.0-fast-generate-001
+    fallback: text
+
+  avatar:
+    provider: none            # demo off; set sadtalker/d-id + a photo per job
+
+settings:
+  strict: false
+  narration:
+    target_seconds: 45

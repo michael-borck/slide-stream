@@ -32,15 +32,27 @@ def test_index_served(base_config):
 
 def test_api_requires_token(base_config):
     client = TestClient(serve.create_app(config=base_config, token="secret"))
-    assert client.get("/api/config").status_code == 401
-    ok = client.get("/api/config", headers={"Authorization": "Bearer secret"})
-    assert ok.status_code == 200
-    assert ok.json()["auth_required"] is True
+    # /api/config is public so the UI can bootstrap...
+    cfg = client.get("/api/config")
+    assert cfg.status_code == 200
+    assert cfg.json()["auth_required"] is True
+    # ...but protected endpoints reject a missing token.
+    assert client.get("/api/jobs/whatever").status_code == 401
+    ok = client.get("/api/jobs/whatever", headers={"Authorization": "Bearer secret"})
+    assert ok.status_code == 404  # authorized, just no such job
 
 
 def test_no_token_means_open(base_config):
     client = TestClient(serve.create_app(config=base_config, token=None))
     assert client.get("/api/config").status_code == 200
+    assert client.get("/api/jobs/whatever").status_code == 404
+
+
+def test_demo_flag_exposed(base_config):
+    client = TestClient(serve.create_app(config=base_config, token=None, demo=True))
+    assert client.get("/api/config").json()["demo"] is True
+    off = TestClient(serve.create_app(config=base_config, token=None, demo=False))
+    assert off.get("/api/config").json()["demo"] is False
 
 
 def test_create_job_rejects_bad_deck_type(base_config):

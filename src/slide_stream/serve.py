@@ -123,8 +123,13 @@ def _run_job(job: Job, deck_path: Path, job_yaml: Path,
 
 
 def create_app(config: dict[str, Any] | None = None, token: str | None = None,
-               max_workers: int = 1):
-    """Build the FastAPI app. Requires the ``[serve]`` extra."""
+               max_workers: int = 1, demo: bool | None = None):
+    """Build the FastAPI app. Requires the ``[serve]`` extra.
+
+    ``demo`` (or the ``SLIDESTREAM_DEMO`` env var) shows a banner in the UI
+    inviting users to install locally for full control over the LLM, image,
+    and video generation — used on the hosted VPS instance.
+    """
     try:
         from fastapi import (
             Depends,
@@ -144,6 +149,9 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
 
     base_config = config if config is not None else load_config()
     auth_token = token or os.getenv("SLIDESTREAM_TOKEN") or ""
+    if demo is None:
+        demo = os.getenv("SLIDESTREAM_DEMO", "").lower() in ("1", "true", "yes")
+    demo_mode = bool(demo)
     executor = ThreadPoolExecutor(max_workers=max_workers)
     jobs_root = Path(tempfile.mkdtemp(prefix="slidestream_serve_"))
 
@@ -161,8 +169,9 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
         return INDEX_HTML
 
     @app.get("/api/config")
-    def api_config(_: None = Depends(require_token)) -> dict[str, Any]:
-        return {"auth_required": bool(auth_token)}
+    def api_config() -> dict[str, Any]:
+        # Public so the UI can bootstrap (whether a token is needed, demo mode).
+        return {"auth_required": bool(auth_token), "demo": demo_mode}
 
     @app.post("/api/jobs")
     async def create_job(
@@ -245,7 +254,13 @@ INDEX_HTML = """<!doctype html>
  .badge{display:inline-block;padding:.1rem .5rem;border-radius:99px;font-size:.8rem}
 </style></head><body>
 <h1>🎬 SlideStream</h1>
-<div id="tokrow"><label>Access token</label>
+<div id="demo" style="display:none;background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:.7rem 1rem;margin-bottom:1rem;font-size:.9rem">
+ <strong>Hosted demo.</strong> This instance runs a limited set of free tools.
+ For full control over voice, image and video generation, install locally:
+ <code>pip install slide-stream</code> — see
+ <a href="https://github.com/michael-borck/slide-stream">the docs</a>.
+</div>
+<div id="tokrow" style="display:none"><label>Access token</label>
  <input id="token" type="password" placeholder="paste your token">
  <p class="muted">Stored in this browser only.</p></div>
 <label>Deck (.md or .pptx)</label><input id="deck" type="file" accept=".md,.pptx">
@@ -260,6 +275,10 @@ INDEX_HTML = """<!doctype html>
 const $=id=>document.getElementById(id);
 $("token").value=localStorage.getItem("ss_token")||"";
 $("token").oninput=e=>localStorage.setItem("ss_token",e.target.value);
+// Bootstrap: show the token field only if required, and the demo banner if on.
+fetch("/api/config").then(r=>r.json()).then(c=>{
+ if(c.auth_required)$("tokrow").style.display="block";
+ if(c.demo)$("demo").style.display="block";}).catch(()=>{});
 // IndexedDB: remember voice + photo across jobs (client-side only).
 let db;const openDB=()=>new Promise(r=>{const q=indexedDB.open("ss",1);
  q.onupgradeneeded=()=>q.result.createObjectStore("files");q.onsuccess=()=>{db=q.result;r()}});

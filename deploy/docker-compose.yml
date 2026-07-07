@@ -1,0 +1,30 @@
+# SlideStream self-hosted web UI.
+#   cp .env.example .env   # then edit
+#   docker compose up -d --build
+# Put your server config (voice server URL, image provider, API keys) in
+# ./slidestream.yaml — it is mounted read-only as the layered config.
+
+services:
+  slidestream:
+    build:
+      context: .
+      args:
+        # Pin a released version for reproducible images (optional).
+        SLIDE_STREAM_VERSION: ${SLIDE_STREAM_VERSION:-}
+    image: slidestream:latest
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      # Required on a public host: gate access with a token.
+      SLIDESTREAM_TOKEN: ${SLIDESTREAM_TOKEN:?set a token in .env}
+      # Show the "install locally for full control" banner on the hosted demo.
+      SLIDESTREAM_DEMO: ${SLIDESTREAM_DEMO:-true}
+      # Provider keys for the "free"/hosted tools (see .env.example).
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      CHATTERBOX_TOKEN: ${CHATTERBOX_TOKEN:-}
+    volumes:
+      # Layered server config: providers, servers, keys via ${VAR} expansion.
+      - ./slidestream.yaml:/home/app/.slidestream.yaml:ro
