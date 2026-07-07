@@ -25,8 +25,30 @@ BUILTIN_AVATARS: dict[str, tuple[str, str]] = {
 }
 
 
+# Mouth region per built-in avatar for the 'puppet' mouth-flap, as fractions of
+# the image: (center_x, center_y, width, max_open_height). Eyeballed from the
+# generated art — nudge these numbers if a mascot's flap is off. Override for a
+# custom image with providers.avatar.mouth: [cx, cy, w, h].
+MOUTH_BOXES: dict[str, tuple[float, float, float, float]] = {
+    "teddy": (0.50, 0.63, 0.12, 0.06),
+    "panda": (0.50, 0.60, 0.11, 0.06),
+    "koala": (0.50, 0.60, 0.11, 0.06),
+    "robot": (0.50, 0.62, 0.14, 0.06),
+    "wizard": (0.50, 0.60, 0.10, 0.05),
+    "owl": (0.50, 0.33, 0.07, 0.06),
+}
+DEFAULT_MOUTH_BOX = (0.50, 0.60, 0.12, 0.06)
+
+
 def avatar_names() -> list[str]:
     return list(BUILTIN_AVATARS)
+
+
+def mouth_box(source: str | None) -> tuple[float, float, float, float]:
+    """Mouth region (fractions) for a built-in avatar name, else the default."""
+    if source and source.lower() in MOUTH_BOXES:
+        return MOUTH_BOXES[source.lower()]
+    return DEFAULT_MOUTH_BOX
 
 
 def resolve_avatar(source: str | None) -> str | None:

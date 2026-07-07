@@ -434,6 +434,7 @@ Thanks for watching.
 **Avatar Providers (talking-head overlay):**
 - `none`: Disabled (default)
 - `static`: A **static mascot image** in the corner (no lip-sync, no GPU). Use a built-in character (`slide-stream avatars` lists `teddy`, `panda`, `koala`, `robot`, `wizard`, `owl`) or your own image: `providers.avatar: {provider: static, source: teddy}`. A fun character + a chosen accent dodges the "looks like me but isn't quite me" uncanny valley. **Note:** SadTalker/Wav2Lip only lip-sync *photorealistic human* faces — stylized/animal mascots stay static here, or lip-sync via a stylized-capable engine like `d-id`.
+- `puppet`: A **cartoon mouth-flap** on a mascot, driven by the audio's loudness (open when loud, closed on silence) — no AI, no face detection, no GPU. The reliable *animated* tier for mascots: `providers.avatar: {provider: puppet, source: teddy}`. For a custom image, set the mouth region with `mouth: [cx, cy, w, h]` (fractions).
 - `precomputed`: Composites `head_1.mp4`, `head_2.mp4`, … from `providers.avatar.assets_dir` as a circle in a corner of each slide — no GPU or service needed.
 - `sadtalker`: Self-hosted talking head from a **photo**, via [SadTalker](https://github.com/OpenTalker/SadTalker) as a ComfyUI node — `providers.avatar.base_url` + `source_image`.
 - `wav2lip`: Self-hosted talking head from a short **video**, via Wav2Lip as a ComfyUI node — `base_url` + `source_video` (a ~15s idle clip; loops under longer narration). More natural than a photo; see [docs/wav2lip-api.md](docs/wav2lip-api.md).

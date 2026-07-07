@@ -121,3 +121,70 @@ def test_avatars_command_lists_characters():
     assert result.exit_code == 0
     assert "teddy" in result.output
     assert "Owl professor" in result.output
+
+
+# --- puppet mouth-flap provider ----------------------------------------------
+
+
+def _noise_wav(path, seconds=0.6):
+    import random
+    import wave
+
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        frames = bytearray()
+        for _ in range(int(16000 * seconds)):
+            frames += int(random.randint(-12000, 12000)).to_bytes(
+                2, "little", signed=True
+            )
+        w.writeframes(bytes(frames))
+
+
+def test_mouth_box_builtin_and_default():
+    from slide_stream.avatars import DEFAULT_MOUTH_BOX, mouth_box
+
+    assert mouth_box("teddy") != DEFAULT_MOUTH_BOX
+    assert mouth_box("/some/custom.png") == DEFAULT_MOUTH_BOX
+    assert mouth_box(None) == DEFAULT_MOUTH_BOX
+
+
+def test_factory_registers_puppet():
+    assert "puppet" in ProviderFactory.list_avatar_providers()
+
+
+def test_puppet_available_with_builtin():
+    cfg = _cfg()
+    cfg["providers"]["avatar"] = {"provider": "puppet", "source": "teddy"}
+    provider = ProviderFactory.create_avatar_provider(cfg)
+    assert provider.name == "puppet"
+    assert provider.is_available() is True
+
+
+def test_puppet_renders_a_flap_clip(tmp_path):
+    """Real render: the mascot + audio become a mouth-flap video."""
+    from slide_stream.providers.avatar import PuppetAvatarProvider
+
+    audio = tmp_path / "a.wav"
+    _noise_wav(audio)
+    cfg = _cfg()
+    cfg["providers"]["avatar"] = {"provider": "puppet", "source": "teddy"}
+    out = tmp_path / "head.mp4"
+    result = PuppetAvatarProvider(cfg).generate(str(audio), str(out), 1)
+    assert result == str(out)
+    from moviepy import VideoFileClip
+
+    with VideoFileClip(str(out)) as clip:
+        assert clip.duration > 0
+
+
+def test_puppet_custom_mouth_override(tmp_path):
+    from slide_stream.providers.avatar import PuppetAvatarProvider
+
+    cfg = _cfg()
+    cfg["providers"]["avatar"] = {
+        "provider": "puppet", "source": "teddy", "mouth": [0.4, 0.7, 0.2, 0.08],
+    }
+    box = PuppetAvatarProvider(cfg)._mouth_box("teddy")
+    assert box == (0.4, 0.7, 0.2, 0.08)

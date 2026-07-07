@@ -74,6 +74,37 @@ at the cost of realism.
   POST image/video + audio → get the clip back — same shape as the `swarmui`
   image provider. This is the preferred path over standing up MuseTalk.
 
+## Mascot / non-human avatars (the fun defaults)
+
+SadTalker and Wav2Lip fit a **human** 3D face model, so they reject stylized or
+animal mascots (a live test rejected both a teddy *and* a human-*shaped* Pixar
+wizard: "can not detect the landmark from source image"). Options, easiest first:
+
+- **`static`** (implemented) — the mascot image held in the corner. Reliable,
+  free, no motion.
+- **`puppet`** (mouth-flap, implemented) — a non-AI cartoon mouth driven by the
+  audio's loudness envelope (open when loud, closed on silence). Works on any
+  mascot given a mouth region; deliberately crude, which reads as charming for
+  a cartoon (South Park / Clutch Cargo / Character Animator style). The
+  reliable *animated* tier for mascots — no GPU, no face detection.
+- **LivePortrait** (self-hosted, open source, runs on a 2060, ComfyUI node) —
+  handles stylized faces, but is **video-driven**: it transfers motion from a
+  driving video onto the mascot, so it does not sync to audio on its own.
+  Newer audio-driven + stylized-friendly options: **EchoMimic**, **AniPortrait**.
+- **D-ID / Hedra** — hosted, handle stylized faces, audio-driven, paid.
+
+### Idea parked for later: two-stage audio-synced mascot
+
+To get a mascot whose lips truly match the narration, self-hosted:
+1. Audio-drive a **real human** face (SadTalker/Wav2Lip) synced to the slide's
+   narration — this works, because it's a human face.
+2. Use that talking-head clip as the **driving video** for **LivePortrait**,
+   transferring its motion onto the mascot image.
+
+Result: a mascot lip-synced to the narration, at the correct length, fully
+self-hosted. More pipeline than a corner mascot usually warrants (hence
+`puppet` first), but worth exploring if a lip-accurate mascot becomes a goal.
+
 ## Current status
 
 - `none`, `precomputed`, and `d-id` avatar providers are implemented.

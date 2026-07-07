@@ -11,7 +11,7 @@ from typing import Any
 import requests
 from rich.console import Console
 
-from ..avatars import resolve_avatar
+from ..avatars import mouth_box, resolve_avatar
 from .base import AvatarProvider
 
 # Proven SadTalker ComfyUI workflow (see docs referenced by sadtalker-api.md):
@@ -167,6 +167,109 @@ class StaticAvatarProvider(AvatarProvider):
             return output_path
         except Exception as e:
             err_console.print(f"  - Static avatar error: {e}")
+            return None
+
+
+class PuppetAvatarProvider(AvatarProvider):
+    """Non-AI cartoon mouth-flap: opens the mouth with the audio loudness.
+
+    Draws a simple mouth over the avatar's mouth region, its openness driven by
+    the audio's loudness envelope (closed on silence). No AI, no face detection,
+    no GPU — works on any mascot. Deliberately crude, which reads as charming
+    for a cartoon (South Park / Character Animator amplitude lip-sync).
+
+    Config: ``provider: puppet``, ``source: teddy`` (built-in name or image
+    path). For a custom image, set the mouth region with
+    ``mouth: [cx, cy, w, h]`` (fractions of the image).
+    """
+
+    FPS = 12
+
+    @property
+    def name(self) -> str:
+        return "puppet"
+
+    def _source(self) -> str | None:
+        cfg = self.config.get("providers", {}).get("avatar", {})
+        return cfg.get("source") or cfg.get("source_image")
+
+    def is_available(self) -> bool:
+        resolved = resolve_avatar(self._source())
+        return bool(resolved and Path(resolved).is_file())
+
+    def _mouth_box(self, source: str | None) -> tuple[float, float, float, float]:
+        cfg = self.config.get("providers", {}).get("avatar", {})
+        override = cfg.get("mouth")
+        if isinstance(override, list | tuple) and len(override) == 4:
+            return tuple(float(v) for v in override)  # type: ignore[return-value]
+        return mouth_box(source)
+
+    def generate(
+        self, audio_path: str, output_path: str, slide_num: int
+    ) -> str | None:
+        try:
+            import wave
+
+            import numpy as np
+            from moviepy import ImageSequenceClip
+            from PIL import Image, ImageDraw
+
+            raw_source = self._source()
+            source = resolve_avatar(raw_source)
+            if not source or not Path(source).is_file():
+                raise FileNotFoundError(f"avatar source not found: {source}")
+
+            # Read the audio as 16kHz mono PCM (ffmpeg handles mp3/wav/...),
+            # then compute a per-frame RMS loudness envelope.
+            wav_path, is_temp = _to_16k_wav(audio_path)
+            try:
+                with wave.open(wav_path, "rb") as wf:
+                    sr = wf.getframerate()
+                    raw = wf.readframes(wf.getnframes())
+            finally:
+                if is_temp:
+                    Path(wav_path).unlink(missing_ok=True)
+            samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+            duration = len(samples) / sr if sr else 0.0
+
+            n_frames = max(1, int(duration * self.FPS))
+            step = sr / self.FPS
+            env = np.zeros(n_frames)
+            for i in range(n_frames):
+                seg = samples[int(i * step): int((i + 1) * step)]
+                if len(seg):
+                    env[i] = float(np.sqrt(np.mean(seg**2)))
+            peak = float(env.max()) or 1.0
+            openness = np.clip(env / (peak * 0.5), 0.0, 1.0)
+            openness[env < peak * 0.10] = 0.0  # rest the mouth during silence
+
+            base = Image.open(source).convert("RGB")
+            width, height = base.size
+            cx, cy, mw, mh = self._mouth_box(raw_source)
+
+            frames = []
+            for value in openness:
+                frame = base.copy()
+                if value > 0.12:
+                    draw = ImageDraw.Draw(frame)
+                    hh = value * mh * height
+                    ww = mw * width
+                    draw.ellipse(
+                        [cx * width - ww / 2, cy * height - hh / 2,
+                         cx * width + ww / 2, cy * height + hh / 2],
+                        fill=(45, 18, 22),
+                    )
+                frames.append(np.asarray(frame))
+
+            clip = ImageSequenceClip(frames, fps=self.FPS)
+            clip.write_videofile(
+                output_path, fps=self.FPS, codec="libx264", logger=None
+            )
+            clip.close()
+            console.print(f"  - Puppet mouth-flap: {Path(source).name}")
+            return output_path
+        except Exception as e:
+            err_console.print(f"  - Puppet avatar error: {e}")
             return None
 
 
