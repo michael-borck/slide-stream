@@ -21,9 +21,13 @@ services:
       SLIDESTREAM_TOKEN: ${SLIDESTREAM_TOKEN:?set a token in .env}
       # Show the "install locally for full control" banner on the hosted demo.
       SLIDESTREAM_DEMO: ${SLIDESTREAM_DEMO:-true}
-      # Cloud provider keys (see .env.example).
+      # Cloud provider keys (see .env.example). The LLM that writes the
+      # narration reads its key from here: openai->OPENAI_API_KEY,
+      # gemini->GEMINI_API_KEY, claude->ANTHROPIC_API_KEY, groq->GROQ_API_KEY.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
       ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
       # Bearer tokens for your self-hosted services (referenced as ${VAR} in
       # slidestream.yaml). Only set the ones your config actually uses.
