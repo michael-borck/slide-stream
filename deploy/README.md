@@ -6,17 +6,32 @@ video.
 
 ## Quick start
 
+The image is prebuilt and hosted on GitHub's registry, so you only need three
+files — no repo clone, no local build:
+
 ```bash
-cd deploy
-cp .env.example .env                 # set SLIDESTREAM_TOKEN, keys, demo flag
-cp slidestream.yaml.example slidestream.yaml   # choose your providers
-docker compose up -d --build
+mkdir slidestream-demo && cd slidestream-demo
+base=https://raw.githubusercontent.com/michael-borck/slide-stream/main/deploy
+curl -O "$base/docker-compose.yml"
+curl -o .env             "$base/.env.example"          # set token, demo flag, keys
+curl -o slidestream.yaml "$base/slidestream.yaml.example"   # choose providers
+
+docker compose up -d          # pulls ghcr.io/michael-borck/slide-stream
 ```
 
 The UI is now on `http://<host>:8080`. Put a reverse proxy (nginx / Caddy /
 Nginx Proxy Manager) in front for TLS on `app.slidestream.eduserver.au`.
-
 `restart: unless-stopped` keeps it running across crashes and reboots.
+
+### Updating
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+Pin a specific version with `SLIDESTREAM_IMAGE_TAG=2.7.0` in `.env`. To build
+locally instead of pulling, see the commented `build:` block in
+`docker-compose.yml` (you'll also need the `Dockerfile`).
 
 ## How config works
 

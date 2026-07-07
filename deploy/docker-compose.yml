@@ -6,12 +6,13 @@
 
 services:
   slidestream:
-    build:
-      context: .
-      args:
-        # Pin a released version for reproducible images (optional).
-        SLIDE_STREAM_VERSION: ${SLIDE_STREAM_VERSION:-}
-    image: slidestream:latest
+    # Prebuilt image from GitHub's registry (built by .github/workflows/docker.yml).
+    # Pin a version with SLIDESTREAM_IMAGE_TAG in .env (e.g. 2.7.0).
+    image: ghcr.io/michael-borck/slide-stream:${SLIDESTREAM_IMAGE_TAG:-latest}
+    # To build locally instead of pulling, comment out `image:` above and use:
+    #   build:
+    #     context: .
+    #     args: {SLIDE_STREAM_VERSION: "${SLIDE_STREAM_VERSION:-}"}
     restart: unless-stopped
     ports:
       - "${PORT:-8080}:8080"

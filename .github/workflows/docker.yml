@@ -1,0 +1,58 @@
+name: Build and publish Docker image
+
+# Builds the self-host image (deploy/Dockerfile) and pushes it to the GitHub
+# Container Registry (ghcr.io/michael-borck/slide-stream), so the VPS can pull
+# a prebuilt image instead of building. Run this after publishing a release to
+# PyPI (pass the version), or it rebuilds `latest` when the Dockerfile changes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "slide-stream version to bake in (blank = latest on PyPI)"
+        required: false
+        default: ""
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/Dockerfile'
+      - '.github/workflows/docker.yml'
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: meta
+        run: |
+          V="${{ inputs.version }}"
+          if [ -n "$V" ]; then
+            echo "tags=${IMAGE}:latest,${IMAGE}:${V}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tags=${IMAGE}:latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: deploy
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            SLIDE_STREAM_VERSION=${{ inputs.version }}
