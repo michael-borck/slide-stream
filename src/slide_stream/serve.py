@@ -562,20 +562,24 @@ Off: the presenter appears as a still image in the corner.</p>
 </div>
 <footer>
  <a href="https://slidestream.eduserver.au">About</a>
- <a id="dlFoot" href="https://github.com/michael-borck/slide-stream/releases/latest">Desktop app</a>
+ <span style="color:var(--muted)">Desktop app:
+  <a href="https://github.com/michael-borck/slide-stream/releases/latest/download/SlideStream-macos-apple-silicon.dmg">macOS</a> ·
+  <a href="https://github.com/michael-borck/slide-stream/releases/latest/download/SlideStream-macos-intel.dmg">macOS Intel</a> ·
+  <a href="https://github.com/michael-borck/slide-stream/releases/latest/download/SlideStream-windows-setup.exe">Windows</a> ·
+  <a href="https://github.com/michael-borck/slide-stream/releases/latest/download/SlideStream-linux.AppImage">Linux</a></span>
  <a href="https://pypi.org/project/slide-stream/">pip install slide-stream</a>
  <a href="https://github.com/michael-borck/slide-stream">GitHub</a>
 </footer>
 </div>
 <script>
 const $=id=>document.getElementById(id);
-// Platform-detected desktop download (stable release asset names).
+// Platform-detected desktop download in the demo banner (stable asset names).
 (()=>{const ua=(navigator.userAgent||"").toLowerCase();
  const f=ua.includes("mac")?"SlideStream-macos-apple-silicon.dmg":
    ua.includes("win")?"SlideStream-windows-setup.exe":
    ua.includes("linux")?"SlideStream-linux.AppImage":null;
- if(f){const u="https://github.com/michael-borck/slide-stream/releases/latest/download/"+f;
-  $("dlBanner").href=u;$("dlFoot").href=u}})();
+ if(f)$("dlBanner").href=
+  "https://github.com/michael-borck/slide-stream/releases/latest/download/"+f})();
 $("token").value=localStorage.getItem("ss_token")||"";
 $("token").oninput=e=>localStorage.setItem("ss_token",e.target.value);
 // Bootstrap: show the token field only if required, and the demo banner if on.

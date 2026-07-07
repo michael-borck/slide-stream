@@ -138,13 +138,14 @@ slide-stream serve</code></pre>
       if (ua.indexOf("linux") !== -1) return "linux";
       return null;
     }
+    // The hero button scrolls to #get (all platforms listed there) rather
+    // than downloading blind; only the Get-it button deep-links the installer.
     var main = document.getElementById("dlMain"), hero = document.getElementById("dlHero");
     var pick = detect();
     if (pick) {
       main.href = DL(ALL[pick].file);
       main.textContent = "⬇ Download for " + ALL[pick].label;
-      hero.href = main.href;
-      hero.textContent = "⬇ Download for " + ALL[pick].label.replace(" (Apple Silicon)", "");
+      hero.textContent = "⬇ Download for " + ALL[pick].label.replace(" (Apple Silicon)", "") + " — and more";
     }
     var others = Object.keys(ALL).filter(function (k) { return k !== pick; })
       .map(function (k) { return '<a href="' + DL(ALL[k].file) + '">' + ALL[k].label + "</a>"; });
