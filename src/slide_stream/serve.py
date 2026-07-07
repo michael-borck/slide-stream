@@ -381,6 +381,17 @@ button:active{transform:translateY(1px)}
 .banner a{color:var(--accent);font-weight:600;text-decoration:none}
 .banner code{font-family:ui-monospace,Menlo,monospace;font-size:.88em;
  background:rgba(120,120,120,.14);padding:.08em .4em;border-radius:5px}
+.paths{display:grid;gap:.45rem;margin:0 0 1.3rem;font-size:.88rem;color:var(--muted)}
+.paths div{display:flex;gap:.6rem;align-items:baseline}
+.paths span{flex:none;font-weight:600;font-size:.72rem;text-transform:uppercase;
+ letter-spacing:.08em;color:var(--accent);min-width:6.5em}
+.req{font-size:.72rem;font-weight:600;color:var(--accent);background:var(--accent-soft);
+ padding:.1rem .5rem;border-radius:99px;vertical-align:middle}
+details{margin-top:1.3rem;border-top:1px solid var(--line);padding-top:1rem}
+details summary{cursor:pointer;font-weight:600;font-size:.95rem;color:var(--muted);list-style:none}
+details summary::before{content:"▸ ";color:var(--accent)}
+details[open] summary::before{content:"▾ "}
+details summary:hover{color:var(--ink)}
 #status{margin:1rem 0 .4rem;font-weight:500}
 #status a{color:var(--accent);font-weight:600}
 .badge{display:inline-block;padding:.12rem .65rem;border-radius:99px;font-size:.8rem;
@@ -403,18 +414,26 @@ footer a:hover{color:var(--accent)}
  <a href="https://slidestream.eduserver.au">learn more</a> &middot;
  <a href="https://github.com/michael-borck/slide-stream">GitHub</a>
 </div>
+<div class="paths">
+ <div><span>Minimal</span>Just a slide deck → narrated video with a stock voice.</div>
+ <div><span>Your voice</span>Add a 10–30s voice sample → narration in your voice.</div>
+ <div><span>Presenter</span>Pick a mascot, or add your photo/video → a talking head in the corner.</div>
+</div>
 <div class="card">
 <div id="tokrow" style="display:none"><label>Access token</label>
  <input id="token" type="password" placeholder="paste your token">
  <p class="muted">Stored in this browser only.</p></div>
-<label>Slide deck <span style="font-weight:400;color:var(--muted)">(.md or .pptx)</span></label>
+<label>Slide deck <span class="req">required</span> <span style="font-weight:400;color:var(--muted)">(.md or .pptx)</span></label>
 <input id="deck" type="file" accept=".md,.pptx">
-<label>Your voice <span style="font-weight:400;color:var(--muted)">(optional — a 10–30s sample clones it for this render only)</span></label>
+<p class="muted">This is all you need — everything below is optional.</p>
+<details id="extras">
+<summary>Voice &amp; presenter <span style="font-weight:400">(optional)</span></summary>
+<label>Your voice <span style="font-weight:400;color:var(--muted)">(a 10–30s sample clones it for this render only)</span></label>
 <input id="voice" type="file" accept="audio/*">
-<label>Presenter</label>
-<select id="avatarName"><option value="">No mascot — use my photo/video below</option></select>
+<label>Mascot presenter</label>
+<select id="avatarName"><option value="">None</option></select>
 <p class="muted">A friendly character presents in the corner — or upload yourself below.</p>
-<label>Your photo or short video <span style="font-weight:400;color:var(--muted)">(optional, front-facing)</span></label>
+<label>Your photo or short video <span style="font-weight:400;color:var(--muted)">(front-facing)</span></label>
 <input id="photo" type="file" accept="image/*,video/*">
 <p class="muted" id="remembered"></p>
 <div class="row"><input id="avatar" type="checkbox" checked><label>Animate the presenter</label></div>
@@ -422,8 +441,9 @@ footer a:hover{color:var(--accent)}
 Off: the presenter appears as a still image in the corner.</p>
 <label id="accentRow" style="display:none">Accent</label>
 <select id="accent" style="display:none"><option value="">— default —</option></select>
-<label>Seconds of narration per slide <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
+<label>Seconds of narration per slide</label>
 <input id="secs" type="number" min="10" placeholder="e.g. 30">
+</details>
 <button id="go">Create video</button>
 <p id="status"></p><div id="log"></div>
 </div>
@@ -455,7 +475,8 @@ const get=k=>new Promise(r=>{const q=db.transaction("files").objectStore("files"
 let savedVoice,savedPhoto;
 openDB().then(async()=>{savedVoice=await get("voice");savedPhoto=await get("photo");
  const b=[];if(savedVoice)b.push("voice: "+savedVoice.name);if(savedPhoto)b.push("photo: "+savedPhoto.name);
- $("remembered").textContent=b.length?("Remembered "+b.join(", ")+" — leave the fields empty to reuse."):""});
+ $("remembered").textContent=b.length?("Remembered "+b.join(", ")+" — leave the fields empty to reuse."):"";
+ if(b.length)$("extras").open=true});
 const auth=()=>({Authorization:"Bearer "+$("token").value});
 async function fileOrSaved(input,key,saved){const f=input.files[0];
  if(f){await put(key,f);return f}return saved||null}
