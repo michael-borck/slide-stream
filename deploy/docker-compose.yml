@@ -20,11 +20,16 @@ services:
       SLIDESTREAM_TOKEN: ${SLIDESTREAM_TOKEN:?set a token in .env}
       # Show the "install locally for full control" banner on the hosted demo.
       SLIDESTREAM_DEMO: ${SLIDESTREAM_DEMO:-true}
-      # Provider keys for the "free"/hosted tools (see .env.example).
+      # Cloud provider keys (see .env.example).
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      # Bearer tokens for your self-hosted services (referenced as ${VAR} in
+      # slidestream.yaml). Only set the ones your config actually uses.
       CHATTERBOX_TOKEN: ${CHATTERBOX_TOKEN:-}
+      VOICEBOX_TOKEN: ${VOICEBOX_TOKEN:-}
+      SWARMUI_TOKEN: ${SWARMUI_TOKEN:-}
+      COMFYUI_TOKEN: ${COMFYUI_TOKEN:-}
     volumes:
       # Layered server config: providers, servers, keys via ${VAR} expansion.
       - ./slidestream.yaml:/home/app/.slidestream.yaml:ro
