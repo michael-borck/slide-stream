@@ -82,6 +82,13 @@ temp_files/
 test_input.md
 output_video.mp4
 test_output.mp4
+test_pptx_output.mp4
+fragment_*TEMP_MPY_wvf_snd.mp4
+
+# Local config (personal, never commit)
+slidestream.yml
+slidestream.yaml
+.slidestream.yaml
 
 # Claude cache
 .claude/

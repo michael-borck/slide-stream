@@ -23,6 +23,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Multimedia :: Video",
     "Topic :: Text Processing :: Markup",
 ]
@@ -35,23 +36,24 @@ dependencies = [
     "requests>=2.31.0",
     "gtts>=2.4.0",
     "moviepy>=2.0.0,<3.0.0",
-    "pillow>=10.1.0",
-    "typing-extensions>=4.8.0",
+    "numpy>=1.26.0",
+    "pillow>=11.3.0",
     "pyyaml>=6.0.0",
     "python-pptx>=1.0.2",
 ]
 
 [project.optional-dependencies]
 # AI providers
-gemini = ["google-generativeai>=0.3.0", "google-genai>=1.0.0"]
-openai = ["openai>=1.0.0"]
-claude = ["anthropic>=0.7.0"]
-groq = ["groq>=0.4.0"]
+gemini = ["google-generativeai>=0.8.0", "google-genai>=1.0.0"]
+openai = ["openai>=1.40.0"]
+claude = ["anthropic>=0.40.0"]
+groq = ["groq>=0.11.0"]
 elevenlabs = ["elevenlabs>=1.5.0,<3.0.0"]
 # Fully offline TTS (Kokoro-82M via ONNX; ~340MB one-time model download)
 local-tts = [
     "kokoro-onnx>=0.4.0",
     "soundfile>=0.12.0",
+    "espeakng-loader>=0.2.4",
 ]
 # Web UI (slide-stream serve): upload a deck + voice + photo, render in the browser
 serve = [
@@ -60,27 +62,14 @@ serve = [
     "python-multipart>=0.0.9",
 ]
 all-ai = [
-    "google-generativeai>=0.3.0",
+    "google-generativeai>=0.8.0",
     "google-genai>=1.0.0",
-    "openai>=1.0.0",
-    "anthropic>=0.7.0",
-    "groq>=0.4.0",
+    "openai>=1.40.0",
+    "anthropic>=0.40.0",
+    "groq>=0.11.0",
     "elevenlabs>=1.5.0,<3.0.0",
 ]
-
-# Development dependencies
-dev = [
-    "pytest>=7.4.0",
-    "pytest-mock>=3.12.0",
-    "pytest-cov>=4.1.0",
-    "ruff>=0.1.0",
-    "basedpyright>=1.8.0",
-    "pre-commit>=3.5.0",
-    "fastapi>=0.110.0",
-    "uvicorn>=0.29.0",
-    "python-multipart>=0.0.9",
-    "httpx>=0.27.0",
-]
+# Development tooling lives in [dependency-groups] dev (uv), not an extra.
 
 [project.scripts]
 slide-stream = "slide_stream.cli:app"
@@ -146,13 +135,12 @@ testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+# Coverage flags live in CI (see .github/workflows/ci.yml), not here:
+# forcing --cov on every local run slows the inner loop and leaves stale
+# coverage.xml/htmlcov artifacts that misrepresent real coverage.
 addopts = [
     "--strict-markers",
     "--strict-config",
-    "--cov=slide_stream",
-    "--cov-report=term-missing",
-    "--cov-report=html",
-    "--cov-report=xml",
 ]
 markers = [
     "integration: marks tests as integration tests",

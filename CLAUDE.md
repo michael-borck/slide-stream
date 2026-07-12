@@ -55,13 +55,27 @@ SlideStream is an AI-powered tool to create video presentations from Markdown an
 ```
 src/slide_stream/
 ├── __init__.py          # Version and package info
-├── cli.py              # Main CLI interface (Typer)
-├── config.py           # Configuration constants
-├── llm.py              # LLM integration (OpenAI, Gemini, Claude, etc.)
-├── media.py            # Image/audio/video processing
-├── parser.py           # Markdown parsing
-└── powerpoint.py       # PowerPoint (.pptx) parsing
+├── __main__.py          # python -m slide_stream entry point
+├── cli.py               # CLI (Typer): create, enrich, scan, init, voices, serve, avatars
+├── config_loader.py     # Layered YAML config (defaults → ~/.slidestream.yaml → project → CLI)
+├── llm.py               # LLM integration (OpenAI, Gemini, Claude, Groq, openai-compatible)
+├── media.py             # Image/audio/video assembly (moviepy)
+├── parser.py            # Markdown parsing (heading-style and ---separator decks)
+├── powerpoint.py        # PowerPoint (.pptx) parsing incl. speaker notes
+├── narration.py         # Narration script (--script) parsing
+├── enrich.py            # `enrich` command: add AI images to a deck
+├── scan.py              # `scan` command: AI-rename image folders
+├── serve.py             # FastAPI web UI (try-before-install demo + desktop backend)
+├── avatars.py           # Built-in avatar mascot registry
+├── avatar_images/       # Bundled avatar JPGs (shipped in the wheel)
+└── providers/
+    ├── base.py          # Provider protocols, strict mode (StrictModeError)
+    ├── factory.py       # Provider selection/registry
+    ├── tts.py           # TTS: gtts, kokoro, chatterbox, voicebox, elevenlabs, openai(-compat)
+    ├── images.py        # Images: text, local, pexels, unsplash, dalle3, gemini, swarmui, ...
+    └── avatar.py        # Avatars: static/puppet, D-ID, ComfyUI/SadTalker
 ```
+Also: `deploy/` (Docker), `desktop/` (Tauri app), `landing/` (website), `contrib/voicebox/` (server-side sweep script), `docs/`.
 
 ### Type Safety
 - Project maintains zero basedpyright errors
@@ -73,12 +87,13 @@ src/slide_stream/
 - Comprehensive test coverage for all modules
 - CLI tests use `typer.testing.CliRunner`
 - PowerPoint tests create temporary .pptx files
-- Tests avoid network calls (use `--image-source text`)
+- Tests avoid network calls (default config uses the `text` image provider; TTS is mocked at the provider/gTTS boundary)
 
 ### CLI Design
-- Single main command (no subcommands)
-- Supports both `.md` and `.pptx` input files
-- File type detection by extension
+- Subcommands: `create` (main render), `enrich`, `scan`, `init`, `voices`, `serve`, `avatars`
+- Supports both `.md` and `.pptx` input files (detection by extension)
+- Behavior driven by layered YAML config (`config_loader.py`); CLI flags override config
+- `--strict` must fail (not silently fall back) when a configured provider errors
 - Rich progress bars and error formatting
 
 ## Documentation Structure
@@ -89,10 +104,11 @@ src/slide_stream/
 - **[docs/TYPING_IMPROVEMENTS.md](docs/TYPING_IMPROVEMENTS.md)**: Type improvement roadmap
 - **[tests/fixtures/](tests/fixtures/)**: Test data files
 
-## Version History
+## Version History (milestones)
 
-- **1.0.0**: Initial release with Markdown support
-- **1.1.0**: Added PowerPoint (.pptx) support with speaker notes
+- **1.x**: Markdown support, then PowerPoint (.pptx) with speaker notes
+- **2.x**: Layered YAML config, provider architecture (TTS/images/LLM/avatar), `enrich`/`scan`/`serve` commands, avatars, web UI + Docker deploy, desktop app
+- Current version lives in `pyproject.toml` / `src/slide_stream/__init__.py`; see git tags for the full history
 
 ## Common Tasks
 
@@ -105,14 +121,14 @@ src/slide_stream/
 6. Check type coverage: `basedpyright`
 
 ### Debugging
-- Use `--image-source text` to avoid network calls during testing
-- Check `coverage.xml` for test coverage gaps
+- Set `providers.images.provider: text` (config) to avoid network calls during testing
+- Run coverage explicitly when you need it (`uv run pytest --cov`); don't trust a stale `coverage.xml`
 - Use Rich console for better error formatting
 
 ### Dependencies
-- Core: `typer`, `rich`, `moviepy`, `pillow`, `beautifulsoup4`, `python-pptx`
-- Optional AI providers via extras: `[openai]`, `[gemini]`, `[claude]`, `[groq]`, `[all-ai]`
-- Development: `pytest`, `ruff`, `basedpyright`, `twine`
+- Core: `typer`, `rich`, `moviepy`, `numpy`, `pillow`, `beautifulsoup4`, `python-pptx`, `gtts`, `pyyaml`, `requests`
+- Optional extras: `[openai]`, `[gemini]`, `[claude]`, `[groq]`, `[elevenlabs]`, `[local-tts]`, `[serve]`, `[all-ai]`
+- Development (uv dependency group `dev`): `pytest`, `ruff`, `basedpyright`, `twine`
 
 ## Important Notes
 
