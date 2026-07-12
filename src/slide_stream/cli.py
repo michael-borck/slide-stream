@@ -89,23 +89,20 @@ def _clean_narration(title: str, content: list[Any], notes: str = "") -> str:
     return ". ".join(parts)
 
 
-def _slide_query(
-    title: str, content: list[Any], default_title: str | None
-) -> str:
+def _slide_query(title: str, content: list[Any]) -> str:
     """Choose a meaningful image/search query for a slide.
 
-    Prefers the title, but falls back to the first content line for slides whose
-    title is still the default placeholder (e.g. an untitled 'Slide 3').
+    Prefers the title, but falls back to the first content line for slides
+    whose title is blank (callers blank out placeholder titles such as an
+    untitled 'Slide 3' before calling).
     """
-    if title and default_title is not None and title == default_title:
-        title = ""
     if title.strip():
         return title.strip()
     for item in content:
         text = str(item).strip()
         if text:
             return text
-    return title.strip() or "presentation slide"
+    return "presentation slide"
 
 
 @app.command()
@@ -182,8 +179,8 @@ def create(
         typer.Option(
             "--tts-provider",
             help=(
-                "TTS provider (gtts, kokoro, chatterbox, elevenlabs, openai, "
-                "openai-compatible), overriding the config file."
+                "TTS provider (voicebox, gtts, kokoro, chatterbox, elevenlabs, "
+                "openai, openai-compatible), overriding the config file."
             ),
         ),
     ] = None,
@@ -304,6 +301,9 @@ def create(
     base_temp_dir.mkdir(parents=True, exist_ok=True)
     temp_dir = Path(tempfile.mkdtemp(prefix="slide_stream_", dir=str(base_temp_dir)))
 
+    # Bound before the try so the finally can tear it down even if setup fails.
+    tts_provider = None
+
     try:
         # Initialize providers
         try:
@@ -374,6 +374,7 @@ def create(
         llm_narration_failed = 0
         avatar_failed = 0
         avatar_enabled = avatar_provider.name != "none"
+        strict_mode = config["settings"].get("strict", False)
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -400,12 +401,11 @@ def create(
 
                 # Default narration is clean spoken text (no 'Title:'/'Content:'
                 # labels), used when LLM enhancement is off or fails.
-                default_title = f"Slide {slide_num}" if file_extension == ".pptx" else None
-                effective_title = (
-                    slide["title"]
-                    if default_title is None or slide["title"] != default_title
-                    else ""
-                )
+                # Placeholder titles (an untitled pptx slide gets 'Slide N' and
+                # has_real_title=False from the parser) are never spoken or
+                # searched; markdown slides omit the key (title is real).
+                is_placeholder = not slide.get("has_real_title", True)
+                effective_title = "" if is_placeholder else str(slide["title"])
                 notes = slide.get("notes", "") if file_extension == ".pptx" else ""
                 speech_text = _clean_narration(
                     effective_title, slide.get("content", []), notes
@@ -413,7 +413,7 @@ def create(
 
                 # Meaningful image/search query (falls back past placeholder titles).
                 search_query = _slide_query(
-                    slide["title"], slide.get("content", []), default_title
+                    effective_title, slide.get("content", [])
                 )
 
                 # Verbatim overrides (no LLM): an external script block for
@@ -423,8 +423,14 @@ def create(
                     if script_blocks is not None and i < len(script_blocks)
                     else None
                 )
-                if script_block:
-                    speech_text = script_block
+                if script_block is not None:
+                    # A present-but-blank block means "no scripted text for
+                    # this slide": keep the default narration built above
+                    # instead of invoking the LLM. Blocks stay matched to
+                    # slides by position either way, so a blank block never
+                    # shifts the alignment of later blocks.
+                    if script_block.strip():
+                        speech_text = script_block
                 elif verbatim_notes and str(slide.get("notes", "")).strip():
                     speech_text = str(slide["notes"]).strip()
 
@@ -444,7 +450,7 @@ def create(
                     )
 
                     if source == "image":
-                        if slide["title"] == (default_title or ""):
+                        if not effective_title:
                             err_console.print(
                                 f"  - Warning: slide {slide_num} is image-only "
                                 "with no title; narration is based on the "
@@ -467,6 +473,12 @@ def create(
 
                     if natural_speech:
                         speech_text = natural_speech.strip()
+                    elif strict_mode:
+                        err_console.print(
+                            f"Slide {slide_num}: LLM narration failed and "
+                            "strict mode is enabled. Aborting."
+                        )
+                        raise typer.Exit(code=1)
                     else:
                         llm_narration_failed += 1
 
@@ -487,7 +499,6 @@ def create(
                 fragment_path = temp_dir / f"fragment_{slide_num}.mp4"
 
                 # Generate image, audio, and video
-                strict_mode = config["settings"].get("strict", False)
                 try:
                     image_provider.generate_image(
                         search_query, str(img_path), slide=slide
@@ -495,15 +506,28 @@ def create(
                 except StrictModeError as e:
                     err_console.print(f"Slide {slide_num}: {e}")
                     raise typer.Exit(code=1)
-                audio_file = tts_provider.synthesize(speech_text, str(audio_path))
-                if audio_file is None:
-                    if strict_mode:
-                        err_console.print(
-                            f"Slide {slide_num}: audio generation failed and "
-                            "strict mode is enabled. Aborting."
-                        )
-                        raise typer.Exit(code=1)
-                    audio_failed += 1
+                if not speech_text.strip():
+                    # Nothing to say (e.g. an empty slide or a blank script
+                    # block): render the slide silently rather than sending
+                    # empty text to the TTS provider, and don't report it as
+                    # a provider failure (even in strict mode).
+                    err_console.print(
+                        f"  - Warning: slide {slide_num} has no narratable "
+                        "text; rendering it without audio."
+                    )
+                    audio_file = None
+                else:
+                    audio_file = tts_provider.synthesize(
+                        speech_text, str(audio_path)
+                    )
+                    if audio_file is None:
+                        if strict_mode:
+                            err_console.print(
+                                f"Slide {slide_num}: audio generation failed and "
+                                "strict mode is enabled. Aborting."
+                            )
+                            raise typer.Exit(code=1)
+                        audio_failed += 1
 
                 # Talking-head overlay, driven by the slide's narration audio.
                 head_path = None
@@ -521,6 +545,11 @@ def create(
                             )
                             raise typer.Exit(code=1)
                         avatar_failed += 1
+                elif avatar_enabled:
+                    # No narration audio to drive lip-sync, so no avatar
+                    # either; count it so the summary reflects every
+                    # headless slide.
+                    avatar_failed += 1
 
                 fragment_file = create_video_fragment(
                     str(img_path),
@@ -555,13 +584,27 @@ def create(
             summary += "  [dim](output is incomplete)[/dim]"
         console.print(summary)
 
+        # Surface silent voice degradation: some TTS providers fall back to
+        # gTTS per-slide on errors, which would otherwise produce a
+        # mixed-voice video that looks like a total success.
+        fallback_count = getattr(tts_provider, "fallback_count", 0)
+        if fallback_count:
+            console.print(
+                f"[bold yellow]⚠ {fallback_count} slide(s) fell back to the "
+                "default gTTS voice due to provider errors.[/bold yellow]"
+            )
+
         # Combine video fragments
         console.print("\n[bold]2. Combining Video Fragments...[/bold]")
         if video_fragments:
             clips = []
             final_clip = None
             try:
-                clips = [VideoFileClip(f) for f in video_fragments]
+                # Open clips one at a time so an unreadable fragment doesn't
+                # leak the readers already opened before it (the finally
+                # below closes everything appended so far).
+                for fragment in video_fragments:
+                    clips.append(VideoFileClip(fragment))
                 final_clip = concatenate_videoclips(clips)
 
                 video_settings = config["settings"]["video"]
@@ -596,6 +639,11 @@ def create(
             raise typer.Exit(code=1)
 
     finally:
+        # Release server-side resources (e.g. an ephemeral Voicebox voice clone)
+        # on every exit path, including Ctrl-C, before touching local files.
+        if tts_provider is not None:
+            tts_provider.close()
+
         # Always remove our unique temp directory on every exit path (success or
         # failure) when cleanup is enabled, so error paths never leak
         # slide_stream_* directories on disk.
@@ -741,12 +789,22 @@ def scan(
     from .scan import apply_renames, build_rename_records, write_scan_report
 
     try:
-        records = build_rename_records(folder, provider, model)
+        records, failed = build_rename_records(folder, provider, model)
     except (ImportError, ValueError) as e:
         err_console.print(f"Vision provider error: {e}")
         raise typer.Exit(code=1)
 
+    if failed:
+        err_console.print(
+            f"⚠️  {len(failed)} image(s) could not be described and were "
+            "left untouched: " + ", ".join(p.name for p in failed)
+        )
     if not records:
+        if failed:
+            err_console.print(
+                "All image descriptions failed; no files were renamed."
+            )
+            raise typer.Exit(code=1)
         console.print("No images found in the folder.")
         return
 
@@ -904,7 +962,7 @@ def serve(
         import uvicorn
 
         from .serve import create_app
-    except (ImportError, RuntimeError):
+    except ImportError:  # includes ModuleNotFoundError
         err_console.print(
             'The web UI needs extra packages. Install with: pip install "slide-stream[serve]"'
         )

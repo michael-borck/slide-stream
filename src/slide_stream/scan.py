@@ -45,30 +45,45 @@ def slugify(text: str) -> str:
 
 def build_rename_records(
     folder: Path, provider: str, model: str | None = None
-) -> list[RenameRecord]:
-    """Describe each image and propose a keyword-slug filename."""
+) -> tuple[list[RenameRecord], list[Path]]:
+    """Describe each image and propose a keyword-slug filename.
+
+    Returns the proposed renames plus the images whose description failed.
+    Failed images are skipped entirely — renaming them to a slug of their own
+    filename would mangle names without adding any keywords.
+    """
     client = get_llm_client(provider)
     images = sorted(
         p for p in folder.iterdir()
         if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
     )
     records: list[RenameRecord] = []
+    failed: list[Path] = []
     for img in images:
         media_type = _MIME.get(img.suffix.lower(), "image/png")
         description = query_llm_with_image(
             client, provider, DESCRIBE_PROMPT, img.read_bytes(),
             media_type, console, model,
         )
-        slug = slugify(description or img.stem)
+        if not description:
+            failed.append(img)
+            continue
+        slug = slugify(description)
         records.append(RenameRecord(original=img, new_name=f"{slug}{img.suffix.lower()}"))
-    return records
+    return records, failed
 
 
 def apply_renames(
     records: list[RenameRecord], dry_run: bool = False
 ) -> list[tuple[Path, Path]]:
-    """Rename files, disambiguating collisions with a numeric suffix."""
+    """Rename files, disambiguating collisions with a numeric suffix.
+
+    Collisions are resolved against the *planned* filesystem state — names
+    taken by earlier renames plus names vacated by them — not just the live
+    one, so a dry-run preview always matches what ``--apply`` would do.
+    """
     used: set[Path] = set()
+    vacated: set[Path] = set()
     applied: list[tuple[Path, Path]] = []
     for record in records:
         name_path = Path(record.new_name)
@@ -77,22 +92,28 @@ def apply_renames(
 
         new_path = parent / record.new_name
         count = 1
-        while _is_taken(new_path, record.original, used):
+        while _is_taken(new_path, record.original, used, vacated):
             new_path = parent / f"{stem}-{count}{ext}"
             count += 1
 
         used.add(new_path)
-        if not dry_run and record.original != new_path:
-            record.original.rename(new_path)
+        if record.original != new_path:
+            vacated.add(record.original)
+            if not dry_run:
+                record.original.rename(new_path)
         applied.append((record.original, new_path))
     return applied
 
 
-def _is_taken(candidate: Path, original: Path, used: set[Path]) -> bool:
+def _is_taken(
+    candidate: Path, original: Path, used: set[Path], vacated: set[Path]
+) -> bool:
     if candidate in used:
         return True
     if candidate == original:
         return False  # renaming a file to its own name is a harmless no-op
+    if candidate in vacated:
+        return False  # an earlier planned rename frees this name up
     return candidate.exists()
 
 

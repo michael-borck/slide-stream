@@ -23,7 +23,10 @@ def parse_script_file(path: str | Path) -> list[str]:
 
     Blocks are separated by a line containing only three (or more) dashes.
     Each block is used verbatim as the narration for the corresponding slide,
-    in order. Blank blocks are preserved so slide alignment is never shifted.
+    in order. Blank interior blocks are preserved (as empty strings) so slide
+    alignment is never shifted; a single trailing empty block — the result of
+    a trailing separator line — is dropped so it does not count as an extra
+    slide.
     """
     text = Path(path).read_text(encoding="utf-8")
     blocks: list[str] = []
@@ -36,6 +39,8 @@ def parse_script_file(path: str | Path) -> list[str]:
         else:
             current.append(line)
     blocks.append("\n".join(current).strip())
+    if len(blocks) > 1 and not blocks[-1]:
+        blocks.pop()  # trailing separator: not an extra (empty) slide
     return blocks
 
 

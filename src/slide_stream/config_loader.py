@@ -1,5 +1,6 @@
 """Configuration loading and management for Slide Stream."""
 
+import copy
 import os
 from pathlib import Path
 from typing import Any
@@ -30,9 +31,13 @@ DEFAULT_CONFIG = {
             "folder": None     # used by the 'local' provider (enrich/create)
         },
         "tts": {
-            "provider": "gtts",
+            # Voicebox (self-hosted, multi-engine voice cloning) is the default.
+            # It needs a base_url; with none configured, the factory falls back
+            # to free gTTS, so a bare install still works out of the box.
+            "provider": "voicebox",
             "voice": None,
-            "base_url": None  # used by the openai-compatible provider
+            "engine": "kokoro",  # voicebox engine (kokoro|chatterbox|qwen|...)
+            "base_url": None,    # voicebox / chatterbox / openai-compatible server
         },
         "avatar": {
             "provider": "none",       # none|precomputed|d-id|sadtalker|wav2lip|comfyui
@@ -83,15 +88,34 @@ DEFAULT_CONFIG = {
 }
 
 
-def expand_env_vars(value: Any) -> Any:
-    """Recursively expand environment variables in configuration values."""
+def expand_env_vars(value: Any, _path: str = "") -> Any:
+    """Recursively expand environment variables in configuration values.
+
+    A reference to an unset variable expands to "" (backward compatible),
+    but a warning is printed so a typo'd ``${VAR}`` doesn't silently
+    disable auth or drop a setting.
+    """
     if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
         env_var = value[2:-1]
-        return os.getenv(env_var, "")
+        expanded = os.getenv(env_var)
+        if expanded is None:
+            at_key = f" (config key: {_path})" if _path else ""
+            err_console.print(
+                f"⚠️  Environment variable '{env_var}' is not set{at_key}; "
+                "treating the value as empty."
+            )
+            return ""
+        return expanded
     elif isinstance(value, dict):
-        return {k: expand_env_vars(v) for k, v in value.items()}
+        return {
+            k: expand_env_vars(v, f"{_path}.{k}" if _path else str(k))
+            for k, v in value.items()
+        }
     elif isinstance(value, list):
-        return [expand_env_vars(item) for item in value]
+        return [
+            expand_env_vars(item, f"{_path}[{i}]")
+            for i, item in enumerate(value)
+        ]
     return value
 
 
@@ -134,11 +158,17 @@ def _read_config_file(config_file: Path) -> dict[str, Any] | None:
     """Read and parse one YAML config file (None if empty)."""
     try:
         with open(config_file, encoding="utf-8") as f:
-            return yaml.safe_load(f)
+            data = yaml.safe_load(f)
     except yaml.YAMLError as e:
         raise ConfigurationError(f"Invalid YAML in config file: {e}")
     except Exception as e:
         raise ConfigurationError(f"Error reading config file: {e}")
+    if data is not None and not isinstance(data, dict):
+        raise ConfigurationError(
+            f"Config file must be a YAML mapping (key: value pairs), "
+            f"got {type(data).__name__}: {config_file}"
+        )
+    return data
 
 
 def load_config(config_path: str | None = None) -> dict[str, Any]:
@@ -152,8 +182,6 @@ def load_config(config_path: str | None = None) -> dict[str, Any]:
     So a personal home config can hold your TTS server and API keys once, and
     each project's config only needs its deck-specific overrides.
     """
-    import copy
-
     config = copy.deepcopy(DEFAULT_CONFIG)
 
     # Layer sources: (label, path). Home is always layered underneath; an
@@ -188,17 +216,73 @@ def load_config(config_path: str | None = None) -> dict[str, Any]:
     return config
 
 
-def merge_configs(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    """Deep merge two configuration dictionaries."""
+def _default_block(path: tuple[str, ...]) -> dict[str, Any] | None:
+    """Return the DEFAULT_CONFIG mapping at ``path``, or None if absent."""
+    node: Any = DEFAULT_CONFIG
+    for part in path:
+        if not isinstance(node, dict) or part not in node:
+            return None
+        node = node[part]
+    return node if isinstance(node, dict) else None
+
+
+def merge_configs(
+    base: dict[str, Any],
+    override: dict[str, Any],
+    _path: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """Deep merge two configuration dictionaries.
+
+    Two special cases:
+
+    - A provider block (a mapping with a ``provider`` key, e.g. the blocks
+      under ``providers:``) whose ``provider`` value *changes* in the
+      override does not inherit the lower layer's other keys — a home
+      config's ``voice: rachel`` for elevenlabs must not leak into a
+      project's voicebox block. The block restarts from built-in defaults
+      plus the override's own keys.
+    - A ``None`` override for a key that is a mapping in the base (a user
+      commented out all children of a section) keeps the base mapping
+      instead of clobbering it with None.
+    """
     result = base.copy()
 
     for key, value in override.items():
-        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-            result[key] = merge_configs(result[key], value)
+        base_value = result.get(key)
+        if isinstance(base_value, dict) and value is None:
+            continue  # null section: keep the lower layer / defaults
+        if isinstance(base_value, dict) and isinstance(value, dict):
+            key_path = _path + (key,)
+            if (
+                "provider" in base_value
+                and "provider" in value
+                and value["provider"] != base_value["provider"]
+            ):
+                # Provider changed: drop the old provider's sibling keys.
+                fresh = copy.deepcopy(_default_block(key_path)) or {}
+                # Pin the new provider up front so the recursive merge is a
+                # plain deep merge (no re-triggering of this branch).
+                fresh["provider"] = value["provider"]
+                result[key] = merge_configs(fresh, value, key_path)
+            else:
+                result[key] = merge_configs(base_value, value, key_path)
         else:
             result[key] = value
 
     return result
+
+
+def _as_mapping(value: Any, name: str) -> dict[str, Any]:
+    """Coerce a config section to a mapping: None becomes {}, anything else
+    non-dict is a clean ConfigurationError instead of a raw traceback."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ConfigurationError(
+            f"Config section '{name}' must be a mapping (key: value pairs), "
+            f"got {type(value).__name__}"
+        )
+    return value
 
 
 def validate_config(config: dict[str, Any]) -> None:
@@ -210,7 +294,7 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ConfigurationError(f"Missing required section: {section}")
 
     # Validate providers section
-    providers = config["providers"]
+    providers = _as_mapping(config["providers"], "providers")
     required_providers = ["llm", "images", "tts"]
 
     for provider_type in required_providers:
@@ -218,8 +302,10 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ConfigurationError(f"Missing provider configuration: {provider_type}")
 
     # Validate video settings
-    video_settings = config["settings"]["video"]
-    if not isinstance(video_settings["resolution"], list) or len(video_settings["resolution"]) != 2:
+    settings = _as_mapping(config["settings"], "settings")
+    video_settings = _as_mapping(settings.get("video"), "settings.video")
+    resolution = video_settings.get("resolution")
+    if not isinstance(resolution, list) or len(resolution) != 2:
         raise ConfigurationError("Video resolution must be a list of two integers")
 
 
@@ -262,8 +348,16 @@ providers:
     # self-hosted Voicebox studio (free, multi-engine):
     #   provider: voicebox
     #   base_url: https://voice.example.org
-    #   profile_id: "<id from POST /profiles>"
+    #   profile_id: "<id from POST /profiles>"   # reuse a persistent profile
     #   engine: kokoro      # or chatterbox / qwen / luxtts / tada
+    # ...or clone YOUR voice for one run, then delete it from the server:
+    #   provider: voicebox
+    #   base_url: https://voice.example.org
+    #   voice_sample: ./my_voice.wav        # 10-30s of clean speech
+    #   engine: chatterbox
+    #   # reference_text omitted -> Voicebox transcribes the clip itself.
+    #   # Set it to skip transcription, or transcribe_model to pin Whisper size.
+    #   delete_generations: true   # default; also drop rendered audio server-side
 
   # Talking-head avatar overlay (off by default). 'precomputed' composites
   # ready-made clips named head_1.mp4, head_2.mp4, ... from assets_dir —
@@ -396,4 +490,6 @@ def save_example_config(path: str = "slidestream.yaml") -> None:
     """Save an example configuration file."""
     with open(path, 'w', encoding='utf-8') as f:
         f.write(create_example_config())
+    # Users fill this in with API keys — keep it private to the owner.
+    os.chmod(path, 0o600)
     console.print(f"📁 Created example configuration: {path}")

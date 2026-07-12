@@ -5,6 +5,7 @@
 # pyright: reportArgumentType=false, reportAttributeAccessIssue=false, reportOptionalMemberAccess=false
 
 import tempfile
+import wave
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,25 @@ from pptx import Presentation
 from typer.testing import CliRunner
 
 from slide_stream.cli import app
+
+# Small/fast video settings so the real-encode tests stay quick.
+FAST_VIDEO_CONFIG = (
+    "settings:\n"
+    "  video:\n"
+    "    resolution: [320, 180]\n"
+    "    fps: 8\n"
+    "    default_slide_duration: 1.0\n"
+    "    slide_duration_padding: 0.2\n"
+)
+
+
+def write_silent_wav(filename, seconds=0.3):
+    """A real, decodable audio file (WAV content behind any extension)."""
+    with wave.open(str(filename), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(22050)
+        w.writeframes(b"\x00\x00" * int(22050 * seconds))
 
 
 @pytest.fixture
@@ -103,39 +123,53 @@ def test_cli_create_missing_input(runner):
     assert result.exit_code != 0
 
 
-def test_cli_create_basic(runner, sample_markdown):
-    """Test basic CLI create command."""
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as f:
-        f.write(sample_markdown)
-        f.flush()
+def test_cli_create_basic(runner, sample_markdown, tmp_path, mocker, monkeypatch):
+    """create renders a real video from Markdown, with TTS mocked out."""
+    monkeypatch.chdir(tmp_path)
+    md_file = tmp_path / "slides.md"
+    md_file.write_text(sample_markdown)
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(FAST_VIDEO_CONFIG)
 
-        # Test with new CLI format
-        result = runner.invoke(app, [
-            "create", f.name, "test_output.mp4"
-        ])
+    fake_tts = mocker.MagicMock()
+    fake_tts.save.side_effect = write_silent_wav
+    mocker.patch("gtts.gTTS", return_value=fake_tts)
 
-        # Should not crash during parsing phase
-        assert "Parsing Markdown" in result.stdout or result.exit_code == 0
+    output = tmp_path / "out.mp4"
+    result = runner.invoke(
+        app,
+        ["create", str(md_file), str(output), "--config", str(config_file)],
+    )
 
-        # Clean up
-        Path(f.name).unlink(missing_ok=True)
-        Path("test_output.mp4").unlink(missing_ok=True)
+    assert result.exit_code == 0, result.output
+    assert output.exists()
 
 
-def test_cli_create_powerpoint(runner, sample_powerpoint):
-    """Test CLI create command with PowerPoint file."""
+def test_cli_create_powerpoint(runner, sample_powerpoint, tmp_path, mocker, monkeypatch):
+    """create renders a real video from PowerPoint, with TTS mocked out."""
+    monkeypatch.chdir(tmp_path)
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(FAST_VIDEO_CONFIG)
+
+    fake_tts = mocker.MagicMock()
+    fake_tts.save.side_effect = write_silent_wav
+    mocker.patch("gtts.gTTS", return_value=fake_tts)
+
+    output = tmp_path / "out.mp4"
     try:
-        # Test with PowerPoint file using new CLI format
-        result = runner.invoke(app, [
-            "create", str(sample_powerpoint), "test_pptx_output.mp4"
-        ])
+        result = runner.invoke(
+            app,
+            [
+                "create",
+                str(sample_powerpoint),
+                str(output),
+                "--config",
+                str(config_file),
+            ],
+        )
 
-        # Should not crash during parsing phase
-        assert "Parsing PowerPoint" in result.stdout or result.exit_code == 0
-
-        # Clean up
-        Path("test_pptx_output.mp4").unlink(missing_ok=True)
-
+        assert result.exit_code == 0, result.output
+        assert output.exists()
     finally:
         sample_powerpoint.unlink(missing_ok=True)
 
@@ -195,3 +229,107 @@ def test_cli_strict_aborts_on_unavailable_tts_provider(
     )
     assert result.exit_code == 1
     assert not (tmp_path / "out.mp4").exists()
+
+
+def test_cli_strict_aborts_on_llm_narration_failure(
+    runner, sample_markdown, tmp_path, mocker, monkeypatch
+):
+    """--strict fails fast when LLM narration returns nothing, instead of
+    silently falling back to raw-bullet narration."""
+    # An unconfigured voicebox (the default TTS) quietly maps to gTTS; make
+    # sure a developer's env vars can't turn it into a strict-mode error
+    # before the LLM branch under test is even reached.
+    monkeypatch.delenv("VOICEBOX_BASE_URL", raising=False)
+    monkeypatch.delenv("VOICEBOX_TOKEN", raising=False)
+    monkeypatch.chdir(tmp_path)
+    md_file = tmp_path / "slides.md"
+    md_file.write_text(sample_markdown)
+
+    mocker.patch(
+        "slide_stream.cli.get_llm_client", return_value=mocker.MagicMock()
+    )
+    # query_llm swallows all backend errors into None.
+    mocker.patch("slide_stream.cli.query_llm", return_value=None)
+
+    output = tmp_path / "out.mp4"
+    result = runner.invoke(
+        app,
+        [
+            "create",
+            str(md_file),
+            str(output),
+            "--llm-provider",
+            "claude",
+            "--strict",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "LLM narration failed" in result.output
+    assert not output.exists()
+
+
+def test_cli_scan_skips_images_whose_description_fails(runner, tmp_path, mocker):
+    """A failed vision call must not rename the file to a slug of its own
+    name; the image is skipped and reported instead."""
+    (tmp_path / "a.png").write_bytes(b"img")
+    (tmp_path / "b.png").write_bytes(b"img")
+
+    mocker.patch(
+        "slide_stream.scan.get_llm_client", return_value=mocker.MagicMock()
+    )
+    mocker.patch(
+        "slide_stream.scan.query_llm_with_image",
+        side_effect=["golden retriever in park", None],
+    )
+
+    result = runner.invoke(app, ["scan", str(tmp_path), "--apply"])
+
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "golden-retriever-in-park.png").exists()
+    assert (tmp_path / "b.png").exists()  # untouched, not renamed to "b.png" slug
+    assert "b.png" in result.output
+
+
+def test_cli_scan_exits_nonzero_when_all_descriptions_fail(
+    runner, tmp_path, mocker
+):
+    (tmp_path / "a.png").write_bytes(b"img")
+
+    mocker.patch(
+        "slide_stream.scan.get_llm_client", return_value=mocker.MagicMock()
+    )
+    mocker.patch("slide_stream.scan.query_llm_with_image", return_value=None)
+
+    result = runner.invoke(app, ["scan", str(tmp_path), "--apply"])
+
+    assert result.exit_code == 1
+    assert (tmp_path / "a.png").exists()  # nothing was renamed
+
+
+def test_cli_scan_dry_run_matches_apply(runner, tmp_path, mocker):
+    """Dry-run resolves collisions against the planned renames (names taken
+    and vacated), so its preview matches what --apply actually does."""
+    (tmp_path / "a.png").write_bytes(b"img")
+    (tmp_path / "b.png").write_bytes(b"img")
+
+    mocker.patch(
+        "slide_stream.scan.get_llm_client", return_value=mocker.MagicMock()
+    )
+    # a.png -> zebra.png (vacating "a.png"), b.png -> a.png (the vacated
+    # name). Two invocations (dry-run then apply) consume the side effects.
+    mocker.patch(
+        "slide_stream.scan.query_llm_with_image",
+        side_effect=["zebra", "a", "zebra", "a"],
+    )
+
+    dry = runner.invoke(app, ["scan", str(tmp_path)])
+    assert dry.exit_code == 0, dry.output
+    # Without vacated-name tracking the preview would show "a-1.png".
+    assert "a-1.png" not in dry.output
+
+    applied = runner.invoke(app, ["scan", str(tmp_path), "--apply"])
+    assert applied.exit_code == 0, applied.output
+    assert (tmp_path / "zebra.png").exists()
+    assert (tmp_path / "a.png").exists()  # b.png took the vacated name
+    assert not (tmp_path / "b.png").exists()

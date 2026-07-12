@@ -2,13 +2,14 @@
 
 # python-pptx ships incomplete type stubs; fixture code below builds .pptx
 # files via the runtime API, so suppress the stub-gap diagnostics here.
-# pyright: reportArgumentType=false, reportAttributeAccessIssue=false, reportOptionalMemberAccess=false
+# pyright: reportArgumentType=false, reportAttributeAccessIssue=false, reportOptionalMemberAccess=false, reportPrivateUsage=false
 
 import tempfile
 from pathlib import Path
 
 import pytest
 from pptx import Presentation
+from pptx.util import Inches
 
 from slide_stream.powerpoint import format_powerpoint_content_for_llm, parse_powerpoint
 
@@ -56,6 +57,7 @@ def test_parse_powerpoint_basic():
 
         # Check first slide
         assert slides[0]["title"] == "Introduction to AI"
+        assert slides[0]["has_real_title"] is True
         assert "What is Artificial Intelligence?" in slides[0]["content"]
         assert "Machine Learning basics" in slides[0]["content"]
         assert "Real-world applications" in slides[0]["content"]
@@ -157,6 +159,54 @@ def test_parse_powerpoint_keeps_title_only_slide():
         slides = parse_powerpoint(temp_file)
         assert len(slides) == 1
         assert slides[0]["title"] == "Section Divider"
+        assert slides[0]["has_real_title"] is True
         assert slides[0]["content"] == []
+    finally:
+        temp_file.unlink(missing_ok=True)
+
+
+def test_untitled_slide_flags_placeholder_title():
+    """A slide with content but no title gets the 'Slide N' default and
+    has_real_title=False so downstream code can spot the placeholder."""
+    temp_file = Path(tempfile.mkdtemp()) / "test.pptx"
+    try:
+        prs = Presentation()
+        slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank layout
+        box = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(6), Inches(3))
+        # Multi-line text so the short-title heuristic does not claim it.
+        box.text_frame.text = "Body line one\nBody line two"
+        prs.save(temp_file)
+
+        slides = parse_powerpoint(temp_file)
+        assert len(slides) == 1
+        assert slides[0]["title"] == "Slide 1"
+        assert slides[0]["has_real_title"] is False
+        assert "Body line one" in slides[0]["content"]
+    finally:
+        temp_file.unlink(missing_ok=True)
+
+
+def test_caption_textbox_does_not_steal_title():
+    """A short caption textbox that precedes the title placeholder in shape
+    order must not be picked as the slide title."""
+    temp_file = Path(tempfile.mkdtemp()) / "test.pptx"
+    try:
+        prs = Presentation()
+        slide = prs.slides.add_slide(prs.slide_layouts[5])  # Title Only layout
+        slide.shapes.title.text = "Real Title"
+        box = slide.shapes.add_textbox(Inches(1), Inches(4), Inches(4), Inches(1))
+        box.text_frame.text = "A short caption"
+        # Move the caption before the title placeholder in the shape tree
+        # (children 0-1 are nvGrpSpPr/grpSpPr, shapes start at index 2).
+        sp_tree = slide.shapes._spTree
+        sp_tree.remove(box._element)
+        sp_tree.insert(2, box._element)
+        prs.save(temp_file)
+
+        slides = parse_powerpoint(temp_file)
+        assert len(slides) == 1
+        assert slides[0]["title"] == "Real Title"
+        assert slides[0]["has_real_title"] is True
+        assert "A short caption" in slides[0]["content"]
     finally:
         temp_file.unlink(missing_ok=True)

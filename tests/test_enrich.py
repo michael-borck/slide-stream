@@ -111,6 +111,30 @@ def test_enrich_deck_writes_markdown_and_images(tmp_path):
     assert "Astrophysics" in prompts
 
 
+def test_enrich_output_round_trips_without_image_markdown(tmp_path):
+    """Parsing an enriched deck must not leak `![...](...)` lines into slide
+    content, so create-on-enriched-deck narration never reads image syntax."""
+    from slide_stream.parser import parse_markdown
+
+    make_image(tmp_path / "neurons.png")
+    cfg = config_with_folder(tmp_path)
+    provider = LocalImageProvider(cfg)
+    slides = [
+        {"title": "Neurons", "content": ["Axons", "Dendrites"]},
+        {"title": "Astrophysics", "content": ["Stars"]},
+    ]
+    out = tmp_path / "out"
+
+    enrich_deck(slides, provider, out, "deck")
+    parsed = parse_markdown((out / "deck.md").read_text())
+
+    assert [s["title"] for s in parsed] == ["Neurons", "Astrophysics"]
+    for slide in parsed:
+        assert all("![" not in item for item in slide["content"])
+    assert parsed[0]["content"] == ["Axons", "Dendrites"]
+    assert parsed[1]["content"] == ["Stars"]
+
+
 def test_enrich_deck_writes_pptx(tmp_path):
     make_image(tmp_path / "topic.png")
     cfg = config_with_folder(tmp_path)

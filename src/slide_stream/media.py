@@ -31,46 +31,61 @@ def _build_head_overlay(
     stays the single audio source (sync issues are impossible at composite
     time). The clip is trimmed to the fragment duration, or its last frame is
     frozen to fill it (e.g. through the slide's padding second).
+
+    Returns ``(overlay, source)``: the positioned overlay clip plus the
+    underlying ``VideoFileClip``, which the caller must close — closing a
+    derived or concatenated clip does not release the source's ffmpeg
+    reader. If building the overlay fails, the source is closed here before
+    the exception propagates.
     """
     width, height = frame_size
     size_frac = float(avatar_settings.get("size", 0.28))
     margin = int(avatar_settings.get("margin", 24))
     position = avatar_settings.get("position", "bottom-right")
 
-    head = VideoFileClip(head_video).without_audio()
+    source = VideoFileClip(head_video)
+    try:
+        head = source.without_audio()
 
-    # Center-crop to a square, then scale to the circle diameter.
-    side = min(head.w, head.h)
-    head = head.cropped(
-        x_center=head.w / 2, y_center=head.h / 2, width=side, height=side
-    )
-    diameter = max(1, int(height * size_frac))
-    head = head.resized((diameter, diameter))
-
-    if head.duration > duration:
-        head = head.subclipped(0, duration)
-    elif head.duration < duration:
-        frame_time = max(head.duration - 1.0 / 30.0, 0)
-        pad = head.to_ImageClip(t=frame_time).with_duration(
-            duration - head.duration
+        # Center-crop to a square, then scale to the circle diameter.
+        side = min(head.w, head.h)
+        head = head.cropped(
+            x_center=head.w / 2, y_center=head.h / 2, width=side, height=side
         )
-        head = concatenate_videoclips([head, pad])
+        diameter = max(1, int(height * size_frac))
+        head = head.resized((diameter, diameter))
 
-    # Circular alpha mask drawn with PIL.
-    mask_image = Image.new("L", (diameter, diameter), 0)
-    ImageDraw.Draw(mask_image).ellipse((0, 0, diameter - 1, diameter - 1), fill=255)
-    mask_clip = ImageClip(
-        np.array(mask_image) / 255.0, is_mask=True
-    ).with_duration(duration)
-    head = head.with_mask(mask_clip)
+        if head.duration > duration:
+            head = head.subclipped(0, duration)
+        elif head.duration < duration:
+            frame_time = max(head.duration - 1.0 / 30.0, 0)
+            pad = head.to_ImageClip(t=frame_time).with_duration(
+                duration - head.duration
+            )
+            head = concatenate_videoclips([head, pad])
 
-    positions = {
-        "bottom-right": (width - diameter - margin, height - diameter - margin),
-        "bottom-left": (margin, height - diameter - margin),
-        "top-right": (width - diameter - margin, margin),
-        "top-left": (margin, margin),
-    }
-    return head.with_position(positions.get(position, positions["bottom-right"]))
+        # Circular alpha mask drawn with PIL.
+        mask_image = Image.new("L", (diameter, diameter), 0)
+        ImageDraw.Draw(mask_image).ellipse((0, 0, diameter - 1, diameter - 1), fill=255)
+        mask_clip = ImageClip(
+            np.array(mask_image) / 255.0, is_mask=True
+        ).with_duration(duration)
+        head = head.with_mask(mask_clip)
+
+        positions = {
+            "bottom-right": (width - diameter - margin, height - diameter - margin),
+            "bottom-left": (margin, height - diameter - margin),
+            "top-right": (width - diameter - margin, margin),
+            "top-left": (margin, margin),
+        }
+        overlay = head.with_position(
+            positions.get(position, positions["bottom-right"])
+        )
+        return overlay, source
+    except Exception:
+        # Never leak the ffmpeg reader when a later build step fails.
+        source.close()
+        raise
 
 
 def create_video_fragment(
@@ -90,6 +105,7 @@ def create_video_fragment(
         image_clip = None
         final_clip = None
         head_clip = None
+        head_source = None
         try:
             # Load audio if it exists
             if audio_path and os.path.exists(audio_path):
@@ -123,7 +139,7 @@ def create_video_fragment(
             )
 
             if head_video and os.path.exists(head_video):
-                head_clip = _build_head_overlay(
+                head_clip, head_source = _build_head_overlay(
                     head_video,
                     duration,
                     (width, height),
@@ -163,6 +179,10 @@ def create_video_fragment(
                 image_clip.close()
             if head_clip is not None:
                 head_clip.close()
+            if head_source is not None:
+                # Closing the derived overlay does not release the source
+                # VideoFileClip's ffmpeg reader; close it explicitly.
+                head_source.close()
             if final_clip is not None:
                 final_clip.close()
 

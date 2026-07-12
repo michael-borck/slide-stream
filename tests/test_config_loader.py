@@ -36,6 +36,27 @@ def test_expand_env_vars_missing_var_becomes_empty(monkeypatch):
     assert expand_env_vars("${NOPE}") == ""
 
 
+def test_expand_env_vars_missing_var_warns_on_stderr(monkeypatch, capsys):
+    """A typo'd ${VAR} must not silently become "" — warn, naming the
+    variable and the config key path."""
+    monkeypatch.delenv("CHATTERBOX_TOKEN_TYPO", raising=False)
+    result = expand_env_vars(
+        {"providers": {"tts": {"api_key": "${CHATTERBOX_TOKEN_TYPO}"}}}
+    )
+    assert result == {"providers": {"tts": {"api_key": ""}}}
+    err = capsys.readouterr().err
+    assert "CHATTERBOX_TOKEN_TYPO" in err
+    assert "not set" in err
+    assert "providers.tts.api_key" in err
+    assert "empty" in err
+
+
+def test_expand_env_vars_set_var_does_not_warn(monkeypatch, capsys):
+    monkeypatch.setenv("PRESENT", "value")
+    expand_env_vars({"key": "${PRESENT}"})
+    assert capsys.readouterr().err == ""
+
+
 def test_expand_env_vars_recurses_into_lists_and_dicts(monkeypatch):
     monkeypatch.setenv("A", "1")
     data = {"outer": [{"inner": "${A}"}], "plain": "literal"}
@@ -60,6 +81,52 @@ def test_merge_configs_does_not_mutate_base():
     base = {"a": {"x": 1}}
     merge_configs(base, {"a": {"x": 99}})
     assert base == {"a": {"x": 1}}
+
+
+def test_merge_configs_provider_change_resets_sibling_keys():
+    """Changing a provider must not inherit the old provider's settings
+    (e.g. an elevenlabs voice leaking into a voicebox block)."""
+    from slide_stream.config_loader import DEFAULT_CONFIG
+
+    base = merge_configs(
+        DEFAULT_CONFIG,
+        {"providers": {"tts": {"provider": "elevenlabs", "voice": "rachel"}}},
+    )
+    result = merge_configs(
+        base,
+        {"providers": {"tts": {"provider": "voicebox",
+                               "base_url": "https://voice.example.org"}}},
+    )
+    tts = result["providers"]["tts"]
+    assert tts["provider"] == "voicebox"
+    assert tts["base_url"] == "https://voice.example.org"
+    # The elevenlabs voice does not leak; the block restarts from defaults.
+    assert tts["voice"] is None
+    assert tts["engine"] == "kokoro"
+
+
+def test_merge_configs_same_provider_inherits_sibling_keys():
+    base = {
+        "providers": {
+            "tts": {"provider": "voicebox", "voice": "Michael.wav",
+                    "base_url": None}
+        }
+    }
+    result = merge_configs(
+        base,
+        {"providers": {"tts": {"provider": "voicebox",
+                               "base_url": "https://voice.example.org"}}},
+    )
+    tts = result["providers"]["tts"]
+    assert tts["voice"] == "Michael.wav"
+    assert tts["base_url"] == "https://voice.example.org"
+
+
+def test_merge_configs_null_section_keeps_base():
+    """A commented-out section (YAML null) keeps the lower layer's mapping."""
+    base = {"providers": {"tts": {"provider": "voicebox"}}}
+    result = merge_configs(base, {"providers": None})
+    assert result["providers"]["tts"]["provider"] == "voicebox"
 
 
 # --- validate_config --------------------------------------------------------
@@ -110,7 +177,7 @@ def test_load_config_returns_defaults_when_no_file(monkeypatch, tmp_path):
         "slide_stream.config_loader.find_home_config", lambda: None
     )
     config = load_config()
-    assert config["providers"]["tts"]["provider"] == "gtts"
+    assert config["providers"]["tts"]["provider"] == "voicebox"
     assert config["settings"]["video"]["fps"] == 24
 
 
@@ -144,6 +211,42 @@ def test_load_config_invalid_yaml_raises(tmp_path):
         load_config(str(bad))
 
 
+def test_load_config_null_providers_section_keeps_defaults(tmp_path, monkeypatch):
+    """`providers:` with all children commented out must not crash — the
+    defaults apply instead."""
+    monkeypatch.chdir(tmp_path)
+    cfg = tmp_path / "slidestream.yaml"
+    cfg.write_text("providers:\nsettings:\n  cleanup: false\n")
+    config = load_config(str(cfg))
+    assert config["providers"]["tts"]["provider"] == "voicebox"
+    assert config["settings"]["cleanup"] is False
+
+
+def test_load_config_null_video_section_keeps_defaults(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    cfg = tmp_path / "slidestream.yaml"
+    cfg.write_text("settings:\n  video:\n")
+    config = load_config(str(cfg))
+    assert config["settings"]["video"]["resolution"] == [1920, 1080]
+
+
+def test_load_config_list_root_raises(tmp_path, monkeypatch):
+    """A YAML root that isn't a mapping is a clean error naming the file."""
+    monkeypatch.chdir(tmp_path)
+    cfg = tmp_path / "slidestream.yaml"
+    cfg.write_text("- just\n- a\n- list\n")
+    with pytest.raises(ConfigurationError, match="mapping") as excinfo:
+        load_config(str(cfg))
+    assert "slidestream.yaml" in str(excinfo.value)
+
+
+def test_load_config_string_root_raises(tmp_path):
+    cfg = tmp_path / "oops.yaml"
+    cfg.write_text("just a string\n")
+    with pytest.raises(ConfigurationError, match="mapping"):
+        load_config(str(cfg))
+
+
 # --- find_config_file -------------------------------------------------------
 
 
@@ -171,6 +274,13 @@ def test_save_example_config_writes_file(tmp_path):
     save_example_config(str(out))
     assert out.exists()
     assert "providers" in out.read_text()
+
+
+def test_save_example_config_is_owner_only(tmp_path):
+    """The example config gets filled with API keys — 0600, owner only."""
+    out = tmp_path / "example.yaml"
+    save_example_config(str(out))
+    assert (out.stat().st_mode & 0o777) == 0o600
 
 
 # --- layered config (home + project) ----------------------------------------
@@ -241,6 +351,36 @@ def test_explicit_config_still_layers_over_home(tmp_path, monkeypatch):
     config = load_config(str(explicit))
     assert config["providers"]["tts"]["base_url"] == "https://voice.example.org"
     assert config["providers"]["tts"]["voice"] == "Michael.wav"
+
+
+def test_project_provider_change_drops_home_siblings(tmp_path, monkeypatch):
+    """When the project switches TTS provider, the home layer's
+    provider-specific keys (e.g. an elevenlabs voice) must not leak in."""
+    home = tmp_path / "home.yaml"
+    home.write_text(
+        "providers:\n"
+        "  tts:\n"
+        "    provider: elevenlabs\n"
+        "    voice: rachel\n"
+    )
+    monkeypatch.setattr(
+        "slide_stream.config_loader.find_home_config", lambda: home
+    )
+    project = tmp_path / "proj"
+    project.mkdir()
+    monkeypatch.chdir(project)
+    (project / "slidestream.yaml").write_text(
+        "providers:\n"
+        "  tts:\n"
+        "    provider: voicebox\n"
+        "    base_url: https://voice.example.org\n"
+    )
+
+    config = load_config()
+    tts = config["providers"]["tts"]
+    assert tts["provider"] == "voicebox"
+    assert tts["base_url"] == "https://voice.example.org"
+    assert tts["voice"] is None  # rachel does not leak into voicebox
 
 
 def test_home_config_alone_applies(tmp_path, monkeypatch):

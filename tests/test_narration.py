@@ -209,6 +209,25 @@ def test_parse_script_file_preserves_blank_blocks(tmp_path):
     assert parse_script_file(script) == ["One.", "", "Three."]
 
 
+def test_parse_script_file_trailing_separator_ignored(tmp_path):
+    """A trailing --- must not append a spurious empty final block (which
+    would trigger a bogus slide-count-mismatch warning)."""
+    from slide_stream.narration import parse_script_file
+
+    script = tmp_path / "s.txt"
+    script.write_text("One.\n---\nTwo.\n---\n")
+    assert parse_script_file(script) == ["One.", "Two."]
+
+
+def test_parse_script_file_trailing_separator_keeps_interior_blanks(tmp_path):
+    """Dropping the trailing empty block must not disturb interior blanks."""
+    from slide_stream.narration import parse_script_file
+
+    script = tmp_path / "s.txt"
+    script.write_text("One.\n---\n---\nThree.\n---\n")
+    assert parse_script_file(script) == ["One.", "", "Three."]
+
+
 def test_hyphenated_text_is_not_a_separator(tmp_path):
     """A line with dashes plus other text is content, not a separator."""
     from slide_stream.narration import parse_script_file
@@ -271,7 +290,8 @@ def test_cli_tts_overrides_reach_the_provider(tmp_path, monkeypatch):
 
     # chatterbox with a base_url is 'available'; --strict makes an unreachable
     # server abort at synthesis rather than silently using gtts — proving the
-    # override took effect (default gtts would never reach a server).
+    # override took effect (the default has no base_url, so it never reaches a
+    # server).
     result = runner.invoke(
         app,
         [
