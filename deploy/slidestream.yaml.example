@@ -2,8 +2,9 @@
 # Secrets come from the environment via ${VAR} expansion (see .env), so this
 # file holds no plaintext keys and is safe to commit if you wish.
 #
-# This is a modest "free/demo" stack. For a full instance, point tts/images/
-# avatar at your own servers (Chatterbox, SwarmUI, ComfyUI/SadTalker).
+# A modest stack: Voicebox for voice (falls back to free gTTS with no server),
+# Gemini for narration + images. For a full instance, point tts/images/avatar
+# at your own servers (Voicebox, SwarmUI, ComfyUI/SadTalker).
 
 providers:
   llm:
@@ -11,7 +12,27 @@ providers:
     model: gemini-2.0-flash
 
   tts:
-    provider: gtts            # free, no key; swap for chatterbox/elevenlabs
+    # Self-hosted Voicebox studio is the default. Fill in base_url + profile_id
+    # to use it; until you do, SlideStream falls back to free gTTS
+    # automatically, so a verbatim copy of this file still renders.
+    provider: voicebox
+    # base_url: https://voice.example.org
+    # api_key: "${VOICEBOX_TOKEN}"       # only if the server is behind auth
+    # profile_id: "<id from POST /profiles>"
+    # engine: kokoro                     # or chatterbox / qwen / luxtts / tada
+    #
+    # To clone a voice per run and delete it from the server afterwards, set
+    # voice_sample instead of profile_id. It must be a path INSIDE the
+    # container: bind-mount the clip (see docker-compose.yml) or the render
+    # fails with FileNotFoundError.
+    #   voice_sample: /home/app/voices/narrator.wav   # 10-30s of clean speech
+    #   engine: chatterbox
+    #   # reference_text omitted -> Voicebox transcribes the clip itself.
+    #   # Set it to skip transcription, or transcribe_model to pin Whisper size.
+    #   delete_generations: true   # default; also drop rendered audio server-side
+    #
+    # Or force free gTTS (no server, no key):
+    #   provider: gtts
 
   images:
     provider: gemini          # Imagen, ~$0.02/image; or pexels (free) / text

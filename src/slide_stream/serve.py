@@ -18,16 +18,20 @@ Design notes:
 
 import copy
 import os
+import secrets
+import shutil
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -43,6 +47,9 @@ class Job:
     workdir: Path | None = None
     output_path: Path | None = None
     created_at: float = field(default_factory=lambda: 0.0)
+    # Per-job download secret: knowing the job UUID alone must not be enough
+    # to fetch the video, and the long-lived instance token never goes in a URL.
+    download_token: str = ""
 
 
 # In-memory job registry (single-process v1). job_id -> Job.
@@ -57,6 +64,89 @@ def _shutdown() -> None:  # pragma: no cover - kills the process
 DEMO_MAX_SLIDES = 5
 DEMO_JOBS_PER_HOUR = 3
 _DEMO_HITS: dict[str, list[float]] = {}  # client ip -> job timestamps
+
+
+def _env_int(name: str, default: int) -> int:
+    """Integer from the environment, falling back on missing/garbage values."""
+    try:
+        return int(os.getenv(name, "") or default)
+    except ValueError:
+        return default
+
+
+# Upload caps (bytes), overridable via SLIDESTREAM_MAX_{DECK,VOICE,PHOTO}_MB.
+MAX_DECK_BYTES = _env_int("SLIDESTREAM_MAX_DECK_MB", 30) * 1024 * 1024
+MAX_VOICE_BYTES = _env_int("SLIDESTREAM_MAX_VOICE_MB", 30) * 1024 * 1024
+MAX_PHOTO_BYTES = _env_int("SLIDESTREAM_MAX_PHOTO_MB", 15) * 1024 * 1024
+# Largest photo we will hand to Pillow/the avatar engines (per side).
+MAX_IMAGE_DIM = 8000
+# How long a job (and its workdir) may live before it is reaped.
+JOB_TTL_SECONDS = _env_int("SLIDESTREAM_JOB_TTL_MIN", 60) * 60
+
+
+def _reap_expired_jobs(now: float | None = None) -> None:
+    """Evict jobs past the TTL and delete their workdirs.
+
+    Called lazily from the job endpoints so 'nothing stored' holds without a
+    dedicated reaper thread. Jobs that are still queued/running get an extra
+    hour of grace (the render subprocess timeout) so a live render's files
+    are never deleted out from under it.
+    """
+    t = now if now is not None else time.time()
+    expired: list[Job] = []
+    with _LOCK:
+        for job in list(_JOBS.values()):
+            grace = 0 if job.status in ("done", "error") else 3600
+            if job.created_at and t - job.created_at > JOB_TTL_SECONDS + grace:
+                expired.append(job)
+                del _JOBS[job.id]
+    for job in expired:
+        if job.workdir is not None:
+            shutil.rmtree(job.workdir, ignore_errors=True)
+
+
+# Origins the local (desktop) server accepts state-changing requests from:
+# this machine's own pages, or the Tauri shell's webview.
+_LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
+_TAURI_ORIGINS = ("tauri://localhost", "http://tauri.localhost",
+                  "https://tauri.localhost")
+
+
+def _local_origin_ok(origin: str) -> bool:
+    """True if an Origin header value belongs to this machine (or Tauri)."""
+    if origin.lower() in _TAURI_ORIGINS:
+        return True
+    try:
+        parts = urlsplit(origin)
+    except ValueError:
+        return False
+    return parts.scheme in ("http", "https") and (
+        (parts.hostname or "") in _LOCAL_HOSTS
+    )
+
+
+def _validate_photo_upload(path: Path) -> str | None:
+    """Error message if an uploaded image is undecodable or hostile, else None.
+
+    Pillow's MAX_IMAGE_PIXELS bomb guard stays active; on top of it we bound
+    the dimensions so downstream avatar engines get something reasonable.
+    """
+    from PIL import Image, UnidentifiedImageError
+
+    try:
+        with Image.open(path) as im:
+            width, height = im.size
+            if width > MAX_IMAGE_DIM or height > MAX_IMAGE_DIM:
+                return (
+                    f"Image is {width}x{height}; the maximum is "
+                    f"{MAX_IMAGE_DIM}x{MAX_IMAGE_DIM}"
+                )
+            im.verify()
+    except Image.DecompressionBombError:
+        return "Image is too large to decode safely"
+    except (UnidentifiedImageError, OSError, ValueError):
+        return "Could not decode the image"
+    return None
 
 
 def _demo_rate_ok(ip: str, now: float | None = None) -> bool:
@@ -107,9 +197,17 @@ def _build_job_config(base: dict[str, Any], workdir: Path, options: dict[str, An
     if options.get("accent"):
         cfg["providers"]["tts"]["accent"] = options["accent"]
 
-    # A per-job voice sample turns on ephemeral Chatterbox cloning.
+    # A per-job voice sample turns on ephemeral cloning. Chatterbox and
+    # Voicebox both accept just the clip: Chatterbox needs no transcript, and
+    # Voicebox transcribes it server-side when reference_text is absent.
+    # The upload must win: drop inherited stored-voice keys that providers
+    # would otherwise prefer (voicebox picks profile_id over voice_sample),
+    # and the server config's reference_text describes ITS clip, not this one.
     if voice_path is not None:
-        cfg["providers"]["tts"]["voice_sample"] = str(voice_path)
+        tts = cfg["providers"]["tts"]
+        for key in ("profile_id", "voice", "reference_text"):
+            tts.pop(key, None)
+        tts["voice_sample"] = str(voice_path)
 
     # Presenter: a built-in mascot wins over an uploaded file. The 'animate'
     # toggle then picks the engine per source:
@@ -137,8 +235,11 @@ def _build_job_config(base: dict[str, Any], workdir: Path, options: dict[str, An
     else:
         av["provider"] = "none"
 
+    # Owner-only from the first byte: the expanded config holds live API keys.
     job_yaml = workdir / "job.yaml"
-    job_yaml.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    fd = os.open(job_yaml, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(yaml.safe_dump(cfg))
     return job_yaml
 
 
@@ -173,10 +274,13 @@ def _run_job(job: Job, deck_path: Path, job_yaml: Path,
             job.status = "error"
             job.error = str(e)
     finally:
-        # Ephemeral: the voice sample and photo never persist past the render.
-        for p in (voice_path, photo_path):
+        # Ephemeral: inputs and the key-bearing job config never persist past
+        # the render. Only output.mp4 remains, until it is downloaded (demo)
+        # or the TTL reaper removes the whole workdir.
+        for p in (voice_path, photo_path, deck_path, job_yaml):
             if p is not None:
                 Path(p).unlink(missing_ok=True)
+        shutil.rmtree(job.workdir / "tmp", ignore_errors=True)
 
 
 SETTINGS_TEMPLATE = """\
@@ -188,11 +292,15 @@ providers:
     provider: gemini            # gemini | openai | claude | groq | ollama | none
     model: gemini-2.0-flash
   tts:
-    provider: gtts              # free; or kokoro (offline), chatterbox,
-                                # voicebox, elevenlabs, openai
+    provider: voicebox          # default; or gtts (free), kokoro (offline),
+                                # chatterbox, elevenlabs, openai
+    # base_url: https://voice.example.org        # voicebox/chatterbox server
+    # api_key: "${VOICEBOX_TOKEN}"               # if the server needs auth
+    # engine: kokoro            # voicebox: kokoro|chatterbox|qwen|luxtts|tada
+    # profile_id: "<id from POST /profiles>"     # a stored voicebox voice...
+    # voice_sample: /path/to/you.wav  # ...or clone this clip per run, then
+    #                                 # delete it from the server
     # accent: australian        # gtts: australian|british|american|...
-    # base_url: https://chatterbox.example.org   # chatterbox/voicebox
-    # api_key: "${CHATTERBOX_TOKEN}"
   images:
     provider: text              # text (no AI) | gemini | dalle3 | swarmui |
                                 # local | pexels | unsplash
@@ -235,6 +343,8 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
             UploadFile,
         )
         from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+        from starlette.background import BackgroundTask
+        from starlette.responses import Response
     except ImportError as e:  # pragma: no cover
         raise RuntimeError(
             "The web UI needs extra packages. Install with: "
@@ -249,10 +359,44 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
     if demo is None:
         demo = os.getenv("SLIDESTREAM_DEMO", "").lower() in ("1", "true", "yes")
     demo_mode = bool(demo) and not local_mode
+    # Only honor X-Forwarded-For when the operator says a reverse proxy sits
+    # in front (deploy/docker-compose.yml sets this); otherwise the header is
+    # client-supplied and would let anyone dodge the demo rate limit.
+    trusted_proxy = os.getenv(
+        "SLIDESTREAM_TRUSTED_PROXY", ""
+    ).lower() in ("1", "true", "yes")
     executor = ThreadPoolExecutor(max_workers=max_workers)
     jobs_root = Path(tempfile.mkdtemp(prefix="slidestream_serve_"))
 
     app = FastAPI(title="SlideStream")
+
+    if local_mode:
+
+        @app.middleware("http")
+        async def local_guard(
+            request: Request,
+            call_next: Callable[[Request], Awaitable[Response]],
+        ) -> Response:
+            # Local (desktop) mode has no token, so block CSRF/DNS-rebinding:
+            # state-changing requests must target localhost and come from a
+            # local page (or the Tauri shell's webview).
+            if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+                host = (
+                    (request.headers.get("host") or "")
+                    .rsplit(":", 1)[0].strip("[]").lower()
+                )
+                if host not in _LOCAL_HOSTS:
+                    return JSONResponse(
+                        {"detail": "Requests must be addressed to localhost"},
+                        status_code=403,
+                    )
+                origin = request.headers.get("origin")
+                if origin and not _local_origin_ok(origin):
+                    return JSONResponse(
+                        {"detail": "Cross-origin requests are not allowed"},
+                        status_code=403,
+                    )
+            return await call_next(request)
 
     def require_token(authorization: str | None = Header(default=None)) -> None:
         # Demo mode is friction-free: no token, guarded by rate/slide limits
@@ -260,14 +404,19 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
         if demo_mode or not auth_token:
             return
         expected = f"Bearer {auth_token}"
-        if authorization != expected:
+        if authorization is None or not secrets.compare_digest(
+            authorization.encode(), expected.encode()
+        ):
             raise HTTPException(status_code=401, detail="Invalid or missing token")
 
     def client_ip(request: Request) -> str:
-        # Behind a reverse proxy (NPM) the real IP is in X-Forwarded-For.
-        fwd = request.headers.get("x-forwarded-for")
-        if fwd:
-            return fwd.split(",")[0].strip()
+        # Behind a trusted reverse proxy the real IP is the value the proxy
+        # appended to X-Forwarded-For (the rightmost one — earlier entries
+        # are whatever the client chose to send).
+        if trusted_proxy:
+            fwd = request.headers.get("x-forwarded-for")
+            if fwd:
+                return fwd.split(",")[-1].strip()
         return request.client.host if request.client else "unknown"
 
     @app.get("/", response_class=HTMLResponse)
@@ -331,8 +480,29 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
                 raise ValueError("top level must be a mapping")
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Invalid YAML: {e}") from e
-        settings_path.write_text(text, encoding="utf-8")
+        # Owner-only: the settings file typically holds API keys. os.open's
+        # mode only applies on creation, so chmod covers pre-existing files.
+        fd = os.open(settings_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.chmod(settings_path, 0o600)
         return {"ok": True, "path": str(settings_path)}
+
+    async def save_upload(
+        upload: UploadFile, dest: Path, max_bytes: int, kind: str
+    ) -> None:
+        # Stream to disk in chunks with a hard cap — never buffer in RAM.
+        size = 0
+        with open(dest, "wb") as f:
+            while chunk := await upload.read(1024 * 1024):
+                size += len(chunk)
+                if size > max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"{kind} exceeds the "
+                        f"{max_bytes // (1024 * 1024)} MB limit",
+                    )
+                f.write(chunk)
 
     @app.post("/api/jobs")
     async def create_job(
@@ -347,9 +517,16 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
         accent: str | None = Form(default=None),
         _: None = Depends(require_token),
     ) -> JSONResponse:
+        _reap_expired_jobs()
         suffix = Path(deck.filename or "deck.md").suffix.lower()
         if suffix not in (".md", ".pptx"):
             raise HTTPException(status_code=400, detail="Deck must be .md or .pptx")
+
+        # Reject obviously oversized requests before touching the body.
+        declared = request.headers.get("content-length")
+        max_request = MAX_DECK_BYTES + MAX_VOICE_BYTES + MAX_PHOTO_BYTES + 1024 * 1024
+        if declared and declared.isdigit() and int(declared) > max_request:
+            raise HTTPException(status_code=413, detail="Upload too large")
 
         if demo_mode and not _demo_rate_ok(client_ip(request)):
             raise HTTPException(
@@ -361,67 +538,127 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
         job_id = uuid.uuid4().hex
         workdir = jobs_root / job_id
         workdir.mkdir(parents=True)
-        deck_path = workdir / f"deck{suffix}"
-        deck_path.write_bytes(await deck.read())
+        try:
+            deck_path = workdir / f"deck{suffix}"
+            await save_upload(deck, deck_path, MAX_DECK_BYTES, "Deck")
 
-        if demo_mode:
-            n = _count_slides(deck_path)
-            if n is not None and n > DEMO_MAX_SLIDES:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Demo limit: {DEMO_MAX_SLIDES} slides per deck "
-                    f"(yours has {n}). Install locally for unlimited decks: "
-                    "pip install slide-stream",
-                )
+            if demo_mode:
+                n = _count_slides(deck_path)
+                if n is None:
+                    # Fail closed: an unparseable deck must not dodge the cap.
+                    raise HTTPException(
+                        status_code=400, detail="Could not parse the deck"
+                    )
+                if n > DEMO_MAX_SLIDES:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Demo limit: {DEMO_MAX_SLIDES} slides per deck "
+                        f"(yours has {n}). Install locally for unlimited decks: "
+                        "pip install slide-stream",
+                    )
 
-        voice_path = None
-        if voice is not None and voice.filename:
-            voice_path = workdir / f"voice{Path(voice.filename).suffix or '.wav'}"
-            voice_path.write_bytes(await voice.read())
-        photo_path = None
-        if photo is not None and photo.filename:
-            photo_path = workdir / f"photo{Path(photo.filename).suffix or '.png'}"
-            photo_path.write_bytes(await photo.read())
+            voice_path = None
+            if voice is not None and voice.filename:
+                voice_path = workdir / f"voice{Path(voice.filename).suffix or '.wav'}"
+                await save_upload(voice, voice_path, MAX_VOICE_BYTES, "Voice sample")
+            photo_path = None
+            if photo is not None and photo.filename:
+                from .providers.avatar import _source_kind
 
-        options = {
-            "narration_seconds": narration_seconds,
-            "image_provider": image_provider,
-            "avatar": (avatar or "true").lower() != "false",
-            "avatar_name": avatar_name,
-            "accent": accent,
-        }
-        # Desktop mode re-reads ~/.slidestream.yaml per job so Settings edits
-        # apply without restarting the app.
-        job_base = load_config() if local_mode else base_config
-        job_yaml = _build_job_config(job_base, workdir, options, voice_path, photo_path)
+                photo_path = workdir / f"photo{Path(photo.filename).suffix or '.png'}"
+                await save_upload(photo, photo_path, MAX_PHOTO_BYTES, "Photo")
+                if _source_kind(str(photo_path)) == "image":
+                    problem = _validate_photo_upload(photo_path)
+                    if problem:
+                        raise HTTPException(status_code=400, detail=problem)
 
-        job = Job(id=job_id, workdir=workdir, created_at=time.time())
+            options = {
+                "narration_seconds": narration_seconds,
+                "image_provider": image_provider,
+                "avatar": (avatar or "true").lower() != "false",
+                "avatar_name": avatar_name,
+                "accent": accent,
+            }
+            # Desktop mode re-reads ~/.slidestream.yaml per job so Settings
+            # edits apply without restarting the app.
+            job_base = load_config() if local_mode else base_config
+            job_yaml = _build_job_config(
+                job_base, workdir, options, voice_path, photo_path
+            )
+        except Exception:
+            # Never leave a rejected job's uploads (or its key-bearing
+            # job.yaml) on disk.
+            shutil.rmtree(workdir, ignore_errors=True)
+            raise
+
+        job = Job(id=job_id, workdir=workdir, created_at=time.time(),
+                  download_token=secrets.token_urlsafe(24))
         with _LOCK:
             _JOBS[job_id] = job
         executor.submit(_run_job, job, deck_path, job_yaml, voice_path, photo_path)
-        return JSONResponse({"job_id": job_id, "status": job.status})
+        return JSONResponse({"job_id": job_id, "status": job.status,
+                             "token": job.download_token})
 
     @app.get("/api/jobs/{job_id}")
     def job_status(job_id: str, _: None = Depends(require_token)) -> dict[str, Any]:
+        _reap_expired_jobs()
         job = _JOBS.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Unknown job")
-        return {"job_id": job.id, "status": job.status, "error": job.error,
-                "log": job.log[-4000:]}
+        out: dict[str, Any] = {"job_id": job.id, "status": job.status,
+                               "error": job.error}
+        if demo_mode:
+            # The open demo gets only the coarse status the UI shows anyway:
+            # raw render logs can leak paths and exception text, and the
+            # download token must stay knowable only to the job's creator.
+            out["log"] = ""
+        else:
+            out["log"] = job.log[-4000:]
+            out["token"] = job.download_token
+        return out
 
     @app.get("/api/jobs/{job_id}/result")
     def job_result(job_id: str, t: str | None = None,
                    authorization: str | None = Header(default=None)):
-        # A browser download link can't set an Authorization header, so accept
-        # the token via the ?t= query param here as well.
-        if (not demo_mode and auth_token
-                and authorization != f"Bearer {auth_token}" and t != auth_token):
-            raise HTTPException(status_code=401, detail="Invalid or missing token")
+        _reap_expired_jobs()
         job = _JOBS.get(job_id)
-        if job is None or job.status != "done" or job.output_path is None:
+        if job is None:
             raise HTTPException(status_code=404, detail="Result not ready")
+        # A browser download link can't set an Authorization header, so accept
+        # the per-job download token via ?t= — never the long-lived instance
+        # token, which must not land in proxy logs or browser history.
+        header_ok = bool(
+            auth_token
+            and authorization is not None
+            and secrets.compare_digest(
+                authorization.encode(), f"Bearer {auth_token}".encode()
+            )
+        )
+        token_ok = bool(
+            t and job.download_token
+            and secrets.compare_digest(t.encode(), job.download_token.encode())
+        )
+        if not (header_ok or token_ok):
+            raise HTTPException(
+                status_code=401, detail="Invalid or missing download token"
+            )
+        if job.status != "done" or job.output_path is None:
+            raise HTTPException(status_code=404, detail="Result not ready")
+        background: BackgroundTask | None = None
+        if demo_mode:
+            # Demo promises "nothing stored": one download, then the whole
+            # job dir goes away.
+            workdir = job.workdir
+
+            def _wipe() -> None:
+                with _LOCK:
+                    _JOBS.pop(job_id, None)
+                if workdir is not None:
+                    shutil.rmtree(workdir, ignore_errors=True)
+
+            background = BackgroundTask(_wipe)
         return FileResponse(str(job.output_path), media_type="video/mp4",
-                            filename="slidestream.mp4")
+                            filename="slidestream.mp4", background=background)
 
     return app
 
@@ -619,7 +856,7 @@ $("go").onclick=async()=>{
  $("status").textContent="Uploading…";$("log").textContent="";
  let res=await fetch("/api/jobs",{method:"POST",headers:auth(),body:fd});
  if(!res.ok){$("status").textContent="Error: "+(await res.text());return}
- const {job_id}=await res.json();poll(job_id)};
+ const {job_id,token}=await res.json();poll(job_id,token)};
 // Settings (desktop/local mode): edit ~/.slidestream.yaml in-app.
 let setTemplate="";
 $("gear").onclick=async()=>{
@@ -637,12 +874,12 @@ $("setSave").onclick=async()=>{
  const j=await r.json().catch(()=>({}));
  $("saveMsg").textContent=r.ok?"✓ Saved — applies to your next video.":("✗ "+(j.detail||"Save failed"));
  $("saveMsg").style.color=r.ok?"":"var(--accent)"};
-async function poll(id){
+async function poll(id,tok){
  const r=await fetch("/api/jobs/"+id,{headers:auth()});const j=await r.json();
  $("status").innerHTML='<span class="badge">'+j.status+'</span>';
  $("log").textContent=j.log||"";$("log").classList.toggle("on",!!j.log);
  if(j.status==="done"){$("status").innerHTML+=' <a href="/api/jobs/'+id+'/result?t='+
-   encodeURIComponent($("token").value)+'" download>⬇ download video</a>';return}
+   encodeURIComponent(tok||j.token||"")+'" download>⬇ download video</a>';return}
  if(j.status==="error"){$("status").textContent="Failed: "+(j.error||"see log");return}
- setTimeout(()=>poll(id),2500)}
+ setTimeout(()=>poll(id,tok),2500)}
 </script></body></html>"""

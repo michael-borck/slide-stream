@@ -49,11 +49,27 @@ locally for full control over voice, image and video generation."* Set it
 `false` for a private/full instance where you've wired up your own
 Chatterbox / SwarmUI / SadTalker servers.
 
+## Reverse proxy and client IPs
+
+The demo rate limit (3 videos/hour) is keyed by client IP. Because this
+deployment assumes a reverse proxy in front for TLS, `docker-compose.yml`
+sets `SLIDESTREAM_TRUSTED_PROXY=1`, which makes the server use the
+`X-Forwarded-For` entry appended by the proxy. If clients instead reach the
+container port directly (no proxy), set `SLIDESTREAM_TRUSTED_PROXY=0` in
+`.env` — otherwise the header is client-supplied and the rate limit could be
+spoofed away.
+
 ## Notes
 
 - The image bundles the cloud AI clients (`[all-ai,serve]`). For offline TTS
   (Kokoro) add `[local-tts]` to the Dockerfile — it pulls ~340MB of models.
 - Voice samples and photos are **used per render and deleted** — no biometric
-  data is stored on the server. The user's browser remembers them (IndexedDB)
-  so they need not re-upload each job.
+  data is stored on the server. The deck and the per-job config are wiped when
+  the render finishes; in demo mode the video is deleted right after download,
+  and any leftovers are reaped after `SLIDESTREAM_JOB_TTL_MIN` (default 60)
+  minutes. The user's browser remembers voice/photo (IndexedDB) so they need
+  not re-upload each job.
+- Uploads are capped (30 MB deck, 30 MB voice, 15 MB photo) — override with
+  `SLIDESTREAM_MAX_DECK_MB` / `SLIDESTREAM_MAX_VOICE_MB` /
+  `SLIDESTREAM_MAX_PHOTO_MB`.
 - Keep `--workers` low (default 1): renders are CPU/GPU heavy.

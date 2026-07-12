@@ -2,7 +2,9 @@
 #   cp .env.example .env   # then edit
 #   docker compose up -d --build
 # Put your server config (voice server URL, image provider, API keys) in
-# ./slidestream.yaml — it is mounted read-only as the layered config.
+# ./slidestream.yaml — it is mounted read-only as the layered config. Any
+# local asset it references (e.g. a voice_sample clip) needs its own mount
+# below, and must be named by its in-container path.
 
 services:
   slidestream:
@@ -23,6 +25,10 @@ services:
       SLIDESTREAM_TOKEN: ${SLIDESTREAM_TOKEN:-}
       # Show the "install locally for full control" banner on the hosted demo.
       SLIDESTREAM_DEMO: ${SLIDESTREAM_DEMO:-true}
+      # This deployment sits behind a reverse proxy (nginx/Caddy/NPM for TLS),
+      # so trust the X-Forwarded-For entry the proxy appends when rate-limiting
+      # demo jobs per IP. Set 0 if clients hit the container port directly.
+      SLIDESTREAM_TRUSTED_PROXY: ${SLIDESTREAM_TRUSTED_PROXY:-1}
       # Cloud provider keys (see .env.example). The LLM that writes the
       # narration reads its key from here: openai->OPENAI_API_KEY,
       # gemini->GEMINI_API_KEY, claude->ANTHROPIC_API_KEY, groq->GROQ_API_KEY.
@@ -40,3 +46,10 @@ services:
     volumes:
       # Layered server config: providers, servers, keys via ${VAR} expansion.
       - ./slidestream.yaml:/home/app/.slidestream.yaml:ro
+      # Reference clip(s) for the voicebox/chatterbox ephemeral-clone TTS.
+      # The container cannot see host paths, so a voice_sample in
+      # slidestream.yaml must point at the path on the RIGHT of this mount,
+      # e.g. voice_sample: /home/app/voices/narrator.wav
+      # Uncomment once ./voices exists — a missing host path makes Docker
+      # create it as an empty root-owned directory.
+      # - ./voices:/home/app/voices:ro
