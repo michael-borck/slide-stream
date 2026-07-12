@@ -304,7 +304,12 @@ class SwarmUIImageProvider(ImageProvider):
             return self._fallback_to_text(query, filename, slide=slide)
 
     def _fallback_to_text(self, query: str, filename: str, slide: dict[str, Any] | None = None) -> str:
-        """Fall back to a text image, preserving slide content when known."""
+        """Fall back to a text image, unless strict mode disables fallbacks."""
+        if is_strict(self.config):
+            raise StrictModeError(
+                f"Strict mode: image provider '{self.name}' failed and fallback "
+                "to text images is disabled."
+            )
         return TextImageProvider(self.config).generate_image(query, filename, slide=slide)
 
 
@@ -384,7 +389,12 @@ class GeminiImageProvider(ImageProvider):
             return self._fallback_to_text(query, filename, slide=slide)
 
     def _fallback_to_text(self, query: str, filename: str, slide: dict[str, Any] | None = None) -> str:
-        """Fall back to a text image, preserving slide content when known."""
+        """Fall back to a text image, unless strict mode disables fallbacks."""
+        if is_strict(self.config):
+            raise StrictModeError(
+                f"Strict mode: image provider '{self.name}' failed and fallback "
+                "to text images is disabled."
+            )
         return TextImageProvider(self.config).generate_image(query, filename, slide=slide)
 
 

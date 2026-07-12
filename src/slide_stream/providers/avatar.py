@@ -540,6 +540,7 @@ class _ComfyUIAvatar(AvatarProvider):
             # 2. Poll history until success.
             deadline = time.monotonic() + timeout
             video_path: str | None = None
+            subfolder = ""
             while time.monotonic() < deadline:
                 hist = requests.get(
                     f"{base_url}/history/{prompt_id}", headers=headers, timeout=30
@@ -550,7 +551,9 @@ class _ComfyUIAvatar(AvatarProvider):
                 if entry:
                     status_str = entry.get("status", {}).get("status_str")
                     if status_str == "success":
-                        video_path = _find_output_path(kind, entry.get("outputs", {}))
+                        found = _find_output_path(kind, entry.get("outputs", {}))
+                        if found:
+                            video_path, subfolder = found
                         break
                     if status_str == "error":
                         raise ValueError(f"ComfyUI workflow error: {entry.get('status')}")
@@ -559,11 +562,15 @@ class _ComfyUIAvatar(AvatarProvider):
             if not video_path:
                 raise TimeoutError(f"{self.name} render timed out after {timeout:.0f}s")
 
-            # 3. Download the result via /view.
+            # 3. Download the result via /view. History entries may place the
+            # file in an output subfolder; pass it through when present.
+            params = {"filename": Path(video_path).name, "type": "output"}
+            if subfolder:
+                params["subfolder"] = subfolder
             clip = requests.get(
                 f"{base_url}/view",
                 headers=headers,
-                params={"filename": Path(video_path).name, "type": "output"},
+                params=params,
                 timeout=timeout,
             )
             clip.raise_for_status()
@@ -657,11 +664,12 @@ def _to_16k_wav(audio_path: str) -> tuple[str, bool]:
     return converted, True
 
 
-def _find_output_path(kind: str, outputs: dict[str, Any]) -> str | None:
-    """Pull the output video path from a ComfyUI history entry.
+def _find_output_path(kind: str, outputs: dict[str, Any]) -> tuple[str, str] | None:
+    """Pull (video path, subfolder) from a ComfyUI history entry.
 
     SadTalker's ShowVideo node reports ``show_video_path``; Wav2Lip's
-    VHS_VideoCombine reports ``gifs`` (with filename/fullpath).
+    VHS_VideoCombine reports ``gifs`` (with filename/subfolder/fullpath).
+    The subfolder is "" when the file sits directly in output/.
     """
     for node_output in outputs.values():
         if not isinstance(node_output, dict):
@@ -669,9 +677,10 @@ def _find_output_path(kind: str, outputs: dict[str, Any]) -> str | None:
         if kind == "video":
             gifs = node_output.get("gifs")
             if gifs:
-                return gifs[0].get("filename") or Path(gifs[0]["fullpath"]).name
+                name = gifs[0].get("filename") or Path(gifs[0]["fullpath"]).name
+                return name, str(gifs[0].get("subfolder") or "")
         else:
             paths = node_output.get("show_video_path")
             if paths:
-                return paths[0]
+                return paths[0], ""
     return None

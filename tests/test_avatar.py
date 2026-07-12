@@ -520,15 +520,20 @@ def test_sadtalker_workflow_error_returns_none(config, tmp_path, mocker, monkeyp
 def test_find_output_path():
     from slide_stream.providers.avatar import _find_output_path
 
-    # image kind -> ShowVideo node's show_video_path
+    # image kind -> ShowVideo node's show_video_path (no subfolder concept)
     assert _find_output_path(
         "image", {"4": {"show_video_path": ["/out/x.mp4"]}}
-    ) == "/out/x.mp4"
+    ) == ("/out/x.mp4", "")
     assert _find_output_path("image", {"9": {"images": []}}) is None
-    # video kind -> VHS_VideoCombine's gifs filename
+    # video kind -> VHS_VideoCombine's gifs filename (+ subfolder when set)
     assert _find_output_path(
         "video", {"4": {"gifs": [{"filename": "w.mp4", "fullpath": "/out/w.mp4"}]}}
-    ) == "w.mp4"
+    ) == ("w.mp4", "")
+    assert _find_output_path(
+        "video",
+        {"4": {"gifs": [{"filename": "w.mp4", "subfolder": "wav2lip",
+                         "fullpath": "/out/wav2lip/w.mp4"}]}},
+    ) == ("w.mp4", "wav2lip")
 
 
 def test_factory_registers_sadtalker():
@@ -597,6 +602,53 @@ def test_wav2lip_uses_video_workflow(config, tmp_path, mocker, monkeypatch):
     assert wf["3"]["class_type"] == "Wav2Lip"
     # Downloaded the gifs output by filename.
     assert get.call_args_list[-1][1]["params"]["filename"] == "wav2lip_out.mp4"
+
+
+def test_comfyui_view_download_passes_subfolder(config, tmp_path, mocker, monkeypatch):
+    """When the history entry places the output in a subfolder, the /view
+    download must pass it through, or ComfyUI 404s the bare filename."""
+    from slide_stream.providers.avatar import Wav2LipAvatarProvider
+
+    vid = tmp_path / "idle.mp4"
+    vid.write_bytes(b"vid")
+    audio = tmp_path / "a.wav"
+    audio.write_bytes(b"w")
+    config["providers"]["avatar"] = {
+        "provider": "wav2lip", "base_url": "https://c.org",
+        "source_video": str(vid), "poll_interval": 0,
+    }
+    monkeypatch.setattr("slide_stream.providers.avatar.shutil.which", lambda _: None)
+
+    vid_up = mocker.MagicMock()
+    vid_up.json.return_value = {"name": "idle.mp4"}
+    aud_up = mocker.MagicMock()
+    aud_up.json.return_value = {"name": "a.wav"}
+    submit = mocker.MagicMock()
+    submit.json.return_value = {"prompt_id": "p"}
+    mocker.patch(
+        "slide_stream.providers.avatar.requests.post",
+        side_effect=[vid_up, aud_up, submit],
+    )
+    done = mocker.MagicMock()
+    done.json.return_value = {
+        "p": {
+            "status": {"status_str": "success"},
+            "outputs": {"4": {"gifs": [{"filename": "out.mp4",
+                                        "subfolder": "wav2lip",
+                                        "fullpath": "/out/wav2lip/out.mp4"}]}},
+        }
+    }
+    clip = mocker.MagicMock(content=b"MP4V")
+    get = mocker.patch(
+        "slide_stream.providers.avatar.requests.get", side_effect=[done, clip]
+    )
+    mocker.patch("slide_stream.providers.avatar.time.sleep")
+
+    out = tmp_path / "head.mp4"
+    assert Wav2LipAvatarProvider(config).generate(str(audio), str(out), 1) == str(out)
+    assert get.call_args_list[-1][1]["params"] == {
+        "filename": "out.mp4", "type": "output", "subfolder": "wav2lip",
+    }
 
 
 def test_comfyui_router_picks_engine_by_source(config, tmp_path):

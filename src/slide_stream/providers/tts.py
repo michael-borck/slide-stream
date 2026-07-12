@@ -40,6 +40,60 @@ GTTS_ACCENTS = {
 }
 
 
+def _warn_if_sample_too_short(sample_path: Path) -> None:
+    """Voice-clone engines fail on very short references; warn before uploading."""
+    if sample_path.suffix.lower() != ".wav":
+        return
+    try:
+        import wave
+
+        with wave.open(str(sample_path), "rb") as w:
+            seconds = w.getnframes() / (w.getframerate() or 1)
+        if seconds < 5:
+            err_console.print(
+                f"  - Warning: voice sample is only {seconds:.1f}s; "
+                "references under ~5s usually fail. Use 10-30s."
+            )
+    except Exception:
+        pass
+
+
+def _prepare_sample_as_wav(sample_path: Path) -> tuple[Path, bool]:
+    """Return a WAV path for the sample, converting via ffmpeg if needed.
+
+    Voice Memos and phone recordings arrive as .m4a/.mp3; clone engines are
+    happiest with WAV, so convert to 24kHz mono before uploading. Returns
+    (path, is_temporary).
+    """
+    if sample_path.suffix.lower() == ".wav":
+        return sample_path, False
+    if not shutil.which("ffmpeg"):
+        raise RuntimeError(
+            "ffmpeg is required to convert a non-WAV voice_sample "
+            f"({sample_path.suffix}). Install it or supply a .wav file."
+        )
+    fd, converted = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    try:
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-loglevel", "error",
+                "-i", str(sample_path),
+                "-ar", "24000", "-ac", "1",
+                converted,
+            ],
+            check=True,
+        )
+    except Exception:
+        # Don't leak the mkstemp file when ffmpeg fails.
+        Path(converted).unlink(missing_ok=True)
+        raise
+    console.print(
+        f"  - Converted voice sample {sample_path.name} to WAV for upload"
+    )
+    return Path(converted), True
+
+
 class GTTSProvider(TTSProvider):
     """Google Text-to-Speech provider (free), with English accent selection."""
 
@@ -83,9 +137,11 @@ class KokoroTTSProvider(TTSProvider):
     After that, synthesis needs no network and no API key.
     """
 
-    # Loading the ~310 MB model is expensive; keep one engine per provider
-    # instance so a multi-slide run pays the cost once.
-    _engine: Any = None
+    def __init__(self, config: dict[str, Any]):
+        super().__init__(config)
+        # Loading the ~310 MB model is expensive; keep one engine per provider
+        # instance so a multi-slide run pays the cost once.
+        self._engine: Any = None
 
     @property
     def name(self) -> str:
@@ -182,9 +238,13 @@ class KokoroTTSProvider(TTSProvider):
             samples, sample_rate = self._engine.create(
                 text, voice=voice, speed=speed, lang=lang
             )
-            # The pipeline names audio files .mp3, but WAV data is fine:
-            # ffmpeg (via moviepy) probes content, not the extension.
-            sf.write(filename, samples, sample_rate)
+            # The pipeline names audio files .mp3; force real WAV output
+            # regardless. soundfile would otherwise pick the encoder from the
+            # extension, and MP3 needs a lame-enabled libsndfile that many
+            # platforms lack. Callers reuse the path they passed in, and
+            # downstream ffmpeg (via moviepy) probes content, not extension,
+            # so WAV data behind an .mp3 name plays fine.
+            sf.write(filename, samples, sample_rate, format="WAV")
             console.print(f"  - Generated audio with Kokoro ({voice})")
             return filename
 
@@ -204,6 +264,7 @@ class KokoroTTSProvider(TTSProvider):
                 f"  - Strict mode: not falling back to gTTS after {self.name} failed."
             )
             return None
+        self.fallback_count += 1
         gtts_provider = GTTSProvider(self.config)
         return gtts_provider.synthesize(text, filename)
 
@@ -222,8 +283,10 @@ class ChatterboxTTSProvider(TTSProvider):
     seconds of clean speech is recommended.
     """
 
-    # One uploaded sample per provider instance (i.e. per run).
-    _session_voice: str | None = None
+    def __init__(self, config: dict[str, Any]):
+        super().__init__(config)
+        # One uploaded sample per provider instance (i.e. per run).
+        self._session_voice: str | None = None
 
     @property
     def name(self) -> str:
@@ -258,53 +321,6 @@ class ChatterboxTTSProvider(TTSProvider):
             and (tts_config.get("voice") or tts_config.get("voice_sample"))
         )
 
-    def _warn_if_sample_too_short(self, sample_path: Path) -> None:
-        """The engine fails on very short references; warn before uploading."""
-        if sample_path.suffix.lower() != ".wav":
-            return
-        try:
-            import wave
-
-            with wave.open(str(sample_path), "rb") as w:
-                seconds = w.getnframes() / (w.getframerate() or 1)
-            if seconds < 5:
-                err_console.print(
-                    f"  - Warning: voice sample is only {seconds:.1f}s; "
-                    "references under ~5s usually fail. Use 10-30s."
-                )
-        except Exception:
-            pass
-
-    def _prepare_sample(self, sample_path: Path) -> tuple[Path, bool]:
-        """Return a WAV path for the sample, converting via ffmpeg if needed.
-
-        Voice Memos and phone recordings arrive as .m4a/.mp3; the engine is
-        happiest with WAV, so convert to 24kHz mono before uploading. Returns
-        (path, is_temporary).
-        """
-        if sample_path.suffix.lower() == ".wav":
-            return sample_path, False
-        if not shutil.which("ffmpeg"):
-            raise RuntimeError(
-                "ffmpeg is required to convert a non-WAV voice_sample "
-                f"({sample_path.suffix}). Install it or supply a .wav file."
-            )
-        fd, converted = tempfile.mkstemp(suffix=".wav")
-        os.close(fd)
-        subprocess.run(
-            [
-                "ffmpeg", "-y", "-loglevel", "error",
-                "-i", str(sample_path),
-                "-ar", "24000", "-ac", "1",
-                converted,
-            ],
-            check=True,
-        )
-        console.print(
-            f"  - Converted voice sample {sample_path.name} to WAV for upload"
-        )
-        return Path(converted), True
-
     def _ensure_voice(self) -> str:
         """Return the server-side voice name, uploading the sample if needed."""
         tts_config = self._tts_config()
@@ -321,9 +337,9 @@ class ChatterboxTTSProvider(TTSProvider):
         if not sample_path.is_file():
             raise FileNotFoundError(f"voice_sample not found: {voice_sample}")
 
-        upload_path, is_temporary = self._prepare_sample(sample_path)
+        upload_path, is_temporary = _prepare_sample_as_wav(sample_path)
         try:
-            self._warn_if_sample_too_short(upload_path)
+            _warn_if_sample_too_short(upload_path)
             session_voice = f"{uuid.uuid4()}.wav"
             with open(upload_path, "rb") as f:
                 response = requests.post(
@@ -382,6 +398,7 @@ class ChatterboxTTSProvider(TTSProvider):
                 f"  - Strict mode: not falling back to gTTS after {self.name} failed."
             )
             return None
+        self.fallback_count += 1
         gtts_provider = GTTSProvider(self.config)
         return gtts_provider.synthesize(text, filename)
 
@@ -389,18 +406,51 @@ class ChatterboxTTSProvider(TTSProvider):
 class VoiceboxTTSProvider(TTSProvider):
     """Self-hosted Voicebox voice studio as a TTS provider.
 
-    Generates speech against a pre-created Voicebox *profile* (a preset or
-    cloned voice), with a selectable engine. Free to run (self-hosted; engines
-    like Kokoro/Qwen are open). Set up a profile once on the server, then:
+    Two modes, selected by config:
 
-    Config (``providers.tts``):
-      provider: voicebox
-      base_url: https://voice.example.org   # or VOICEBOX_BASE_URL
-      profile_id: "<id from POST /profiles>"
-      engine: kokoro          # qwen|qwen_custom_voice|luxtts|chatterbox|
-                              # chatterbox_turbo|tada|kokoro
-      api_key: "${VOICEBOX_TOKEN}"          # optional Bearer, if proxied
+    *Persistent profile* — point at a profile you created on the server and
+    reuse it across runs. Nothing is created or deleted::
+
+        provider: voicebox
+        base_url: https://voice.example.org   # or VOICEBOX_BASE_URL
+        profile_id: "<id from POST /profiles>"
+        engine: kokoro
+
+    *Ephemeral clone* — supply a local reference recording. A throwaway profile
+    is created for the run, cloned from the sample, and deleted afterwards, so
+    no clone of the speaker is left on the server::
+
+        provider: voicebox
+        base_url: https://voice.example.org
+        voice_sample: ./my_voice.wav
+        engine: chatterbox
+        # reference_text: "The exact words spoken in the clip."
+
+    Cloning needs a transcript of the reference clip. Give ``reference_text``
+    to supply it yourself; omit it and Voicebox transcribes the clip via its
+    own Whisper endpoint (optionally pinned with ``transcribe_model``), so just
+    the audio is enough.
+
+    Because Voicebox exposes ``DELETE /profiles/{id}`` (which also removes the
+    profile's samples and reference audio from disk), the clone can be removed
+    over the API — unlike the standalone Chatterbox server, which needs the
+    server-side cron in contrib/chatterbox/.
+
+    Rendered narration is *not* removed by profile deletion: generation history
+    rows outlive their profile. Each generation is therefore deleted via
+    ``DELETE /history/{id}`` as soon as its audio is downloaded. Set
+    ``delete_generations: false`` to keep them in the server's history.
+
+    ``engine`` selects the model rendering the voice: qwen | qwen_custom_voice |
+    luxtts | chatterbox | chatterbox_turbo | tada | kokoro. Cloning quality
+    depends on the engine; deletion does not.
     """
+
+    def __init__(self, config: dict[str, Any]):
+        super().__init__(config)
+        # Set for the lifetime of one run, only when we created the profile.
+        self._session_profile_id: str | None = None
+        self._profile_ready: bool = False
 
     @property
     def name(self) -> str:
@@ -418,18 +468,190 @@ class VoiceboxTTSProvider(TTSProvider):
         return {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
     def is_available(self) -> bool:
-        """Available when a server URL and a profile are configured."""
+        """Available with a server URL plus either a profile or a voice sample."""
         tts_config = self._tts_config()
-        return bool(self._base_url() and tts_config.get("profile_id"))
+        return bool(
+            self._base_url()
+            and (tts_config.get("profile_id") or tts_config.get("voice_sample"))
+        )
+
+    def _transcribe_sample(self, wav_path: Path) -> str:
+        """Transcribe the reference clip via Voicebox's own Whisper endpoint.
+
+        Voicebox clones from audio *plus* a transcript of that audio. When the
+        user supplies only the clip, we ask the server to transcribe it, so no
+        local Whisper install and no hand-typed transcript are needed. The
+        first call may return 202 while Voicebox downloads its Whisper model;
+        that is a "wait and retry", not a failure.
+        """
+        tts_config = self._tts_config()
+        base_url = self._base_url()
+        timeout = float(tts_config.get("timeout") or 300)
+        deadline = time.monotonic() + timeout
+
+        data: dict[str, str] = {}
+        if tts_config.get("language"):
+            data["language"] = tts_config["language"]
+        if tts_config.get("transcribe_model"):
+            data["model"] = tts_config["transcribe_model"]
+
+        while True:
+            with open(wav_path, "rb") as f:
+                response = requests.post(
+                    f"{base_url}/transcribe",
+                    headers=self._headers(),
+                    files={"file": (wav_path.name, f)},
+                    data=data,
+                    timeout=timeout,
+                )
+            if response.status_code == 202:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        "Voicebox is still downloading its transcription model. "
+                        "Try again once it has finished, or set reference_text."
+                    )
+                console.print(
+                    "  - Waiting for Voicebox to download its transcription model..."
+                )
+                time.sleep(max(float(tts_config.get("poll_interval") or 1), 2))
+                continue
+            response.raise_for_status()
+            text = (response.json().get("text") or "").strip()
+            if not text:
+                raise ValueError(
+                    "Voicebox transcription returned no text. Supply reference_text "
+                    "for the voice_sample instead."
+                )
+            preview = text if len(text) <= 80 else text[:77] + "..."
+            console.print(f'  - Transcribed voice sample: "{preview}"')
+            return text
+
+    def _create_ephemeral_profile(self) -> str:
+        """Create a throwaway cloned-voice profile from ``voice_sample``."""
+        import uuid
+
+        tts_config = self._tts_config()
+        base_url = self._base_url()
+
+        sample_path = Path(tts_config["voice_sample"])
+        if not sample_path.is_file():
+            raise FileNotFoundError(f"voice_sample not found: {sample_path}")
+
+        upload_path, is_temporary = _prepare_sample_as_wav(sample_path)
+        try:
+            _warn_if_sample_too_short(upload_path)
+
+            # A transcript of the clip is required. Use the one the user gave
+            # us, else have Voicebox transcribe the audio. Do this before
+            # creating the profile so a failure here leaks nothing.
+            reference_text = tts_config.get("reference_text")
+            if not reference_text:
+                reference_text = self._transcribe_sample(upload_path)
+
+            # A random name, so no speaker-recognisable label exists server-side
+            # even in the window before the profile is deleted.
+            response = requests.post(
+                f"{base_url}/profiles",
+                headers=self._headers(),
+                json={
+                    "name": f"slide-stream-{uuid.uuid4()}",
+                    "description": "Ephemeral SlideStream run; deleted after render.",
+                    "language": tts_config.get("language") or "en",
+                    "voice_type": "cloned",
+                },
+                timeout=60,
+            )
+            response.raise_for_status()
+            profile_id = response.json()["id"]
+            # Record before uploading the sample: if the upload fails, close()
+            # must still delete the half-built profile rather than leak it.
+            self._session_profile_id = profile_id
+
+            with open(upload_path, "rb") as f:
+                sample = requests.post(
+                    f"{base_url}/profiles/{profile_id}/samples",
+                    headers=self._headers(),
+                    files={"file": (upload_path.name, f)},
+                    data={"reference_text": reference_text},
+                    timeout=float(tts_config.get("timeout") or 300),
+                )
+            sample.raise_for_status()
+        finally:
+            if is_temporary:
+                upload_path.unlink(missing_ok=True)
+
+        self._profile_ready = True
+        console.print(f"  - Cloned voice into ephemeral profile {profile_id}")
+        return profile_id
+
+    def _ensure_profile(self) -> str:
+        """Return the profile to generate against, cloning one if needed.
+
+        An explicit ``voice_sample`` wins: the user handed us a recording to
+        clone (e.g. an upload in serve mode), so a configured ``profile_id``
+        must not silently override it. The profile_id is used only when no
+        voice_sample is set — mirroring Chatterbox's ``_ensure_voice``.
+        """
+        tts_config = self._tts_config()
+        if not tts_config.get("voice_sample"):
+            configured = tts_config.get("profile_id")
+            if configured:
+                return configured
+        if self._session_profile_id and self._profile_ready:
+            return self._session_profile_id
+        if self._session_profile_id:
+            # An earlier attempt died between create and sample upload. Remove
+            # that profile instead of generating against a voiceless clone.
+            self._delete_profile(self._session_profile_id)
+            self._session_profile_id = None
+        return self._create_ephemeral_profile()
+
+    def _delete_generation(self, generation_id: str) -> None:
+        """Remove a generation and its rendered audio from the server."""
+        try:
+            response = requests.delete(
+                f"{self._base_url()}/history/{generation_id}",
+                headers=self._headers(),
+                timeout=30,
+            )
+            response.raise_for_status()
+        except Exception as e:
+            err_console.print(
+                f"  - Warning: could not delete Voicebox generation "
+                f"{generation_id}: {e}. Rendered audio remains on the server."
+            )
+
+    def _delete_profile(self, profile_id: str) -> None:
+        """Remove a profile, its samples, and its cloned reference audio."""
+        try:
+            response = requests.delete(
+                f"{self._base_url()}/profiles/{profile_id}",
+                headers=self._headers(),
+                timeout=60,
+            )
+            response.raise_for_status()
+            console.print(f"  - Deleted ephemeral voice profile {profile_id}")
+        except Exception as e:
+            err_console.print(
+                f"  - Warning: could not delete Voicebox profile {profile_id}: {e}. "
+                "The cloned voice may still exist on the server."
+            )
+
+    def close(self) -> None:
+        """Delete the run's ephemeral profile, if we created one."""
+        if self._session_profile_id:
+            self._delete_profile(self._session_profile_id)
+            self._session_profile_id = None
+            self._profile_ready = False
 
     def synthesize(self, text: str, filename: str) -> str | None:
         """Convert text to speech via a Voicebox profile."""
         try:
             tts_config = self._tts_config()
             base_url = self._base_url()
-            profile_id = tts_config.get("profile_id")
-            if not base_url or not profile_id:
-                raise ValueError("Voicebox base_url and profile_id are required")
+            if not base_url:
+                raise ValueError("Voicebox base_url is required")
+            profile_id = self._ensure_profile()
             headers = self._headers()
             timeout = float(tts_config.get("timeout") or 300)
             poll_interval = float(tts_config.get("poll_interval") or 1)
@@ -451,24 +673,56 @@ class VoiceboxTTSProvider(TTSProvider):
             data = gen.json()
             gen_id = data["id"]
 
-            # 2. Poll until finished (generation may be async).
-            deadline = time.monotonic() + timeout
-            status = data.get("status")
-            while status == "generating" and time.monotonic() < deadline:
-                time.sleep(poll_interval)
-                st = requests.get(
-                    f"{base_url}/generate/{gen_id}/status", headers=headers, timeout=30
-                )
-                st.raise_for_status()
-                status = st.json().get("status")
+            timed_out = False
+            try:
+                # 2. Poll until the server reports a terminal status
+                # (generation may be async). Unknown in-progress statuses
+                # (pending/queued/...) are treated like "generating"; a
+                # missing status means the server rendered synchronously.
+                deadline = time.monotonic() + timeout
+                status = data.get("status")
+                status_data: dict[str, Any] = data
+                while status and status not in ("completed", "failed"):
+                    if time.monotonic() >= deadline:
+                        timed_out = True
+                        raise TimeoutError(
+                            f"Voicebox generation {gen_id} still '{status}' "
+                            f"after {timeout:.0f}s"
+                        )
+                    time.sleep(poll_interval)
+                    st = requests.get(
+                        f"{base_url}/generate/{gen_id}/status",
+                        headers=headers,
+                        timeout=30,
+                    )
+                    st.raise_for_status()
+                    status_data = st.json()
+                    status = status_data.get("status")
 
-            # 3. Fetch the audio.
-            audio = requests.get(
-                f"{base_url}/audio/{gen_id}", headers=headers, timeout=timeout
-            )
-            audio.raise_for_status()
-            with open(filename, "wb") as f:
-                f.write(audio.content)
+                if status == "failed":
+                    detail = (
+                        status_data.get("error")
+                        or status_data.get("error_message")
+                        or status_data.get("detail")
+                        or status_data
+                    )
+                    raise RuntimeError(f"Voicebox generation failed: {detail}")
+
+                # 3. Fetch the audio.
+                audio = requests.get(
+                    f"{base_url}/audio/{gen_id}", headers=headers, timeout=timeout
+                )
+                audio.raise_for_status()
+                with open(filename, "wb") as f:
+                    f.write(audio.content)
+            finally:
+                # 4. Drop the server-side copy of the narration, even if the
+                # download failed part-way through — but not on a poll
+                # timeout, when the server may still be rendering it (the
+                # sweep script will reap it later).
+                if not timed_out and tts_config.get("delete_generations", True):
+                    self._delete_generation(gen_id)
+
             engine = tts_config.get("engine") or "kokoro"
             console.print(f"  - Generated audio with Voicebox ({engine})")
             return filename
@@ -484,6 +738,7 @@ class VoiceboxTTSProvider(TTSProvider):
                 f"  - Strict mode: not falling back to gTTS after {self.name} failed."
             )
             return None
+        self.fallback_count += 1
         gtts_provider = GTTSProvider(self.config)
         return gtts_provider.synthesize(text, filename)
 
@@ -563,6 +818,7 @@ class ElevenLabsTTSProvider(TTSProvider):
                 f"  - Strict mode: not falling back to gTTS after {self.name} failed."
             )
             return None
+        self.fallback_count += 1
         gtts_provider = GTTSProvider(self.config)
         return gtts_provider.synthesize(text, filename)
 
@@ -640,6 +896,7 @@ class OpenAICompatTTSProvider(TTSProvider):
                 f"  - Strict mode: not falling back to gTTS after {self.name} failed."
             )
             return None
+        self.fallback_count += 1
         gtts_provider = GTTSProvider(self.config)
         return gtts_provider.synthesize(text, filename)
 
@@ -681,8 +938,8 @@ class OpenAITTSProvider(TTSProvider):
                 input=text
             )
 
-            # Save to file
-            response.stream_to_file(filename)
+            # Save to file (stream_to_file is deprecated in the OpenAI SDK)
+            response.write_to_file(filename)
             console.print(f"  - Generated audio with OpenAI TTS ({voice})")
             return filename
 
@@ -700,5 +957,6 @@ class OpenAITTSProvider(TTSProvider):
                 f"  - Strict mode: not falling back to gTTS after {self.name} failed."
             )
             return None
+        self.fallback_count += 1
         gtts_provider = GTTSProvider(self.config)
         return gtts_provider.synthesize(text, filename)

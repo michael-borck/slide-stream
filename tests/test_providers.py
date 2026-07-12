@@ -75,9 +75,77 @@ def test_factory_unknown_image_provider_falls_back_to_text(config):
     assert isinstance(provider, TextImageProvider)
 
 
-def test_factory_default_tts_is_gtts(config):
+def _delenv_voicebox(monkeypatch):
+    monkeypatch.delenv("VOICEBOX_BASE_URL", raising=False)
+    monkeypatch.delenv("VOICEBOX_TOKEN", raising=False)
+
+
+def test_factory_default_tts_falls_back_to_gtts_without_a_server(config, monkeypatch):
+    """The default is voicebox, but with no server configured a bare install
+    must still render — so the factory quietly returns gTTS."""
+    _delenv_voicebox(monkeypatch)
+    assert config["providers"]["tts"]["provider"] == "voicebox"
     provider = ProviderFactory.create_tts_provider(config)
     assert isinstance(provider, GTTSProvider)
+
+
+def test_factory_unconfigured_default_does_not_error(config, capsys, monkeypatch):
+    """A zero-config user must not see a scary ❌; just a friendly hint."""
+    _delenv_voicebox(monkeypatch)
+    ProviderFactory.create_tts_provider(config)
+    captured = capsys.readouterr()
+    assert "not available" not in (captured.out + captured.err)
+
+
+def test_factory_configured_but_broken_tts_is_an_error(config, capsys):
+    """A voicebox with a base_url but a real failure is a genuine error."""
+    config["providers"]["tts"]["base_url"] = "https://vb.org"
+    # base_url set but no profile_id/voice_sample -> is_available() False, and
+    # this counts as "set up but unusable", not "never configured".
+    ProviderFactory.create_tts_provider(config)
+    captured = capsys.readouterr()
+    assert "not available" in (captured.out + captured.err)
+
+
+def test_factory_unconfigured_default_uses_gtts_even_in_strict(config, monkeypatch):
+    """Strict protects an explicitly-chosen provider; the unconfigured default
+    voicebox was never chosen, so a bare strict install still renders on gTTS
+    instead of aborting."""
+    _delenv_voicebox(monkeypatch)
+    config["settings"]["strict"] = True
+    provider = ProviderFactory.create_tts_provider(config)
+    assert isinstance(provider, GTTSProvider)
+
+
+def test_factory_env_configured_voicebox_is_not_silently_downgraded(
+    config, monkeypatch, capsys
+):
+    """A voicebox configured purely via env vars counts as configured: a
+    broken setup is reported as an error instead of quietly using gTTS."""
+    monkeypatch.setenv("VOICEBOX_BASE_URL", "https://vb.org")
+    # base_url alone (no profile_id/voice_sample) -> unavailable, a real error.
+    provider = ProviderFactory.create_tts_provider(config)
+    assert isinstance(provider, GTTSProvider)  # non-strict still falls back
+    captured = capsys.readouterr()
+    assert "not available" in (captured.out + captured.err)
+
+
+def test_factory_env_configured_voicebox_aborts_in_strict(config, monkeypatch):
+    """Strict mode must trigger for an env-var-configured (but broken)
+    provider rather than silently downgrading to gTTS."""
+    monkeypatch.setenv("VOICEBOX_BASE_URL", "https://vb.org")
+    config["settings"]["strict"] = True
+    with pytest.raises(StrictModeError):
+        ProviderFactory.create_tts_provider(config)
+
+
+def test_factory_configured_broken_voicebox_still_aborts_in_strict(config):
+    """But a voicebox the user did set up (base_url present) must still abort
+    under strict rather than silently swapping to gTTS."""
+    config["settings"]["strict"] = True
+    config["providers"]["tts"]["base_url"] = "https://vb.org"
+    with pytest.raises(StrictModeError):
+        ProviderFactory.create_tts_provider(config)
 
 
 def test_factory_unknown_tts_falls_back_to_gtts(config):
@@ -966,3 +1034,630 @@ def test_voicebox_strict_failure_returns_none(config, tmp_path, mocker):
 
 def test_factory_registers_voicebox():
     assert "voicebox" in ProviderFactory.list_tts_providers()
+
+
+# --- Voicebox ephemeral voice clone (create -> generate -> delete) ------------
+
+
+def _voicebox_clone_config(config, tmp_path):
+    sample = tmp_path / "voice.wav"
+    sample.write_bytes(b"RIFF")
+    config["providers"]["tts"] = {
+        "provider": "voicebox",
+        "base_url": "https://vb.org",
+        "voice_sample": str(sample),
+        "reference_text": "The exact words.",
+        "engine": "chatterbox",
+    }
+    return config
+
+
+def test_voicebox_available_with_voice_sample_and_no_profile(config, tmp_path):
+    from slide_stream.providers.tts import VoiceboxTTSProvider
+
+    config = _voicebox_clone_config(config, tmp_path)
+    assert VoiceboxTTSProvider(config).is_available() is True
+
+
+def test_voicebox_transcribes_sample_when_no_reference_text(config, tmp_path, mocker):
+    """Given only audio, the clip is transcribed via Voicebox and that text is
+    used as the clone's reference transcript."""
+    from slide_stream.providers.tts import VoiceboxTTSProvider
+
+    config = _voicebox_clone_config(config, tmp_path)
+    del config["providers"]["tts"]["reference_text"]
+
+    transcribe = mocker.MagicMock(status_code=200)
+    transcribe.json.return_value = {"text": "words from the clip", "duration": 6.0}
+    profile = mocker.MagicMock(status_code=200)
+    profile.json.return_value = {"id": "prof1"}
+    sample = mocker.MagicMock(status_code=200)
+    gen = mocker.MagicMock(status_code=200)
+    gen.json.return_value = {"id": "g1", "status": "completed"}
+    post = mocker.patch(
+        "slide_stream.providers.tts.requests.post",
+        side_effect=[transcribe, profile, sample, gen],
+    )
+    mocker.patch(
+        "slide_stream.providers.tts.requests.get",
+        return_value=mocker.MagicMock(content=b"AUDIO"),
+    )
+    mocker.patch("slide_stream.providers.tts.requests.delete")
+
+    out = tmp_path / "a.mp3"
+    assert VoiceboxTTSProvider(config).synthesize("hi", str(out)) == str(out)
+
+    # First call transcribes the clip...
+    assert post.call_args_list[0][0][0] == "https://vb.org/transcribe"
+    # ...and the transcript is what gets uploaded as the sample's reference.
+    assert post.call_args_list[2][0][0] == "https://vb.org/profiles/prof1/samples"
+    assert post.call_args_list[2][1]["data"]["reference_text"] == "words from the clip"
+
+
+def test_voicebox_waits_for_whisper_model_download(config, tmp_path, mocker):
+    """A 202 means the transcription model is downloading: wait and retry."""
+    from slide_stream.providers.tts import VoiceboxTTSProvider
+
+    config = _voicebox_clone_config(config, tmp_path)
+    del config["providers"]["tts"]["reference_text"]
+
+    downloading = mocker.MagicMock(status_code=202)
+    ready = mocker.MagicMock(status_code=200)
+    ready.json.return_value = {"text": "clip text", "duration": 5.0}
+    profile = mocker.MagicMock(status_code=200)
+    profile.json.return_value = {"id": "prof1"}
+    sample = mocker.MagicMock(status_code=200)
+    gen = mocker.MagicMock(status_code=200)
+    gen.json.return_value = {"id": "g1", "status": "completed"}
+    post = mocker.patch(
+        "slide_stream.providers.tts.requests.post",
+        side_effect=[downloading, ready, profile, sample, gen],
+    )
+    mocker.patch(
+        "slide_stream.providers.tts.requests.get",
+        return_value=mocker.MagicMock(content=b"A"),
+    )
+    mocker.patch("slide_stream.providers.tts.requests.delete")
+    sleep = mocker.patch("slide_stream.providers.tts.time.sleep")
+
+    out = tmp_path / "a.mp3"
+    assert VoiceboxTTSProvider(config).synthesize("hi", str(out)) == str(out)
+    # Transcribe was retried after the 202, and we slept in between.
+    transcribes = [c for c in post.call_args_list if c[0][0] == "https://vb.org/transcribe"]
+    assert len(transcribes) == 2
+    sleep.assert_called()
+
+
+def test_voicebox_no_profile_created_if_transcription_fails(config, tmp_path, mocker):
+    """Transcription runs before profile creation, so a failure leaks nothing."""
+    from slide_stream.providers.tts import VoiceboxTTSProvider
+
+    config = _voicebox_clone_config(config, tmp_path)
+    del config["providers"]["tts"]["reference_text"]
+    config["settings"]["strict"] = True
+
+    failed = mocker.MagicMock(status_code=500)
+    failed.raise_for_status.side_effect = RuntimeError("transcribe failed")
+    post = mocker.patch("slide_stream.providers.tts.requests.post", return_value=failed)
+    delete = mocker.patch("slide_stream.providers.tts.requests.delete")
+
+    provider = VoiceboxTTSProvider(config)
+    assert provider.synthesize("hi", str(tmp_path / "a.mp3")) is None
+    # Only the transcribe endpoint was hit; no profile to leak, nothing to delete.
+    assert all(c[0][0] == "https://vb.org/transcribe" for c in post.call_args_list)
+    provider.close()
+    delete.assert_not_called()
+
+
+def test_voicebox_reference_text_skips_transcription(config, tmp_path, mocker):
+    """When reference_text is given, we must not call the transcribe endpoint."""
+    from slide_stream.providers.tts import VoiceboxTTSProvider
+
+    config = _voicebox_clone_config(config, tmp_path)  # includes reference_text
+    profile = mocker.MagicMock(status_code=200)
+    profile.json.return_value = {"id": "prof1"}
+    gen = mocker.MagicMock(status_code=200)
+    gen.json.return_value = {"id": "g1", "status": "completed"}
+    post = mocker.patch(
+        "slide_stream.providers.tts.requests.post",
+        side_effect=[profile, mocker.MagicMock(status_code=200), gen],
+    )
+    mocker.patch(
+        "slide_stream.providers.tts.requests.get",
+        return_value=mocker.MagicMock(content=b"A"),
+    )
+    mocker.patch("slide_stream.providers.tts.requests.delete")
+
+    VoiceboxTTSProvider(config).synthesize("hi", str(tmp_path / "a.mp3"))
+    assert not any("/transcribe" in c[0][0] for c in post.call_args_list)
+
+
+def test_voicebox_clones_generates_then_deletes_everything(config, tmp_path, mocker):
+    from slide_stream.providers.tts import VoiceboxTTSProvider
+
+    config = _voicebox_clone_config(config, tmp_path)
+
+    profile = mocker.MagicMock()
+    profile.json.return_value = {"id": "prof1"}
+    sample = mocker.MagicMock()
+    gen = mocker.MagicMock()
+    gen.json.return_value = {"id": "g1", "status": "completed"}
+    post = mocker.patch(
+        "slide_stream.providers.tts.requests.post",
+        side_effect=[profile, sample, gen],
+    )
+    audio = mocker.MagicMock(content=b"AUDIO")
+    mocker.patch("slide_stream.providers.tts.requests.get", return_value=audio)
+    delete = mocker.patch("slide_stream.providers.tts.requests.delete")
+
+    provider = VoiceboxTTSProvider(config)
+    out = tmp_path / "a.mp3"
+    assert provider.synthesize("hello", str(out)) == str(out)
+    assert out.read_bytes() == b"AUDIO"
+
+    # Profile created as a cloned voice, then the sample uploaded to it.
+    assert post.call_args_list[0][0][0] == "https://vb.org/profiles"
+    assert post.call_args_list[0][1]["json"]["voice_type"] == "cloned"
+    assert post.call_args_list[1][0][0] == "https://vb.org/profiles/prof1/samples"
+    assert post.call_args_list[1][1]["data"]["reference_text"] == "The exact words."
+    # Generation ran against the freshly cloned profile.
+    assert post.call_args_list[2][1]["json"]["profile_id"] == "prof1"
+
+    # The rendered narration is dropped as soon as it is downloaded...
+    assert delete.call_args_list[0][0][0] == "https://vb.org/history/g1"
+    # ...and the clone itself only at end of run.
+    assert delete.call_count == 1
+    provider.close()
+    assert delete.call_args_list[1][0][0] == "https://vb.org/profiles/prof1"
+
+
+def test_voicebox_clone_reused_across_slides(config, tmp_path, mocker):
+    """The profile is created once per run, not once per slide."""
+    from slide_stream.providers.tts import VoiceboxTTSProvider
+
+    config = _voicebox_clone_config(config, tmp_path)
+    profile = mocker.MagicMock()
+    profile.json.return_value = {"id": "prof1"}
+    gen = mocker.MagicMock()
+    gen.json.return_value = {"id": "g1", "status": "completed"}
+    post = mocker.patch(
+        "slide_stream.providers.tts.requests.post",
+        side_effect=[profile, mocker.MagicMock(), gen, gen],
+    )
+    mocker.patch(
+        "slide_stream.providers.tts.requests.get",
+        return_value=mocker.MagicMock(content=b"A"),
+    )
+    mocker.patch("slide_stream.providers.tts.requests.delete")
+
+    provider = VoiceboxTTSProvider(config)
+    provider.synthesize("one", str(tmp_path / "1.mp3"))
+    provider.synthesize("two", str(tmp_path / "2.mp3"))
+
+    profile_creates = [
+        c for c in post.call_args_list if c[0][0] == "https://vb.org/profiles"
+    ]
+    assert len(profile_creates) == 1
+
+
+def test_voicebox_deletes_profile_if_sample_upload_fails(config, tmp_path, mocker):
+    """A half-built profile must not be left behind on the server."""
+    from slide_stream.providers.tts import VoiceboxTTSProvider
+
+    config = _voicebox_clone_config(config, tmp_path)
+    config["settings"]["strict"] = True
+    profile = mocker.MagicMock()
+    profile.json.return_value = {"id": "prof1"}
+    mocker.patch(
+        "slide_stream.providers.tts.requests.post",
+        side_effect=[profile, RuntimeError("upload failed")],
+    )
+    delete = mocker.patch("slide_stream.providers.tts.requests.delete")
+
+    provider = VoiceboxTTSProvider(config)
+    assert provider.synthesize("hi", str(tmp_path / "a.mp3")) is None
+    provider.close()
+    assert delete.call_args_list[-1][0][0] == "https://vb.org/profiles/prof1"
+
+
+def test_voicebox_persistent_profile_is_never_deleted(config, tmp_path, mocker):
+    """profile_id names a voice the user owns; close() must not delete it."""
+    from slide_stream.providers.tts import VoiceboxTTSProvider
+
+    config["providers"]["tts"] = {
+        "provider": "voicebox", "base_url": "https://vb.org", "profile_id": "keepme",
+    }
+    gen = mocker.MagicMock()
+    gen.json.return_value = {"id": "g1", "status": "completed"}
+    mocker.patch("slide_stream.providers.tts.requests.post", return_value=gen)
+    mocker.patch(
+        "slide_stream.providers.tts.requests.get",
+        return_value=mocker.MagicMock(content=b"A"),
+    )
+    delete = mocker.patch("slide_stream.providers.tts.requests.delete")
+
+    provider = VoiceboxTTSProvider(config)
+    provider.synthesize("hi", str(tmp_path / "a.mp3"))
+    provider.close()
+
+    deleted = [c[0][0] for c in delete.call_args_list]
+    assert "https://vb.org/profiles/keepme" not in deleted
+    assert "https://vb.org/history/g1" in deleted
+
+
+def test_voicebox_delete_generations_can_be_disabled(config, tmp_path, mocker):
+    from slide_stream.providers.tts import VoiceboxTTSProvider
+
+    config["providers"]["tts"] = {
+        "provider": "voicebox", "base_url": "https://vb.org",
+        "profile_id": "p1", "delete_generations": False,
+    }
+    gen = mocker.MagicMock()
+    gen.json.return_value = {"id": "g1", "status": "completed"}
+    mocker.patch("slide_stream.providers.tts.requests.post", return_value=gen)
+    mocker.patch(
+        "slide_stream.providers.tts.requests.get",
+        return_value=mocker.MagicMock(content=b"A"),
+    )
+    delete = mocker.patch("slide_stream.providers.tts.requests.delete")
+
+    VoiceboxTTSProvider(config).synthesize("hi", str(tmp_path / "a.mp3"))
+    delete.assert_not_called()
+
+
+def test_voicebox_deletes_generation_even_if_download_fails(config, tmp_path, mocker):
+    """A failed download must not strand rendered narration on the server."""
+    from slide_stream.providers.tts import VoiceboxTTSProvider
+
+    config["providers"]["tts"] = {
+        "provider": "voicebox", "base_url": "https://vb.org", "profile_id": "p1",
+    }
+    config["settings"]["strict"] = True
+    gen = mocker.MagicMock()
+    gen.json.return_value = {"id": "g1", "status": "completed"}
+    mocker.patch("slide_stream.providers.tts.requests.post", return_value=gen)
+    mocker.patch(
+        "slide_stream.providers.tts.requests.get",
+        side_effect=RuntimeError("connection reset"),
+    )
+    delete = mocker.patch("slide_stream.providers.tts.requests.delete")
+
+    assert VoiceboxTTSProvider(config).synthesize("hi", str(tmp_path / "a.mp3")) is None
+    assert delete.call_args_list[0][0][0] == "https://vb.org/history/g1"
+
+
+def test_voicebox_cleanup_failure_warns_but_does_not_raise(config, tmp_path, mocker):
+    """close() runs in a finally; it must never mask the original error."""
+    from slide_stream.providers.tts import VoiceboxTTSProvider
+
+    config = _voicebox_clone_config(config, tmp_path)
+    provider = VoiceboxTTSProvider(config)
+    provider._session_profile_id = "prof1"
+    mocker.patch(
+        "slide_stream.providers.tts.requests.delete",
+        side_effect=RuntimeError("server down"),
+    )
+    provider.close()  # must not raise
+    assert provider._session_profile_id is None
+
+
+def test_voicebox_voice_sample_beats_profile_id(config, tmp_path, mocker):
+    """An explicit voice_sample wins over a configured profile_id: the user's
+    uploaded recording must not be silently ignored (serve use-case)."""
+    from slide_stream.providers.tts import VoiceboxTTSProvider
+
+    config = _voicebox_clone_config(config, tmp_path)
+    config["providers"]["tts"]["profile_id"] = "configured-profile"
+
+    profile = mocker.MagicMock()
+    profile.json.return_value = {"id": "ephemeral-prof"}
+    gen = mocker.MagicMock()
+    gen.json.return_value = {"id": "g1", "status": "completed"}
+    post = mocker.patch(
+        "slide_stream.providers.tts.requests.post",
+        side_effect=[profile, mocker.MagicMock(), gen],
+    )
+    mocker.patch(
+        "slide_stream.providers.tts.requests.get",
+        return_value=mocker.MagicMock(content=b"A"),
+    )
+    mocker.patch("slide_stream.providers.tts.requests.delete")
+
+    provider = VoiceboxTTSProvider(config)
+    out = tmp_path / "a.mp3"
+    assert provider.synthesize("hi", str(out)) == str(out)
+
+    # The clone was created and generation ran against it, not the
+    # configured persistent profile.
+    gen_calls = [c for c in post.call_args_list if c[0][0] == "https://vb.org/generate"]
+    assert gen_calls[0][1]["json"]["profile_id"] == "ephemeral-prof"
+
+
+# --- Voicebox polling: failed / timeout / unknown in-progress statuses --------
+
+
+def _voicebox_profile_config(config, **overrides):
+    config["providers"]["tts"] = {
+        "provider": "voicebox", "base_url": "https://vb.org",
+        "profile_id": "p1", "poll_interval": 0,
+        **overrides,
+    }
+    return config
+
+
+def test_voicebox_failed_generation_raises_instead_of_fetching_audio(
+    config, tmp_path, mocker
+):
+    """A terminal 'failed' status must surface the server's error, not fetch
+    /audio/{id} as if it had succeeded."""
+    from slide_stream.providers.tts import VoiceboxTTSProvider
+
+    _voicebox_profile_config(config)
+    config["settings"]["strict"] = True
+    gen = mocker.MagicMock()
+    gen.json.return_value = {"id": "g1", "status": "generating"}
+    mocker.patch("slide_stream.providers.tts.requests.post", return_value=gen)
+    failed = mocker.MagicMock()
+    failed.json.return_value = {"status": "failed", "error": "engine crashed"}
+    get = mocker.patch("slide_stream.providers.tts.requests.get", return_value=failed)
+    delete = mocker.patch("slide_stream.providers.tts.requests.delete")
+    mocker.patch("slide_stream.providers.tts.time.sleep")
+
+    out = tmp_path / "a.mp3"
+    assert VoiceboxTTSProvider(config).synthesize("hi", str(out)) is None
+    # The audio endpoint was never hit...
+    assert not any("/audio/" in c[0][0] for c in get.call_args_list)
+    # ...but the failed generation row is still cleaned up (terminal state).
+    assert delete.call_args_list[0][0][0] == "https://vb.org/history/g1"
+    assert not out.exists()
+
+
+def test_voicebox_poll_timeout_raises_and_keeps_generation(config, tmp_path, mocker):
+    """When the deadline expires mid-render, raise TimeoutError and do NOT
+    delete the generation — the server may still be writing it."""
+    from slide_stream.providers.tts import VoiceboxTTSProvider
+
+    _voicebox_profile_config(config)
+    config["settings"]["strict"] = True
+    gen = mocker.MagicMock()
+    gen.json.return_value = {"id": "g1", "status": "generating"}
+    mocker.patch("slide_stream.providers.tts.requests.post", return_value=gen)
+    get = mocker.patch("slide_stream.providers.tts.requests.get")
+    delete = mocker.patch("slide_stream.providers.tts.requests.delete")
+    # First call computes the deadline; the loop check then sees it expired.
+    mocker.patch(
+        "slide_stream.providers.tts.time.monotonic", side_effect=[0.0, 1000.0]
+    )
+    mocker.patch("slide_stream.providers.tts.time.sleep")
+
+    assert VoiceboxTTSProvider(config).synthesize("hi", str(tmp_path / "a.mp3")) is None
+    delete.assert_not_called()
+    get.assert_not_called()
+
+
+def test_voicebox_pending_and_queued_poll_like_generating(config, tmp_path, mocker):
+    """Unknown in-progress statuses (pending/queued) keep polling until a
+    terminal status arrives."""
+    from slide_stream.providers.tts import VoiceboxTTSProvider
+
+    _voicebox_profile_config(config)
+    gen = mocker.MagicMock()
+    gen.json.return_value = {"id": "g1", "status": "pending"}
+    mocker.patch("slide_stream.providers.tts.requests.post", return_value=gen)
+    queued = mocker.MagicMock()
+    queued.json.return_value = {"status": "queued"}
+    done = mocker.MagicMock()
+    done.json.return_value = {"status": "completed"}
+    audio = mocker.MagicMock(content=b"OK")
+    get = mocker.patch(
+        "slide_stream.providers.tts.requests.get",
+        side_effect=[queued, done, audio],
+    )
+    mocker.patch("slide_stream.providers.tts.requests.delete")
+    mocker.patch("slide_stream.providers.tts.time.sleep")
+
+    out = tmp_path / "a.mp3"
+    assert VoiceboxTTSProvider(config).synthesize("hi", str(out)) == str(out)
+    assert out.read_bytes() == b"OK"
+    assert get.call_args_list[-1][0][0] == "https://vb.org/audio/g1"
+
+
+# --- Strict mode for SwarmUI / Gemini image fallbacks -------------------------
+
+
+def test_swarmui_strict_raises_instead_of_text_fallback(config, tmp_path, mocker):
+    from slide_stream.providers.images import SwarmUIImageProvider
+
+    config["settings"]["strict"] = True
+    config["providers"]["images"] = {
+        "provider": "swarmui", "base_url": "https://image.example.org",
+    }
+    mocker.patch(
+        "slide_stream.providers.images.requests.post",
+        side_effect=RuntimeError("server down"),
+    )
+
+    out = tmp_path / "img.png"
+    with pytest.raises(StrictModeError):
+        SwarmUIImageProvider(config).generate_image("query", str(out))
+    assert not out.exists()
+
+
+def test_gemini_strict_raises_instead_of_text_fallback(config, tmp_path):
+    from slide_stream.providers.images import GeminiImageProvider
+
+    config["settings"]["strict"] = True
+    config["api_keys"] = {"gemini": "g-test"}
+    out = tmp_path / "img.png"
+    # google-genai is not installed in the test env: the ImportError path must
+    # also refuse the text fallback under strict.
+    with pytest.raises(StrictModeError):
+        GeminiImageProvider(config).generate_image("query", str(out))
+    assert not out.exists()
+
+
+def test_factory_unusable_image_fallback_drops_to_text(config, monkeypatch):
+    """A configured fallback that is itself unusable must not be returned;
+    the factory drops to the always-available text provider instead."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("PEXELS_API_KEY", raising=False)
+    config["api_keys"] = {}
+    config["providers"]["images"]["provider"] = "dalle3"
+    config["providers"]["images"]["fallback"] = "pexels"
+
+    provider = ProviderFactory.create_image_provider(config)
+    assert isinstance(provider, TextImageProvider)
+
+
+# --- gTTS fallback counter (read by cli.py to warn the user) ------------------
+
+
+def test_fallback_count_starts_at_zero_on_all_tts_providers(config):
+    for provider_class in ProviderFactory.TTS_PROVIDERS.values():
+        assert provider_class(config).fallback_count == 0
+
+
+def test_fallback_count_increments_on_each_gtts_fallback(config, tmp_path, mocker):
+    config["api_keys"] = {"elevenlabs": "el-test"}
+    fake_client = mocker.MagicMock()
+    fake_client.text_to_speech.convert.side_effect = RuntimeError("api down")
+    mocker.patch("elevenlabs.client.ElevenLabs", return_value=fake_client)
+
+    def fake_save(filename):
+        with open(filename, "wb") as f:
+            f.write(b"fallback")
+
+    fake_tts = mocker.MagicMock()
+    fake_tts.save.side_effect = fake_save
+    mocker.patch("gtts.gTTS", return_value=fake_tts)
+
+    provider = ElevenLabsTTSProvider(config)
+    assert provider.fallback_count == 0
+    provider.synthesize("one", str(tmp_path / "1.mp3"))
+    provider.synthesize("two", str(tmp_path / "2.mp3"))
+    assert provider.fallback_count == 2
+
+
+def test_fallback_count_not_incremented_in_strict_mode(config, tmp_path, monkeypatch):
+    """Strict mode refuses the fallback, so nothing was synthesized with the
+    wrong voice and the counter must stay at zero."""
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    config["settings"]["strict"] = True
+
+    provider = ElevenLabsTTSProvider(config)
+    assert provider.synthesize("x", str(tmp_path / "a.mp3")) is None
+    assert provider.fallback_count == 0
+
+
+# --- Per-instance session state ------------------------------------------------
+
+
+def test_tts_session_state_is_per_instance(config):
+    """Session state must live on the instance (set in __init__), not on the
+    class, so two runs in one process can never share uploads/profiles."""
+    from slide_stream.providers.tts import ChatterboxTTSProvider, VoiceboxTTSProvider
+
+    assert "_session_voice" in vars(ChatterboxTTSProvider(config))
+    voicebox = VoiceboxTTSProvider(config)
+    assert "_session_profile_id" in vars(voicebox)
+    assert "_profile_ready" in vars(voicebox)
+    assert "_engine" in vars(KokoroTTSProvider(config))
+
+
+# --- Kokoro output format ------------------------------------------------------
+
+
+def test_kokoro_forces_wav_format_despite_mp3_filename(
+    config, tmp_path, mocker, monkeypatch
+):
+    """soundfile picks the encoder from the extension; the .mp3 pipeline name
+    must not make it try MP3 encoding (needs lame-enabled libsndfile). The
+    write is forced to WAV, at the caller's own path."""
+    import sys
+    from pathlib import Path
+
+    written = {}
+    fake_sf = mocker.MagicMock()
+
+    def fake_write(fname, samples, rate, format=None):
+        written["fname"] = fname
+        written["format"] = format
+        Path(fname).write_bytes(b"RIFFdata")
+
+    fake_sf.write.side_effect = fake_write
+    monkeypatch.setitem(sys.modules, "soundfile", fake_sf)
+    monkeypatch.setitem(sys.modules, "kokoro_onnx", mocker.MagicMock())
+
+    provider = KokoroTTSProvider(config)
+    provider._engine = mocker.MagicMock()
+    provider._engine.create.return_value = ([0.0], 24000)
+
+    out = tmp_path / "audio.mp3"
+    assert provider.synthesize("hi", str(out)) == str(out)
+    assert written["fname"] == str(out)
+    assert written["format"] == "WAV"
+
+
+# --- Temp WAV cleanup on ffmpeg failure -----------------------------------------
+
+
+def test_prepare_sample_as_wav_cleans_temp_on_ffmpeg_failure(tmp_path, mocker):
+    import subprocess as sp
+    import tempfile as tf
+    from pathlib import Path
+
+    from slide_stream.providers.tts import _prepare_sample_as_wav
+
+    sample = tmp_path / "memo.m4a"
+    sample.write_bytes(b"m4a")
+
+    created = {}
+    real_mkstemp = tf.mkstemp
+
+    def recording_mkstemp(*args, **kwargs):
+        fd, path = real_mkstemp(*args, **kwargs)
+        created["path"] = path
+        return fd, path
+
+    mocker.patch(
+        "slide_stream.providers.tts.tempfile.mkstemp",
+        side_effect=recording_mkstemp,
+    )
+    mocker.patch(
+        "slide_stream.providers.tts.shutil.which", return_value="/usr/bin/ffmpeg"
+    )
+    mocker.patch(
+        "slide_stream.providers.tts.subprocess.run",
+        side_effect=sp.CalledProcessError(1, "ffmpeg"),
+    )
+
+    with pytest.raises(sp.CalledProcessError):
+        _prepare_sample_as_wav(sample)
+    assert not Path(created["path"]).exists()
+
+
+# --- OpenAI TTS uses the non-deprecated writer ----------------------------------
+
+
+def test_openai_tts_uses_write_to_file(config, tmp_path, mocker):
+    from slide_stream.providers.tts import OpenAITTSProvider
+
+    config["api_keys"] = {"openai": "sk-test"}
+
+    def fake_write(filename):
+        with open(filename, "wb") as f:
+            f.write(b"openai-audio")
+
+    fake_response = mocker.MagicMock()
+    fake_response.write_to_file.side_effect = fake_write
+    fake_client = mocker.MagicMock()
+    fake_client.audio.speech.create.return_value = fake_response
+    mocker.patch("openai.OpenAI", return_value=fake_client)
+
+    out = tmp_path / "audio.mp3"
+    result = OpenAITTSProvider(config).synthesize("Hello", str(out))
+
+    assert result == str(out)
+    assert out.read_bytes() == b"openai-audio"
+    fake_response.write_to_file.assert_called_once_with(str(out))
+    fake_response.stream_to_file.assert_not_called()

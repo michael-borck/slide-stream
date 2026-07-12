@@ -1,5 +1,6 @@
 """Provider factory for creating and managing providers."""
 
+import os
 from typing import Any
 
 from rich.console import Console
@@ -43,6 +44,34 @@ from .tts import (
 
 console = Console()
 err_console = Console(stderr=True, style="bold red")
+
+# TTS providers that need a self-hosted server URL to do anything. When one of
+# these is selected (e.g. the default, voicebox) but no connection details are
+# set, that just means "not configured yet" — a quiet gTTS fallback, not an
+# error. Providers keyed on an API key (elevenlabs/openai) or a local package
+# (kokoro) are the user's explicit choice, so their unavailability is an error.
+_SERVER_TTS_PROVIDERS = ("voicebox", "chatterbox", "openai-compatible")
+_TTS_CONNECTION_KEYS = ("base_url", "api_key", "profile_id", "voice_sample")
+# The env vars each server provider reads for its connection details (see the
+# provider implementations in tts.py). A user configured purely via env vars
+# is configured, and must not be silently downgraded to gTTS.
+_SERVER_TTS_ENV_VARS = {
+    "voicebox": ("VOICEBOX_BASE_URL", "VOICEBOX_TOKEN"),
+    "chatterbox": ("CHATTERBOX_BASE_URL", "CHATTERBOX_TOKEN"),
+    "openai-compatible": ("OPENAI_BASE_URL",),
+}
+
+
+def _tts_unconfigured(provider_name: str, tts_config: dict[str, Any]) -> bool:
+    """True when a server TTS provider has no connection details set at all,
+    neither in config keys nor in the env vars the provider itself reads."""
+    if provider_name not in _SERVER_TTS_PROVIDERS:
+        return False
+    if any(tts_config.get(key) for key in _TTS_CONNECTION_KEYS):
+        return False
+    return not any(
+        os.getenv(var) for var in _SERVER_TTS_ENV_VARS.get(provider_name, ())
+    )
 
 
 class ProviderFactory:
@@ -109,14 +138,20 @@ class ProviderFactory:
                 "and fallback is disabled."
             )
 
-        # Fallback to backup provider
+        # Fallback to backup provider — only if it is actually usable.
         if fallback_name in cls.IMAGE_PROVIDERS:
             fallback_class = cls.IMAGE_PROVIDERS[fallback_name]
             fallback_provider = fallback_class(config)
-            console.print(f"🔄 Falling back to: {fallback_provider.name}")
-            return fallback_provider
+            if fallback_provider.is_available():
+                console.print(f"🔄 Falling back to: {fallback_provider.name}")
+                return fallback_provider
+            err_console.print(
+                f"❌ Fallback image provider '{fallback_provider.name}' "
+                "not available either."
+            )
 
         # Final fallback to text
+        console.print("🔄 Falling back to: text")
         return TextImageProvider(config)
 
     @classmethod
@@ -135,8 +170,23 @@ class ProviderFactory:
             if provider.is_available():
                 console.print(f"✅ TTS Provider: {provider.name}")
                 return provider
-            else:
-                err_console.print(f"❌ {provider.name} not available (missing API key?)")
+
+            # A server provider with no connection details at all was never
+            # really chosen — it's just the default (voicebox) on a bare
+            # install. There is nothing for strict mode to protect, so use the
+            # free default rather than erroring or aborting.
+            if _tts_unconfigured(provider_name, tts_config):
+                console.print(
+                    f"🔊 No {provider.name} server configured — using free gTTS. "
+                    f"Set providers.tts.base_url to enable {provider.name}."
+                )
+                return GTTSProvider(config)
+
+            # Configured but unusable: a genuine error the user should see.
+            err_console.print(
+                f"❌ {provider.name} not available "
+                "(check base_url / API key / voice settings)."
+            )
         else:
             err_console.print(f"❌ Unknown TTS provider: {provider_name}")
 
@@ -205,7 +255,7 @@ class ProviderFactory:
             "gtts": "Google Text-to-Speech (free, no API key; requires an internet connection)",
             "kokoro": "Kokoro local TTS — fully offline (pip install 'slide-stream[local-tts]'; ~340MB one-time model download)",
             "chatterbox": "Self-hosted Chatterbox voice cloning (set base_url; voice_sample uploads ephemerally per run)",
-            "voicebox": "Self-hosted Voicebox studio (set base_url + profile_id; multi-engine: kokoro/chatterbox/qwen/...)",
+            "voicebox": "Self-hosted Voicebox studio (base_url + profile_id, or voice_sample+reference_text for an ephemeral clone deleted after the run; multi-engine: kokoro/chatterbox/qwen/...)",
             "elevenlabs": "ElevenLabs premium TTS (requires ElevenLabs API key)",
             "openai": "OpenAI TTS (requires OpenAI API key)",
             "openai-compatible": "Any OpenAI-compatible speech endpoint (set base_url; local or hosted)",

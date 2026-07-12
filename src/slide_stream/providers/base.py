@@ -55,6 +55,10 @@ class TTSProvider(ABC):
     def __init__(self, config: dict[str, Any]):
         """Initialize the provider with configuration."""
         self.config = config
+        # Incremented each time a synthesis quietly falls back to gTTS, so the
+        # CLI can warn the user afterwards that some slides do not use the
+        # configured voice. Read via getattr(provider, "fallback_count", 0).
+        self.fallback_count: int = 0
 
     @abstractmethod
     def synthesize(self, text: str, filename: str) -> str | None:
@@ -79,6 +83,14 @@ class TTSProvider(ABC):
     def is_available(self) -> bool:
         """Check if provider is properly configured and available."""
         pass
+
+    def close(self) -> None:
+        """Release any per-run server-side resources.
+
+        Called once at the end of a run, on success and failure alike.
+        Providers that upload a voice clone override this to delete it.
+        """
+        return None
 
 
 class AvatarProvider(ABC):
