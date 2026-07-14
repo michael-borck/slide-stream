@@ -20,7 +20,7 @@ jobs:
         include:
           - os: macos-latest      # Apple Silicon
             name: macos-arm64
-          - os: macos-13          # Intel
+          - os: macos-15-intel    # Intel
             name: macos-x64
           - os: ubuntu-22.04
             name: linux-x64
