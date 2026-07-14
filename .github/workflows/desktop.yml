@@ -49,6 +49,14 @@ jobs:
 
       - name: Build
         working-directory: desktop
+        env:
+          # macOS code signing + notarization (no-ops on linux/windows)
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: npx --yes @tauri-apps/cli@^2 build
 
       # Stable asset names so the landing page can deep-link
