@@ -84,6 +84,7 @@ jobs:
           name: slidestream-desktop-${{ matrix.name }}
           path: desktop/src-tauri/target/release/bundle/out/*
           if-no-files-found: warn
+          retention-days: 5
 
       - name: Attach to release (tag builds)
         if: startsWith(github.ref, 'refs/tags/desktop-v')
