@@ -37,6 +37,10 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      # Stock-photo image providers (free with a signup key): pexels->
+      # PEXELS_API_KEY, unsplash->UNSPLASH_ACCESS_KEY.
+      PEXELS_API_KEY: ${PEXELS_API_KEY:-}
+      UNSPLASH_ACCESS_KEY: ${UNSPLASH_ACCESS_KEY:-}
       # Bearer tokens for your self-hosted services (referenced as ${VAR} in
       # slidestream.yaml). Only set the ones your config actually uses.
       CHATTERBOX_TOKEN: ${CHATTERBOX_TOKEN:-}
