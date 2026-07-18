@@ -11,6 +11,7 @@ from moviepy import (
     VideoFileClip,
     concatenate_videoclips,
 )
+from moviepy.video.fx import Loop
 from PIL import Image, ImageDraw
 from rich.console import Console
 
@@ -29,8 +30,9 @@ def _build_head_overlay(
 
     The head clip's own audio is always dropped so the fragment's TTS track
     stays the single audio source (sync issues are impossible at composite
-    time). The clip is trimmed to the fragment duration, or its last frame is
-    frozen to fill it (e.g. through the slide's padding second).
+    time). The clip is trimmed to the fragment duration; a much shorter clip
+    (a short talking loop, e.g. wan-s2v) is looped to fill it, while one that
+    only falls short by the padding tail simply holds its last frame.
 
     Returns ``(overlay, source)``: the positioned overlay clip plus the
     underlying ``VideoFileClip``, which the caller must close — closing a
@@ -58,11 +60,19 @@ def _build_head_overlay(
         if head.duration > duration:
             head = head.subclipped(0, duration)
         elif head.duration < duration:
-            frame_time = max(head.duration - 1.0 / 30.0, 0)
-            pad = head.to_ImageClip(t=frame_time).with_duration(
-                duration - head.duration
-            )
-            head = concatenate_videoclips([head, pad])
+            # A clip much shorter than the slide is a short talking loop (e.g.
+            # wan-s2v's default ~4s clip): loop it to fill, so the head keeps
+            # animating rather than freezing partway through. A clip that only
+            # falls short by the padding tail just holds its last frame — no
+            # jarring snap back to the start pose.
+            if head.duration < duration * 0.75:
+                head = head.with_effects([Loop(duration=duration)])
+            else:
+                frame_time = max(head.duration - 1.0 / 30.0, 0)
+                pad = head.to_ImageClip(t=frame_time).with_duration(
+                    duration - head.duration
+                )
+                head = concatenate_videoclips([head, pad])
 
         # Circular alpha mask drawn with PIL.
         mask_image = Image.new("L", (diameter, diameter), 0)

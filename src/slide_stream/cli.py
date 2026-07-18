@@ -1016,10 +1016,12 @@ def avatars() -> None:
         table.add_row(name, label)
     console.print(table)
     console.print(
-        "\n[dim]Use with the 'static' avatar provider (image in the corner, no "
-        "GPU) or a stylized-capable lip-sync engine like d-id:\n"
+        "\n[dim]Held still in the corner (no GPU):\n"
         "  providers.avatar: {provider: static, source: teddy}\n"
-        "Stylized faces do NOT lip-sync on SadTalker/Wav2Lip (human faces only).[/dim]"
+        "Animated (lip-synced to the narration) via a ComfyUI server — wan-s2v "
+        "has no face detector, so it animates these mascots and human head shots:\n"
+        "  providers.avatar: {provider: wan-s2v, base_url: <comfyui>, source: owl}\n"
+        "Note: SadTalker/Wav2Lip are human-faces-only and will NOT animate these.[/dim]"
     )
 
 

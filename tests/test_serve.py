@@ -190,6 +190,47 @@ def test_job_config_mascot_animate_toggle(base_config, tmp_path):
     assert off["providers"]["avatar"]["provider"] == "static"
 
 
+def test_job_config_mascot_animates_via_wan_s2v_when_configured(base_config, tmp_path):
+    """With a detector-free engine configured, an animated mascot lip-syncs
+    for real (wan-s2v) instead of falling back to the puppet mouth-flap."""
+    import yaml
+
+    base_config["providers"]["avatar"] = {
+        "provider": "wan-s2v", "base_url": "https://comfy.example.org",
+        "api_key": "tok",
+    }
+    workdir = tmp_path / "job"
+    workdir.mkdir()
+    cfg = yaml.safe_load(serve._build_job_config(
+        base_config, workdir, {"avatar": True, "avatar_name": "owl"}, None, None
+    ).read_text())
+    av = cfg["providers"]["avatar"]
+    assert av["provider"] == "wan-s2v"
+    assert av["source"] == "owl"
+    assert av["base_url"] == "https://comfy.example.org"  # server connection kept
+    # Animate off still holds the mascot as a static image, engine or not.
+    off = yaml.safe_load(serve._build_job_config(
+        base_config, workdir, {"avatar": False, "avatar_name": "owl"}, None, None
+    ).read_text())
+    assert off["providers"]["avatar"]["provider"] == "static"
+
+
+def test_job_config_mascot_falls_back_to_puppet_for_human_only_engine(base_config, tmp_path):
+    """A human-only engine (sadtalker) can't animate a mascot, so it still
+    falls back to the puppet mouth-flap rather than a doomed render."""
+    import yaml
+
+    base_config["providers"]["avatar"] = {
+        "provider": "sadtalker", "base_url": "https://comfy.example.org",
+    }
+    workdir = tmp_path / "job"
+    workdir.mkdir()
+    cfg = yaml.safe_load(serve._build_job_config(
+        base_config, workdir, {"avatar": True, "avatar_name": "teddy"}, None, None
+    ).read_text())
+    assert cfg["providers"]["avatar"]["provider"] == "puppet"
+
+
 def test_job_config_video_always_animates(base_config, tmp_path):
     """A video presenter uses the video engine even with animate off."""
     import yaml

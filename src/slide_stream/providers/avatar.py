@@ -11,7 +11,7 @@ from typing import Any
 import requests
 from rich.console import Console
 
-from ..avatars import mouth_box, resolve_avatar
+from ..avatars import avatar_prompt, mouth_box, resolve_avatar
 from .base import AvatarProvider
 
 # Proven SadTalker ComfyUI workflow (see docs referenced by sadtalker-api.md):
@@ -58,8 +58,53 @@ WAV2LIP_WORKFLOW: dict[str, Any] = {
         "format": "video/h264-mp4", "pingpong": True, "save_output": True}},
 }
 
+# Proven Wan2.2-S2V ComfyUI workflow (see docs/wan-s2v-api.md): still image +
+# audio -> lip-synced video, with NO face detector anywhere in the path, so it
+# animates non-human mascots and human head shots alike. Node 8/9 hold the
+# positive/negative prompts, 10 the frame size + length (4n+1 @ 16fps), 11 the
+# sampler; node 14 (SaveVideo) surfaces the MP4 under gifs[0].
+WAN_S2V_WORKFLOW: dict[str, Any] = {
+    "1": {"class_type": "UNETLoader", "inputs": {
+        "unet_name": "wan2.2_s2v_14B_fp8_scaled.safetensors", "weight_dtype": "default"}},
+    "2": {"class_type": "CLIPLoader", "inputs": {
+        "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors", "type": "wan"}},
+    "3": {"class_type": "VAELoader", "inputs": {"vae_name": "wan_2.1_vae.safetensors"}},
+    "4": {"class_type": "AudioEncoderLoader", "inputs": {
+        "audio_encoder_name": "wav2vec2_large_english_fp16.safetensors"}},
+    "5": {"class_type": "LoadAudio", "inputs": {"audio": "voice.wav"}},
+    "6": {"class_type": "AudioEncoderEncode", "inputs": {
+        "audio_encoder": ["4", 0], "audio": ["5", 0]}},
+    "7": {"class_type": "LoadImage", "inputs": {"image": "character.png"}},
+    "8": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": ""}},
+    "9": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": ""}},
+    "10": {"class_type": "WanSoundImageToVideo", "inputs": {
+        "positive": ["8", 0], "negative": ["9", 0], "vae": ["3", 0],
+        "audio_encoder_output": ["6", 0], "ref_image": ["7", 0],
+        "width": 448, "height": 608, "length": 49}},
+    "11": {"class_type": "KSampler", "inputs": {
+        "model": ["1", 0], "positive": ["10", 0], "negative": ["10", 1],
+        "latent_image": ["10", 2], "seed": 42, "steps": 20, "cfg": 6.0,
+        "sampler_name": "uni_pc", "scheduler": "simple", "denoise": 1.0}},
+    "12": {"class_type": "VAEDecode", "inputs": {"samples": ["11", 0], "vae": ["3", 0]}},
+    "13": {"class_type": "CreateVideo", "inputs": {
+        "images": ["12", 0], "fps": 16, "audio": ["5", 0]}},
+    "14": {"class_type": "SaveVideo", "inputs": {
+        "video": ["13", 0], "filename_prefix": "s2v", "format": "mp4", "codec": "h264"}},
+}
+
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
 VIDEO_EXTS = {".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v"}
+
+
+def _s2v_length(seconds: float, fps: int = 16) -> int:
+    """Frame count for a Wan2.2-S2V run: the nearest valid ``4n+1`` at 16fps.
+
+    Wan runs at 16fps and requires ``length == 4n+1`` (n>=1), so 3s->49,
+    4s->65, 5s->81. Sub-second audio still yields a minimal 5-frame clip.
+    """
+    frames = max(1, round(seconds * fps))
+    n = max(1, round((frames - 1) / 4))
+    return n * 4 + 1
 
 
 def _source_kind(path: str) -> str:
@@ -447,6 +492,17 @@ class _ComfyUIAvatar(AvatarProvider):
         """'image' or 'video' — detected from the source by default."""
         return _source_kind(self._source() or "")
 
+    def _output_style(self) -> str:
+        """Which history field holds the result: 'image' -> show_video_path,
+        'video' -> gifs. Defaults to the source kind (SadTalker vs Wav2Lip);
+        S2V overrides it because it takes an image but emits a gifs video."""
+        return self._kind()
+
+    def _pre_generate(self, base_url: str, headers: dict[str, str]) -> None:
+        """Hook run just before the workflow is queued. No-op by default;
+        S2V overrides it to free VRAM (POST /free)."""
+        return None
+
     def is_available(self) -> bool:
         """Available when a ComfyUI URL and a source are configured."""
         return bool(self._base_url() and self._source())
@@ -478,7 +534,9 @@ class _ComfyUIAvatar(AvatarProvider):
             console.print("  - Uploaded avatar source to ComfyUI")
         return self._source_name
 
-    def _build_workflow(self, kind: str, source_name: str, audio_name: str) -> dict[str, Any]:
+    def _build_workflow(
+        self, kind: str, source_name: str, audio_name: str, audio_seconds: float = 0.0
+    ) -> dict[str, Any]:
         import copy
 
         cfg = self._avatar_config()
@@ -522,10 +580,16 @@ class _ComfyUIAvatar(AvatarProvider):
             audio_16k, is_temp = _to_16k_wav(audio_path)
             try:
                 audio_name = self._upload(Path(audio_16k))
+                audio_seconds = _wav_seconds(audio_16k)
             finally:
                 if is_temp:
                     Path(audio_16k).unlink(missing_ok=True)
-            workflow = self._build_workflow(kind, source_name, audio_name)
+            workflow = self._build_workflow(
+                kind, source_name, audio_name, audio_seconds
+            )
+
+            # Provider-specific pre-flight (e.g. S2V frees VRAM before queueing).
+            self._pre_generate(base_url, headers)
 
             # 1. Submit the workflow.
             submit = requests.post(
@@ -551,7 +615,9 @@ class _ComfyUIAvatar(AvatarProvider):
                 if entry:
                     status_str = entry.get("status", {}).get("status_str")
                     if status_str == "success":
-                        found = _find_output_path(kind, entry.get("outputs", {}))
+                        found = _find_output_path(
+                            self._output_style(), entry.get("outputs", {})
+                        )
                         if found:
                             video_path, subfolder = found
                         break
@@ -640,6 +706,101 @@ class ComfyUIAvatarProvider(_ComfyUIAvatar):
     def _source(self) -> str | None:
         cfg = self._avatar_config()
         return cfg.get("source") or cfg.get("source_image") or cfg.get("source_video")
+
+
+class WanS2VAvatarProvider(_ComfyUIAvatar):
+    """Wan2.2-S2V (still image + audio -> talking video) via ComfyUI.
+
+    Unlike SadTalker/Wav2Lip/LivePortrait, Wan2.2-S2V has **no face detector**
+    anywhere in its path, so it animates non-human mascots (teddy, owl, robot,
+    wizard) as well as human head shots — the narration audio drives the mouth
+    and a text prompt describes the mouth anatomy. See docs/wan-s2v-api.md.
+
+    Config (``providers.avatar``): ``provider: wan-s2v``, ``base_url``,
+    ``source`` / ``source_image`` (a still image or a built-in avatar name),
+    optional ``api_key`` (Bearer, or ``COMFYUI_TOKEN``).
+
+    Duration: renders a short ``clip_seconds`` (default 4) clip that media.py
+    loops under longer narration — S2V is ~4 min per 3s of video, so full-
+    length is costly. Set ``full_length: true`` to render the whole narration
+    with exact lip-sync instead. Tuning: ``prompt``, ``negative_prompt``,
+    ``width`` (448), ``height`` (608), ``steps`` (20), ``cfg`` (6.0), ``seed``.
+    """
+
+    @property
+    def name(self) -> str:
+        return "wan-s2v"
+
+    def _source(self) -> str | None:
+        cfg = self._avatar_config()
+        return cfg.get("source") or cfg.get("source_image")
+
+    def _kind(self) -> str:
+        return "image"
+
+    def _output_style(self) -> str:
+        # S2V's SaveVideo node reports the MP4 under gifs[0], like the VHS path.
+        return "video"
+
+    def _pre_generate(self, base_url: str, headers: dict[str, str]) -> None:
+        # The 16.4GB unet stays resident after a run, so the next run's text
+        # encoder OOMs unless models are freed first (docs/wan-s2v-api.md).
+        # Best-effort: a fresh server simply has nothing to free.
+        try:
+            requests.post(
+                f"{base_url}/free",
+                headers=headers,
+                json={"unload_models": True, "free_memory": True},
+                timeout=60,
+            )
+        except Exception as e:
+            err_console.print(f"  - wan-s2v: /free failed (continuing): {e}")
+
+    def _build_workflow(
+        self, kind: str, source_name: str, audio_name: str, audio_seconds: float = 0.0
+    ) -> dict[str, Any]:
+        import copy
+
+        cfg = self._avatar_config()
+        full = bool(cfg.get("full_length", False))
+        clip_seconds = float(cfg.get("clip_seconds") or 4.0)
+        # Never render longer than the audio; short mode caps at clip_seconds.
+        seconds = audio_seconds if (full and audio_seconds > 0) else clip_seconds
+        if audio_seconds > 0:
+            seconds = min(seconds, audio_seconds)
+        length = _s2v_length(seconds)
+
+        prompt = cfg.get("prompt") or avatar_prompt(self._source())
+        negative = cfg.get("negative_prompt") or "blurry, distorted, static, still"
+
+        wf = copy.deepcopy(WAN_S2V_WORKFLOW)
+        wf["5"]["inputs"]["audio"] = audio_name
+        wf["7"]["inputs"]["image"] = source_name
+        wf["8"]["inputs"]["text"] = prompt
+        wf["9"]["inputs"]["text"] = negative
+        wf["10"]["inputs"]["width"] = int(cfg.get("width") or 448)
+        wf["10"]["inputs"]["height"] = int(cfg.get("height") or 608)
+        wf["10"]["inputs"]["length"] = length
+        wf["11"]["inputs"]["steps"] = int(cfg.get("steps") or 20)
+        wf["11"]["inputs"]["cfg"] = float(cfg.get("cfg") or 6.0)
+        wf["11"]["inputs"]["seed"] = int(cfg.get("seed") or 42)
+        return wf
+
+
+def _wav_seconds(path: str) -> float:
+    """Duration of a WAV file in seconds, or 0.0 if it can't be read.
+
+    Used to size a Wan2.2-S2V run to the narration; a 0.0 result makes S2V
+    fall back to its configured ``clip_seconds``.
+    """
+    import wave
+
+    try:
+        with wave.open(path, "rb") as wf:
+            rate = wf.getframerate()
+            return wf.getnframes() / rate if rate else 0.0
+    except Exception:
+        return 0.0
 
 
 def _to_16k_wav(audio_path: str) -> tuple[str, bool]:

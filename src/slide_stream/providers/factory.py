@@ -13,6 +13,7 @@ from .avatar import (
     PuppetAvatarProvider,
     SadTalkerAvatarProvider,
     StaticAvatarProvider,
+    WanS2VAvatarProvider,
     Wav2LipAvatarProvider,
 )
 from .base import (
@@ -107,6 +108,7 @@ class ProviderFactory:
         "d-id": DIDAvatarProvider,
         "sadtalker": SadTalkerAvatarProvider,
         "wav2lip": Wav2LipAvatarProvider,
+        "wan-s2v": WanS2VAvatarProvider,
         "comfyui": ComfyUIAvatarProvider,
     }
 
@@ -272,6 +274,7 @@ class ProviderFactory:
             "d-id": "D-ID lip-synced talking head from a source image (BYOK; requires DID_API_KEY + source_image)",
             "sadtalker": "Self-hosted SadTalker (photo) via a ComfyUI server (base_url + source_image)",
             "wav2lip": "Self-hosted Wav2Lip (video) via a ComfyUI server (base_url + source_video)",
+            "wan-s2v": "Self-hosted Wan2.2-S2V (still image + audio) via a ComfyUI server — no face detector, so it animates mascots AND human head shots (base_url + source)",
             "comfyui": "Auto: photo -> SadTalker, video -> Wav2Lip, via a ComfyUI server (base_url + source)",
         }
 

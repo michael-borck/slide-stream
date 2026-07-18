@@ -77,8 +77,8 @@ def test_precomputed_maps_slide_number_to_clip(config, tmp_path):
 # --- Compositing (real encodes, small and fast) ------------------------------
 
 
-def test_fragment_with_short_head_freezes_last_frame(config, slide_image, tmp_path):
-    """Head shorter than the fragment: last frame is held to fill it."""
+def test_fragment_with_short_head_loops_to_fill(config, slide_image, tmp_path):
+    """Head much shorter than the fragment: looped so it keeps animating."""
     head = make_head_video(tmp_path / "head.mp4", duration=0.5)
     out = tmp_path / "fragment.mp4"
 
@@ -680,3 +680,131 @@ def test_factory_registers_wav2lip_and_comfyui():
     names = ProviderFactory.list_avatar_providers()
     assert "wav2lip" in names
     assert "comfyui" in names
+
+
+# --- Wan2.2-S2V (still image + audio, no face detector) ----------------------
+
+
+def test_s2v_length_is_valid_4n_plus_1():
+    from slide_stream.providers.avatar import _s2v_length
+
+    # 16fps: 3s->49, 4s->65, 5s->81, all of the form 4n+1.
+    assert _s2v_length(3.0) == 49
+    assert _s2v_length(4.0) == 65
+    assert _s2v_length(5.0) == 81
+    # Sub-second audio still yields a minimal valid clip.
+    assert _s2v_length(0.05) == 5
+    for seconds in (0.4, 1.0, 2.3, 7.7, 30.0):
+        assert _s2v_length(seconds) % 4 == 1
+
+
+def test_avatar_prompt_describes_mouth_anatomy():
+    from slide_stream.avatars import DEFAULT_AVATAR_PROMPT, avatar_prompt
+
+    assert "beak" in avatar_prompt("owl")           # owl has a beak, not lips
+    assert "muzzle" in avatar_prompt("teddy")
+    # A file path / unknown name falls back to the generic talking prompt.
+    assert avatar_prompt("/photos/me.png") == DEFAULT_AVATAR_PROMPT
+    assert avatar_prompt(None) == DEFAULT_AVATAR_PROMPT
+
+
+def test_wan_s2v_availability_needs_url_and_source(config, monkeypatch):
+    from slide_stream.providers.avatar import WanS2VAvatarProvider
+
+    monkeypatch.delenv("COMFYUI_BASE_URL", raising=False)
+    config["providers"]["avatar"] = {"provider": "wan-s2v"}
+    assert WanS2VAvatarProvider(config).is_available() is False
+
+    config["providers"]["avatar"] = {"provider": "wan-s2v", "base_url": "https://c.org"}
+    assert WanS2VAvatarProvider(config).is_available() is False
+
+    config["providers"]["avatar"] = {
+        "provider": "wan-s2v", "base_url": "https://c.org", "source": "owl",
+    }
+    assert WanS2VAvatarProvider(config).is_available() is True
+
+
+def test_wan_s2v_build_workflow_short_and_full(config):
+    from slide_stream.providers.avatar import WanS2VAvatarProvider
+
+    config["providers"]["avatar"] = {
+        "provider": "wan-s2v", "base_url": "https://c.org", "source": "owl",
+        "clip_seconds": 3,
+    }
+    p = WanS2VAvatarProvider(config)
+    # Short mode caps at clip_seconds (3s -> 49) even for long narration.
+    wf = p._build_workflow("image", "owl.png", "a.wav", audio_seconds=30.0)
+    assert wf["10"]["class_type"] == "WanSoundImageToVideo"
+    assert wf["10"]["inputs"]["length"] == 49
+    assert wf["7"]["inputs"]["image"] == "owl.png"
+    assert wf["5"]["inputs"]["audio"] == "a.wav"
+    assert "beak" in wf["8"]["inputs"]["text"]        # owl-specific prompt
+    assert wf["14"]["class_type"] == "SaveVideo"
+
+    # Full-length mode sizes to the audio instead (5s -> 81).
+    config["providers"]["avatar"]["full_length"] = True
+    wf2 = WanS2VAvatarProvider(config)._build_workflow(
+        "image", "owl.png", "a.wav", audio_seconds=5.0
+    )
+    assert wf2["10"]["inputs"]["length"] == 81
+
+
+def test_wan_s2v_generate_frees_vram_and_reads_gifs(config, tmp_path, mocker, monkeypatch):
+    """Full S2V flow: /free before queueing, then upload -> submit -> gifs."""
+    from slide_stream.providers.avatar import WanS2VAvatarProvider
+
+    img = tmp_path / "owl.png"
+    img.write_bytes(b"png")
+    audio = tmp_path / "a.wav"
+    write_silent_wav(audio, seconds=0.4)
+    config["providers"]["avatar"] = {
+        "provider": "wan-s2v", "base_url": "https://c.org",
+        "source": str(img), "poll_interval": 0,
+    }
+    monkeypatch.setattr("slide_stream.providers.avatar.shutil.which", lambda _: None)
+
+    img_up = mocker.MagicMock()
+    img_up.json.return_value = {"name": "owl.png"}
+    aud_up = mocker.MagicMock()
+    aud_up.json.return_value = {"name": "a.wav"}
+    free = mocker.MagicMock()
+    submit = mocker.MagicMock()
+    submit.json.return_value = {"prompt_id": "p"}
+    # Order: upload image, upload audio, POST /free, POST /prompt.
+    post = mocker.patch(
+        "slide_stream.providers.avatar.requests.post",
+        side_effect=[img_up, aud_up, free, submit],
+    )
+    done = mocker.MagicMock()
+    done.json.return_value = {
+        "p": {
+            "status": {"status_str": "success"},
+            "outputs": {"14": {"gifs": [{"filename": "s2v_out.mp4",
+                                         "fullpath": "/out/s2v_out.mp4"}]}},
+        }
+    }
+    clip = mocker.MagicMock(content=b"S2VMP4")
+    get = mocker.patch(
+        "slide_stream.providers.avatar.requests.get", side_effect=[done, clip]
+    )
+    mocker.patch("slide_stream.providers.avatar.time.sleep")
+
+    out = tmp_path / "head_1.mp4"
+    result = WanS2VAvatarProvider(config).generate(str(audio), str(out), 1)
+
+    assert result == str(out)
+    assert out.read_bytes() == b"S2VMP4"
+    # VRAM was freed before the graph was queued (the third POST, before /prompt).
+    free_call = post.call_args_list[2]
+    assert free_call[0][0].endswith("/free")
+    assert free_call[1]["json"] == {"unload_models": True, "free_memory": True}
+    # The queued graph is the S2V graph, sized to the (short) audio -> length 5.
+    wf = post.call_args_list[3][1]["json"]["prompt"]
+    assert wf["10"]["class_type"] == "WanSoundImageToVideo"
+    assert wf["10"]["inputs"]["length"] == 5
+    # Result pulled from the gifs output by filename.
+    assert get.call_args_list[-1][1]["params"]["filename"] == "s2v_out.mp4"
+
+
+def test_factory_registers_wan_s2v():
+    assert "wan-s2v" in ProviderFactory.list_avatar_providers()

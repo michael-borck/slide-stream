@@ -176,6 +176,30 @@ def _count_slides(deck_path: Path) -> int | None:
         return None
 
 
+# Remote engines that animate a stylized mascot (no human face to detect):
+# Wan2.2-S2V has no detector at all, and D-ID handles stylized faces. The
+# others (sadtalker/wav2lip/comfyui-auto) start with a human face detector and
+# fail on a mascot, so a mascot presenter falls back to the no-GPU puppet there.
+_MASCOT_ANIMATE_ENGINES = ("wan-s2v", "d-id")
+
+
+def _server_animation_engine(base: dict[str, Any]) -> str | None:
+    """The server-configured animated-avatar engine, if one is usable.
+
+    Returns the base config's avatar provider name when it selects a remote
+    engine that has its connection details set (a ComfyUI ``base_url``, or a
+    D-ID ``api_key``), else None. Used to decide whether an animated presenter
+    can lip-sync for real or must fall back to the no-GPU puppet mouth-flap.
+    """
+    av = base.get("providers", {}).get("avatar", {})
+    provider = av.get("provider")
+    if provider in ("wan-s2v", "sadtalker", "wav2lip", "comfyui"):
+        return provider if av.get("base_url") else None
+    if provider == "d-id":
+        return provider if av.get("api_key") else None
+    return None
+
+
 def _build_job_config(base: dict[str, Any], workdir: Path, options: dict[str, Any],
                       voice_path: Path | None, photo_path: Path | None) -> Path:
     """Write a per-job config YAML: server base + this job's overrides."""
@@ -211,17 +235,27 @@ def _build_job_config(base: dict[str, Any], workdir: Path, options: dict[str, An
 
     # Presenter: a built-in mascot wins over an uploaded file. The 'animate'
     # toggle then picks the engine per source:
-    #   mascot  + animate -> puppet (mouth-flap, no GPU);  else static mascot
-    #   photo   + animate -> server's engine (d-id/sadtalker/comfyui);
+    #   mascot  + animate -> the server's detector-free engine (wan-s2v/d-id)
+    #                        for real lip-sync if configured, else the no-GPU
+    #                        puppet mouth-flap; animate off -> static mascot
+    #   photo   + animate -> server's engine (wan-s2v/sadtalker/d-id/comfyui);
     #                        else static photo (a still of themselves)
     #   video             -> always the video engine (a clip is inherently
     #                        animated; wav2lip/comfyui)
     #   nothing           -> no head
     av = cfg["providers"]["avatar"]
     animate = options.get("avatar", True)
+    engine = _server_animation_engine(base)
     if options.get("avatar_name"):
-        av["provider"] = "puppet" if animate else "static"
-        av["source"] = options["avatar_name"]
+        name = options["avatar_name"]
+        av["source"] = name
+        if animate and engine in _MASCOT_ANIMATE_ENGINES:
+            # A real engine can lip-sync the mascot from the narration audio.
+            av["provider"] = engine
+            if engine == "d-id":
+                av["source_image"] = name
+        else:
+            av["provider"] = "puppet" if animate else "static"
     elif photo_path is not None:
         from .providers.avatar import _source_kind
 
@@ -307,10 +341,13 @@ providers:
     # base_url: https://swarmui.example.org
     # model: juggernautXL_v9
   avatar:
-    provider: none              # none | static | puppet | sadtalker |
-                                # wav2lip | comfyui | d-id
+    provider: none              # none | static | puppet | wan-s2v |
+                                # sadtalker | wav2lip | comfyui | d-id
     # source: teddy             # built-in mascot, or a photo/video path
     # base_url: https://comfyui.example.org
+    # api_key: "${COMFYUI_TOKEN}"   # if the ComfyUI server needs auth
+    # wan-s2v animates mascots AND human head shots (no face detector);
+    # sadtalker/wav2lip/comfyui are human-faces-only.
 settings:
   strict: false
   narration:

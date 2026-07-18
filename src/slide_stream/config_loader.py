@@ -40,7 +40,7 @@ DEFAULT_CONFIG = {
             "base_url": None,    # voicebox / chatterbox / openai-compatible server
         },
         "avatar": {
-            "provider": "none",       # none|precomputed|d-id|sadtalker|wav2lip|comfyui
+            "provider": "none",       # none|static|puppet|precomputed|d-id|sadtalker|wav2lip|wan-s2v|comfyui
             "base_url": None,         # comfyui server (sadtalker/wav2lip/comfyui)
             "assets_dir": None,       # precomputed head_N.mp4 clips
             "source_image": None,     # photo: d-id / sadtalker
@@ -367,8 +367,18 @@ providers:
   #   provider: precomputed
   #   assets_dir: ./heads
   #
+  # Animated talking head from a STILL image + the narration audio, via a
+  # ComfyUI server. Wan2.2-S2V has no face detector, so it animates the
+  # built-in mascots (teddy/owl/robot/wizard) AND human head shots:
+  #   provider: wan-s2v
+  #   base_url: https://comfyui.example.org
+  #   api_key: "${COMFYUI_TOKEN}"   # if the server checks a Bearer token
+  #   source: owl                   # a built-in avatar name, or ./me.png
+  #   # clip_seconds: 4             # short clip looped under the narration
+  #   # full_length: true           # or render the whole narration (slow)
+  #
   # Talking-head avatar (self-hosted via a ComfyUI server):
-  #   provider: sadtalker           # from a PHOTO
+  #   provider: sadtalker           # from a PHOTO (human faces only)
   #   base_url: https://comfyui.example.org
   #   source_image: ./me.png
   # ...or from a short VIDEO (more natural; loops under longer narration):
