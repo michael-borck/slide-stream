@@ -145,6 +145,8 @@ addopts = [
 markers = [
     "integration: marks tests as integration tests",
     "unit: marks tests as unit tests",
+    "live: end-to-end test against real, configured providers (opt-in: --run-live)",
+    "slow: unusually slow live test (e.g. a GPU avatar render)",
 ]
 
 [tool.coverage.run]
