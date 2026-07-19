@@ -1,0 +1,192 @@
+# SlideStream Configuration File
+#
+# Config is layered, later winning:
+#   1. built-in defaults
+#   2. ~/.slidestream.yaml   (personal: TTS server URL, API keys — set once)
+#   3. ./slidestream.yaml    (this deck's settings; or pass --config FILE)
+# So keep your server and keys in the home file and only put per-deck
+# overrides here. Any CLI flag (e.g. --voice, --tts-base-url) wins over both.
+
+providers:
+  llm:
+    provider: openai        # none, openai, gemini, claude, groq, ollama, openai-compatible
+    model: gpt-4o-mini     # optional: specific model (or --llm-model on the CLI)
+    # API keys come from the environment: OPENAI_API_KEY, ANTHROPIC_API_KEY,
+    # GEMINI_API_KEY, GROQ_API_KEY. Narration uses speaker notes as the
+    # primary source when present (cleaned up and fitted to the target
+    # length); otherwise it writes presenter-style narration from the slide
+    # content instead of reading the bullets aloud. Image-only slides are
+    # narrated via vision-capable providers (claude, openai, gemini).
+
+  images:
+    provider: dalle3        # text, local, dalle3, gemini, swarmui, openai-compatible, pexels, unsplash
+    fallback: text         # fallback when primary fails
+    # folder: ./images     # for the 'local' provider — matched by filename keywords
+    # model: imagen-4.0-fast-generate-001   # for the 'gemini' (Imagen) provider
+    # --- self-hosted SwarmUI ---
+    # base_url: https://image.example.org
+    # model: juggernautXL_v9   # SwarmUI model name
+    # steps: 20
+
+  tts:
+    provider: elevenlabs   # gtts, kokoro, chatterbox, voicebox, elevenlabs, openai, openai-compatible
+    voice: rachel          # voice ID/name (provider-specific)
+    # gtts free accents: accent: australian|british|american|canadian|indian|irish
+    # self-hosted Voicebox studio (free, multi-engine):
+    #   provider: voicebox
+    #   base_url: https://voice.example.org
+    #   profile_id: "<id from POST /profiles>"   # reuse a persistent profile
+    #   engine: kokoro      # or chatterbox / qwen / luxtts / tada
+    # ...or clone YOUR voice for one run, then delete it from the server:
+    #   provider: voicebox
+    #   base_url: https://voice.example.org
+    #   voice_sample: ./my_voice.wav        # 10-30s of clean speech
+    #   engine: chatterbox
+    #   # reference_text omitted -> Voicebox transcribes the clip itself.
+    #   # Set it to skip transcription, or transcribe_model to pin Whisper size.
+    #   delete_generations: true   # default; also drop rendered audio server-side
+
+  # Talking-head avatar overlay (off by default). Enable per run with --avatar,
+  # disable with --no-avatar. List the built-in mascots with: slide-stream avatars
+  #
+  # No-GPU options (work on any mascot or your own image):
+  #   provider: static             # a still image held in the corner
+  #   source: owl                  # a built-in name (teddy/panda/koala/robot/
+  #                                # wizard/owl), or an image path
+  # ...or a crude cartoon mouth-flap driven by the audio loudness:
+  #   provider: puppet
+  #   source: owl
+  #   # mouth: [0.5, 0.6, 0.12, 0.06]   # custom image: mouth region (fractions)
+  #
+  # 'precomputed' composites ready-made clips named head_1.mp4, head_2.mp4, ...
+  # from assets_dir — no GPU or service needed. With strict mode on, every
+  # slide must get a head clip.
+  #   provider: precomputed
+  #   assets_dir: ./heads
+  #
+  # Animated talking head from a STILL image + the narration audio, via a
+  # ComfyUI server. Wan2.2-S2V has no face detector, so it animates the
+  # built-in mascots (teddy/owl/robot/wizard) AND human head shots:
+  #   provider: wan-s2v
+  #   base_url: https://comfyui.example.org
+  #   api_key: "${COMFYUI_TOKEN}"   # if the server checks a Bearer token
+  #   source: owl                   # a built-in avatar name, or ./me.png
+  #   # clip_seconds: 4             # short clip looped under the narration
+  #   # full_length: true           # or render the whole narration (slow)
+  #
+  # Talking-head avatar (self-hosted via a ComfyUI server):
+  #   provider: sadtalker           # from a PHOTO (human faces only)
+  #   base_url: https://comfyui.example.org
+  #   source_image: ./me.png
+  # ...or from a short VIDEO (more natural; loops under longer narration):
+  #   provider: wav2lip
+  #   base_url: https://comfyui.example.org
+  #   source_video: ./me_idle.mp4
+  # ...or auto-route (photo -> SadTalker, video -> Wav2Lip):
+  #   provider: comfyui
+  #   base_url: https://comfyui.example.org
+  #   source: ./me.png              # or ./me_idle.mp4
+  # ...or the hosted BYOK option (bills per minute of video):
+  #   provider: d-id
+  #   source_image: ./me.png
+  #   api_key: "${DID_API_KEY}"
+
+# --- Fully offline TTS (no cloud, no API key) ------------------------------
+# Requires: pip install "slide-stream[local-tts]"
+# Model files (~340MB) download once to ~/.cache/slide-stream/kokoro/.
+# Voices include af_sarah, af_bella (female) and am_adam, am_michael (male).
+#
+# providers:
+#   tts:
+#     provider: kokoro
+#     voice: af_sarah
+# ---------------------------------------------------------------------------
+
+# --- Privacy-first cloned voice (self-hosted Chatterbox) ------------------
+# Your reference recording is uploaded under a random UUID name for THIS RUN
+# ONLY, so no lecturer-recognisable voice ever exists on the server; a
+# server-side cron (contrib/chatterbox/cleanup_uuid_voices.sh) reaps the
+# UUID files. Use 10-30s of clean speech (under ~5s fails). List selectable
+# voices with: slide-stream voices
+#
+# providers:
+#   tts:
+#     provider: chatterbox
+#     base_url: https://chatterbox.example.org
+#     voice_sample: ./my_voice.wav      # ephemeral clone of YOUR voice
+#     # voice: Emily.wav                # ...or a stock server voice instead
+#     api_key: "${CHATTERBOX_TOKEN}"    # if your proxy checks a Bearer token
+# settings:
+#   strict: true                        # never fall back to the wrong voice
+# ---------------------------------------------------------------------------
+
+# --- Fully local / self-hosted stack -------------------------------------
+# Point every layer at an OpenAI-compatible server (LocalAI, vLLM,
+# openedai-speech, Kokoro-FastAPI, ...). No cloud keys required.
+#
+# providers:
+#   llm:
+#     provider: openai-compatible
+#     base_url: http://localhost:8080/v1
+#     model: llama-3.1-8b-instruct
+#   images:
+#     provider: openai-compatible
+#     base_url: http://localhost:8080/v1
+#     model: sdxl
+#     fallback: text
+#   tts:
+#     provider: openai-compatible
+#     base_url: http://localhost:8000/v1
+#     model: tts-1
+#     voice: en_US-amy
+# -------------------------------------------------------------------------
+
+# API Keys (use environment variables)
+api_keys:
+  openai: "${OPENAI_API_KEY}"
+  elevenlabs: "${ELEVENLABS_API_KEY}"
+  pexels: "${PEXELS_API_KEY}"
+  unsplash: "${UNSPLASH_ACCESS_KEY}"
+
+settings:
+  video:
+    resolution: [1920, 1080]
+    fps: 24
+    codec: libx264
+    audio_codec: aac
+    slide_duration_padding: 1.0
+    default_slide_duration: 5.0
+
+  image:
+    download_timeout: 15
+    bg_color: black
+    title_font_size: 100
+    content_font_size: 60
+    font_color: white
+    max_line_width: 50
+
+  # Narration length target (approximate seconds of speech per slide).
+  # Long speaker notes are summarised to fit; thin slides are expanded.
+  # Override per run: slide-stream create ... --narration-seconds 30
+  #
+  # For an exact script instead of LLM-written narration:
+  #   --verbatim-notes          speak the PowerPoint speaker notes as written
+  #   --script my_script.txt    one block per slide, separated by --- lines
+  narration:
+    target_seconds: 60
+    wpm: 150
+
+  # Talking-head overlay appearance (used when providers.avatar is enabled)
+  avatar:
+    position: bottom-right   # bottom-left, top-left, top-right
+    size: 0.28               # circle diameter as fraction of frame height
+    margin: 24               # px from the frame edges
+
+  temp_dir: temp_files
+  cleanup: true
+
+  # Fail the run if a configured provider is unusable or errors, instead of
+  # silently falling back (e.g. elevenlabs -> gtts, dalle3 -> text image).
+  # Recommended when the exact voice matters (e.g. a cloned lecturer voice).
+  # Can also be enabled per-run with: slide-stream create --strict ...
+  strict: false

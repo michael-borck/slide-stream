@@ -105,6 +105,10 @@ slide-stream create --config my-config.yaml presentation.pptx video.mp4
 
 ## ⚙️ Configuration
 
+> See [`slidestream.example.yaml`](slidestream.example.yaml) for a complete,
+> commented reference covering **every** provider (LLM, image, TTS, and all the
+> avatar engines). `slide-stream init` writes the same file for you to edit.
+
 SlideStream layers configuration so you set shared things (a TTS server URL,
 API keys) once and keep per-deck settings separate. Later layers win:
 

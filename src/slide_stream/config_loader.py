@@ -359,11 +359,21 @@ providers:
     #   # Set it to skip transcription, or transcribe_model to pin Whisper size.
     #   delete_generations: true   # default; also drop rendered audio server-side
 
-  # Talking-head avatar overlay (off by default). 'precomputed' composites
-  # ready-made clips named head_1.mp4, head_2.mp4, ... from assets_dir —
-  # no GPU or service needed. Enable per run with --avatar, disable with
-  # --no-avatar. With strict mode on, every slide must get a head clip.
-  # avatar:
+  # Talking-head avatar overlay (off by default). Enable per run with --avatar,
+  # disable with --no-avatar. List the built-in mascots with: slide-stream avatars
+  #
+  # No-GPU options (work on any mascot or your own image):
+  #   provider: static             # a still image held in the corner
+  #   source: owl                  # a built-in name (teddy/panda/koala/robot/
+  #                                # wizard/owl), or an image path
+  # ...or a crude cartoon mouth-flap driven by the audio loudness:
+  #   provider: puppet
+  #   source: owl
+  #   # mouth: [0.5, 0.6, 0.12, 0.06]   # custom image: mouth region (fractions)
+  #
+  # 'precomputed' composites ready-made clips named head_1.mp4, head_2.mp4, ...
+  # from assets_dir — no GPU or service needed. With strict mode on, every
+  # slide must get a head clip.
   #   provider: precomputed
   #   assets_dir: ./heads
   #

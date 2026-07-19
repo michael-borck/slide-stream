@@ -1,5 +1,7 @@
 """Tests for configuration loading and validation."""
 
+from pathlib import Path
+
 import pytest
 
 from slide_stream.config_loader import (
@@ -12,6 +14,35 @@ from slide_stream.config_loader import (
     save_example_config,
     validate_config,
 )
+
+# Browsable, complete example config committed at the repo root.
+EXAMPLE_FILE = Path(__file__).resolve().parent.parent / "slidestream.example.yaml"
+
+
+def test_committed_example_matches_template():
+    """slidestream.example.yaml must equal `slide-stream init` output, so the
+    browsable reference can never drift from the generated one. Regenerate with:
+        python -c "from slide_stream.config_loader import create_example_config as f; open('slidestream.example.yaml','w').write(f())"
+    """
+    assert EXAMPLE_FILE.exists(), "slidestream.example.yaml is missing at the repo root"
+    assert EXAMPLE_FILE.read_text(encoding="utf-8") == create_example_config(), (
+        "slidestream.example.yaml is out of sync with create_example_config() — "
+        "regenerate it (see this test's docstring)."
+    )
+
+
+def test_committed_example_covers_all_providers():
+    """The committed example is the all-providers reference; guard the roster."""
+    text = EXAMPLE_FILE.read_text(encoding="utf-8")
+    for provider in (
+        # llm / images / tts / avatar — one representative name from each family
+        "openai", "gemini", "claude", "groq", "ollama", "openai-compatible",
+        "dalle3", "swarmui", "pexels", "unsplash", "local",
+        "gtts", "kokoro", "chatterbox", "voicebox", "elevenlabs",
+        "static", "puppet", "precomputed", "wan-s2v", "sadtalker", "wav2lip",
+        "comfyui", "d-id",
+    ):
+        assert provider in text, f"example config no longer mentions '{provider}'"
 
 
 @pytest.fixture(autouse=True)
