@@ -534,6 +534,16 @@ def test_find_output_path():
         {"4": {"gifs": [{"filename": "w.mp4", "subfolder": "wav2lip",
                          "fullpath": "/out/wav2lip/w.mp4"}]}},
     ) == ("w.mp4", "wav2lip")
+    # Core SaveVideo (Wan2.2-S2V): video under `images` + an `animated` flag.
+    assert _find_output_path(
+        "video",
+        {"14": {"images": [{"filename": "s2v_00001_.mp4", "subfolder": "",
+                            "type": "output"}], "animated": [True]}},
+    ) == ("s2v_00001_.mp4", "")
+    # A still SaveImage node (images, no animated, .png) is NOT taken as video.
+    assert _find_output_path(
+        "video", {"9": {"images": [{"filename": "x.png", "subfolder": ""}]}}
+    ) is None
 
 
 def test_factory_registers_sadtalker():
@@ -740,6 +750,8 @@ def test_wan_s2v_build_workflow_short_and_full(config):
     assert wf["5"]["inputs"]["audio"] == "a.wav"
     assert "beak" in wf["8"]["inputs"]["text"]        # owl-specific prompt
     assert wf["14"]["class_type"] == "SaveVideo"
+    # batch_size is required on newer ComfyUI builds of the node.
+    assert wf["10"]["inputs"]["batch_size"] == 1
 
     # Full-length mode sizes to the audio instead (5s -> 81).
     config["providers"]["avatar"]["full_length"] = True

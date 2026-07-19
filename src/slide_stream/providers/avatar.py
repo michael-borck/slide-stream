@@ -80,7 +80,7 @@ WAN_S2V_WORKFLOW: dict[str, Any] = {
     "10": {"class_type": "WanSoundImageToVideo", "inputs": {
         "positive": ["8", 0], "negative": ["9", 0], "vae": ["3", 0],
         "audio_encoder_output": ["6", 0], "ref_image": ["7", 0],
-        "width": 448, "height": 608, "length": 49}},
+        "width": 448, "height": 608, "length": 49, "batch_size": 1}},
     "11": {"class_type": "KSampler", "inputs": {
         "model": ["1", 0], "positive": ["10", 0], "negative": ["10", 1],
         "latent_image": ["10", 2], "seed": 42, "steps": 20, "cfg": 6.0,
@@ -605,6 +605,8 @@ class _ComfyUIAvatar(AvatarProvider):
             deadline = time.monotonic() + timeout
             video_path: str | None = None
             subfolder = ""
+            succeeded = False
+            outputs: dict[str, Any] = {}
             while time.monotonic() < deadline:
                 hist = requests.get(
                     f"{base_url}/history/{prompt_id}", headers=headers, timeout=30
@@ -615,9 +617,9 @@ class _ComfyUIAvatar(AvatarProvider):
                 if entry:
                     status_str = entry.get("status", {}).get("status_str")
                     if status_str == "success":
-                        found = _find_output_path(
-                            self._output_style(), entry.get("outputs", {})
-                        )
+                        succeeded = True
+                        outputs = entry.get("outputs", {})
+                        found = _find_output_path(self._output_style(), outputs)
                         if found:
                             video_path, subfolder = found
                         break
@@ -626,6 +628,13 @@ class _ComfyUIAvatar(AvatarProvider):
                 time.sleep(poll_interval)
 
             if not video_path:
+                if succeeded:
+                    # The render finished but no recognisable video output was
+                    # found — a node/output-shape mismatch, not a timeout.
+                    raise ValueError(
+                        f"{self.name}: render succeeded but no video output found "
+                        f"(output nodes: {list(outputs)})"
+                    )
                 raise TimeoutError(f"{self.name} render timed out after {timeout:.0f}s")
 
             # 3. Download the result via /view. History entries may place the
@@ -781,6 +790,8 @@ class WanS2VAvatarProvider(_ComfyUIAvatar):
         wf["10"]["inputs"]["width"] = int(cfg.get("width") or 448)
         wf["10"]["inputs"]["height"] = int(cfg.get("height") or 608)
         wf["10"]["inputs"]["length"] = length
+        # batch_size is a required arg on newer ComfyUI builds of the node.
+        wf["10"]["inputs"]["batch_size"] = int(cfg.get("batch_size") or 1)
         wf["11"]["inputs"]["steps"] = int(cfg.get("steps") or 20)
         wf["11"]["inputs"]["cfg"] = float(cfg.get("cfg") or 6.0)
         wf["11"]["inputs"]["seed"] = int(cfg.get("seed") or 42)
@@ -828,8 +839,12 @@ def _to_16k_wav(audio_path: str) -> tuple[str, bool]:
 def _find_output_path(kind: str, outputs: dict[str, Any]) -> tuple[str, str] | None:
     """Pull (video path, subfolder) from a ComfyUI history entry.
 
-    SadTalker's ShowVideo node reports ``show_video_path``; Wav2Lip's
-    VHS_VideoCombine reports ``gifs`` (with filename/subfolder/fullpath).
+    Three shapes, by node:
+    - SadTalker's ShowVideo -> ``show_video_path`` (image kind).
+    - Wav2Lip's VHS_VideoCombine -> ``gifs`` (filename/subfolder/fullpath).
+    - Core SaveVideo (CreateVideo->SaveVideo, used by Wan2.2-S2V) -> ``images``
+      entries alongside an ``animated`` flag; the file is an .mp4 despite the
+      key name.
     The subfolder is "" when the file sits directly in output/.
     """
     for node_output in outputs.values():
@@ -840,6 +855,17 @@ def _find_output_path(kind: str, outputs: dict[str, Any]) -> tuple[str, str] | N
             if gifs:
                 name = gifs[0].get("filename") or Path(gifs[0]["fullpath"]).name
                 return name, str(gifs[0].get("subfolder") or "")
+            # Newer core SaveVideo: a video listed under ``images``. Guard with
+            # the ``animated`` flag or a video extension so a still SaveImage
+            # node in the graph isn't mistaken for the result.
+            images = node_output.get("images")
+            if images and (
+                node_output.get("animated")
+                or Path(images[0].get("filename", "")).suffix.lower() in VIDEO_EXTS
+            ):
+                first = images[0]
+                name = first.get("filename") or Path(first["fullpath"]).name
+                return name, str(first.get("subfolder") or "")
         else:
             paths = node_output.get("show_video_path")
             if paths:
