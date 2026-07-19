@@ -229,6 +229,21 @@ def create(
             ),
         ),
     ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Assess the deck + config and print a report (estimates, "
+            "warnings) without rendering. Same as the 'doctor' command.",
+        ),
+    ] = False,
+    fail_on_warn: Annotated[
+        bool,
+        typer.Option(
+            "--fail-on-warn",
+            help="With --dry-run, exit non-zero if there are any warnings (CI gate).",
+        ),
+    ] = False,
 ) -> None:
     """Create a video from a Markdown (.md) or PowerPoint (.pptx) file."""
     console.print(
@@ -368,12 +383,33 @@ def create(
                     "are ignored."
                 )
 
+        avatar_enabled = avatar_provider.name != "none"
+
+        # --dry-run: assess and report, then stop before any rendering.
+        if dry_run:
+            from .doctor import render_report, run_doctor
+
+            report = run_doctor(
+                slides,
+                config,
+                {
+                    "mode": "create",
+                    "input_ext": file_extension,
+                    "verbatim_notes": verbatim_notes,
+                    "script_blocks": script_blocks,
+                    "avatar_enabled": avatar_enabled,
+                    "narration_seconds": narration_seconds,
+                    "output_path": output_filename,
+                },
+            )
+            render_report(report, console, f"Dry run — {input_path.name}")
+            raise typer.Exit(code=report.exit_code(fail_on_warn))
+
         # Process each slide with Rich progress bar
         video_fragments = []
         audio_failed = 0
         llm_narration_failed = 0
         avatar_failed = 0
-        avatar_enabled = avatar_provider.name != "none"
         strict_mode = config["settings"].get("strict", False)
         with Progress(
             SpinnerColumn(),
@@ -677,6 +713,82 @@ def _parse_deck(input_path: Path) -> list[dict[str, Any]]:
 
 
 @app.command()
+def doctor(
+    input_path: Annotated[
+        Path,
+        typer.Argument(help="Input deck (Markdown .md or PowerPoint .pptx)."),
+    ],
+    config_file: Annotated[
+        str | None, typer.Option("--config", "-c", help="Config file (YAML).")
+    ] = None,
+    avatar: Annotated[
+        bool | None,
+        typer.Option("--avatar/--no-avatar", help="Assess with the avatar overlay on/off."),
+    ] = None,
+    verbatim_notes: Annotated[
+        bool, typer.Option("--verbatim-notes", help="Assess as if speaking notes verbatim."),
+    ] = False,
+    script_file: Annotated[
+        str | None,
+        typer.Option("--script", help="Narration script file to assess against."),
+    ] = None,
+    narration_seconds: Annotated[
+        float | None,
+        typer.Option("--narration-seconds", help="Target seconds/slide for estimates."),
+    ] = None,
+    fail_on_warn: Annotated[
+        bool, typer.Option("--fail-on-warn", help="Exit non-zero if any warnings (CI gate)."),
+    ] = False,
+) -> None:
+    """Assess a deck + config before rendering — estimates and warnings, no render."""
+    try:
+        config = load_config(config_file)
+    except ConfigurationError as e:
+        err_console.print(f"Configuration Error: {e}")
+        raise typer.Exit(code=1)
+
+    ext = input_path.suffix.lower()
+    if ext not in (".md", ".pptx"):
+        err_console.print(f"Unsupported file type: {ext}. Supported: .md, .pptx")
+        raise typer.Exit(code=1)
+
+    if avatar is False:
+        config["providers"]["avatar"]["provider"] = "none"
+    avatar_enabled = config["providers"]["avatar"].get("provider", "none") != "none"
+
+    slides = _parse_deck(input_path)
+    if not slides:
+        err_console.print("No slides found. Exiting.")
+        raise typer.Exit(code=1)
+
+    script_blocks: list[str] | None = None
+    if script_file:
+        try:
+            script_blocks = parse_script_file(script_file)
+        except OSError as e:
+            err_console.print(f"Could not read script file: {e}")
+            raise typer.Exit(code=1)
+
+    from .doctor import render_report, run_doctor
+
+    report = run_doctor(
+        slides,
+        config,
+        {
+            "mode": "create",
+            "input_ext": ext,
+            "verbatim_notes": verbatim_notes,
+            "script_blocks": script_blocks,
+            "avatar_enabled": avatar_enabled,
+            "narration_seconds": narration_seconds,
+            "output_path": None,
+        },
+    )
+    render_report(report, console, f"Deck check — {input_path.name}")
+    raise typer.Exit(code=report.exit_code(fail_on_warn))
+
+
+@app.command()
 def enrich(
     input_path: Annotated[
         Path,
@@ -704,6 +816,15 @@ def enrich(
         bool,
         typer.Option("--pptx", help="Also write an enriched PowerPoint (.pptx)."),
     ] = False,
+    notes: Annotated[
+        str | None,
+        typer.Option(
+            "--notes",
+            help="Add AI presenter notes to the .pptx (implies --pptx). "
+            "'fill' keeps existing speaker notes and AI-writes only for slides "
+            "with none; 'all' AI-writes notes for every slide. Needs an LLM.",
+        ),
+    ] = None,
     zip_output: Annotated[
         bool, typer.Option("--zip", help="Also write a .zip of the output folder.")
     ] = False,
@@ -712,6 +833,7 @@ def enrich(
 
     The output is an editable Markdown deck plus an images/ folder — run
     'create' on it to narrate, or use 'create' directly for a one-pass video.
+    With --notes it also writes AI presenter notes into the PowerPoint.
     """
     console.print(
         Panel.fit("[bold cyan]🖼️  Enriching deck[/bold cyan]", border_style="green")
@@ -726,6 +848,32 @@ def enrich(
         config["providers"]["images"]["provider"] = image_provider_option
     if image_folder:
         config["providers"]["images"]["folder"] = image_folder
+
+    # Presenter notes: validate the mode, force a .pptx to hold them, and build
+    # the LLM context the note writer needs.
+    notes_mode = notes.lower() if notes else None
+    llm_ctx: dict[str, Any] | None = None
+    if notes_mode:
+        if notes_mode not in ("fill", "all"):
+            err_console.print("--notes must be 'fill' or 'all'.")
+            raise typer.Exit(code=1)
+        pptx = True  # notes live in the PowerPoint
+        llm_cfg = config["providers"].get("llm", {})
+        llm_provider = llm_cfg.get("provider", "none")
+        if llm_provider == "none":
+            err_console.print(
+                "--notes needs an LLM provider. Set providers.llm.provider "
+                "(gemini/openai/claude/groq/...) in your config."
+            )
+            raise typer.Exit(code=1)
+        narration_cfg = config["settings"].get("narration", {})
+        llm_ctx = {
+            "client": get_llm_client(llm_provider, base_url=llm_cfg.get("base_url")),
+            "provider": llm_provider,
+            "model": llm_cfg.get("model"),
+            "target_seconds": narration_cfg.get("target_seconds"),
+            "wpm": narration_cfg.get("wpm", 150),
+        }
 
     slides = _parse_deck(input_path)
     if not slides:
@@ -748,6 +896,8 @@ def enrich(
         input_path.stem,
         also_pptx=pptx,
         also_zip=zip_output,
+        notes_mode=notes_mode,
+        llm=llm_ctx,
     )
     console.print(
         Panel(

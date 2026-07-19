@@ -1,6 +1,7 @@
 """Tests for the local image provider, enrich command, and scan command."""
 
 import copy
+from pathlib import Path
 
 from PIL import Image
 from typer.testing import CliRunner
@@ -151,6 +152,76 @@ def test_enrich_deck_writes_pptx(tmp_path):
 
     prs = Presentation(str(pptx_path))
     assert len(prs.slides) == 1
+
+
+# --- presenter notes (--notes) -----------------------------------------------
+
+
+def _notes_llm_ctx():
+    """A fake LLM context; query_llm is patched in the tests below."""
+    return {"client": object(), "provider": "gemini", "model": None,
+            "target_seconds": None, "wpm": 150}
+
+
+def _pptx_notes(pptx_path):
+    from pptx import Presentation
+
+    prs = Presentation(str(pptx_path))
+    return [
+        s.notes_slide.notes_text_frame.text if s.has_notes_slide else ""
+        for s in prs.slides
+    ]
+
+
+def test_enrich_notes_fill_keeps_existing_and_ai_fills_empty(tmp_path, mocker):
+    mocker.patch("slide_stream.llm.query_llm", return_value="AI written note.")
+    make_image(tmp_path / "topic.png")
+    provider = LocalImageProvider(config_with_folder(tmp_path))
+    out = tmp_path / "out"
+
+    slides = [
+        {"title": "Has notes", "content": ["a"], "notes": "Existing note."},
+        {"title": "No notes", "content": ["b"]},
+    ]
+    enrich_deck(slides, provider, out, "deck", also_pptx=True,
+                notes_mode="fill", llm=_notes_llm_ctx())
+
+    notes = _pptx_notes(out / "deck.pptx")
+    assert notes[0] == "Existing note."   # kept as-is
+    assert notes[1] == "AI written note."  # AI-filled where empty
+
+
+def test_enrich_notes_all_regenerates_even_when_present(tmp_path, mocker):
+    mocker.patch("slide_stream.llm.query_llm", return_value="Regenerated note.")
+    make_image(tmp_path / "topic.png")
+    provider = LocalImageProvider(config_with_folder(tmp_path))
+    out = tmp_path / "out"
+
+    slides = [{"title": "Has notes", "content": ["a"], "notes": "Old note."}]
+    enrich_deck(slides, provider, out, "deck", also_pptx=True,
+                notes_mode="all", llm=_notes_llm_ctx())
+
+    assert _pptx_notes(out / "deck.pptx")[0] == "Regenerated note."
+
+
+def test_enrich_notes_requires_llm_context():
+    import pytest
+
+    with pytest.raises(ValueError, match="llm"):
+        enrich_deck([{"title": "A"}], object(), Path("x"), "d",  # type: ignore[arg-type]
+                    also_pptx=True, notes_mode="all", llm=None)
+
+
+def test_enrich_cli_notes_without_llm_fails_cleanly(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    deck = tmp_path / "deck.md"
+    deck.write_text("# One\n\n- a\n")
+    # Default config has llm provider 'none' -> --notes must error, not crash.
+    result = CliRunner().invoke(
+        app, ["enrich", str(deck), str(tmp_path / "out"), "--notes", "all"]
+    )
+    assert result.exit_code == 1
+    assert "LLM provider" in result.output
 
 
 def test_enrich_cli_end_to_end(tmp_path, monkeypatch):

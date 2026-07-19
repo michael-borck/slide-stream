@@ -26,6 +26,27 @@ def _slide_query(slide: dict[str, Any]) -> str:
     return "presentation slide"
 
 
+def _generate_notes(slide: dict[str, Any], llm: dict[str, Any]) -> str:
+    """AI presenter notes for one slide, reusing the narration writer so the
+    notes read as a spoken script (and drive narration if the deck is later
+    rendered — ``create`` reads .pptx speaker notes as its narration source).
+
+    Always written from the slide's own content/title, never from any existing
+    notes, so ``all`` mode genuinely regenerates rather than paraphrasing.
+    """
+    from rich.console import Console
+
+    from .llm import query_llm
+    from .narration import build_narration_prompt, target_words
+
+    source = "content" if slide.get("content") else "title"
+    wpm = llm.get("wpm", 150)
+    words = target_words(llm.get("target_seconds"), wpm)
+    prompt = build_narration_prompt(slide, source, words, wpm)
+    text = query_llm(llm["client"], llm["provider"], prompt, Console(), llm.get("model"))
+    return (text or "").strip()
+
+
 def enrich_deck(
     slides: list[dict[str, Any]],
     image_provider: ImageProvider,
@@ -34,13 +55,25 @@ def enrich_deck(
     *,
     also_pptx: bool = False,
     also_zip: bool = False,
+    notes_mode: str | None = None,
+    llm: dict[str, Any] | None = None,
 ) -> Path:
     """Write an enriched Markdown deck (and optional PPTX) into output_dir.
 
     Returns the output directory. Each slide gets an image from
     ``image_provider``; slides the ``local`` provider could not match are
     listed in ``prompts.md`` with ready-to-paste AI-image prompts.
+
+    ``notes_mode`` adds presenter notes to the PowerPoint (requires
+    ``also_pptx`` and an ``llm`` context — client/provider/model/wpm/
+    target_seconds):
+      - ``fill``: keep a slide's existing speaker notes; AI-write notes only
+        for slides that have none.
+      - ``all``: AI-write notes for every slide, replacing any existing ones.
     """
+    if notes_mode and llm is None:
+        raise ValueError("notes_mode requires an 'llm' context")
+
     images_dir = output_dir / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
 
@@ -51,6 +84,15 @@ def enrich_deck(
         # The local provider reports whether it matched a real folder image;
         # other providers always produce an image (or their own text fallback).
         matched = getattr(image_provider, "matched_last", True)
+
+        existing_notes = str(slide.get("notes", "")).strip()
+        if notes_mode == "fill":
+            notes = existing_notes or _generate_notes(slide, llm or {})
+        elif notes_mode == "all":
+            notes = _generate_notes(slide, llm or {})
+        else:
+            notes = ""
+
         enriched.append(
             {
                 "index": i,
@@ -58,6 +100,7 @@ def enrich_deck(
                 "content": [str(c).strip() for c in slide.get("content", []) if str(c).strip()],
                 "image": img_path.name,
                 "matched": matched,
+                "notes": notes,
             }
         )
 
@@ -134,4 +177,11 @@ def _write_pptx(slides: list[dict[str, Any]], images_dir: Path, out_path: Path) 
         img = images_dir / slide["image"]
         if img.is_file():
             s.shapes.add_picture(str(img), Inches(1), Inches(1.5), width=image_width)
+        # Presenter notes (added by --notes). create reads these back as the
+        # narration source, so an enriched .pptx round-trips into a video.
+        note = str(slide.get("notes", "")).strip()
+        if note:
+            text_frame = s.notes_slide.notes_text_frame
+            if text_frame is not None:
+                text_frame.text = note
     prs.save(str(out_path))
