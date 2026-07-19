@@ -187,17 +187,32 @@ SlideStream automatically finds your config in this order:
 
 ## 📋 CLI Commands
 
+> **New to SlideStream?** See the task-based [use-case guide](docs/USE_CASES.md)
+> — recipes for the typical jobs (video, cloned voice, animated presenter,
+> PowerPoint export, preflight, self-hosting).
+
 ### Core Commands
 
 ```bash
-# Create video presentation
+# Create a narrated video from a .md or .pptx deck
 slide-stream create <input_file> <output_file>
 
-# Generate example configuration
-slide-stream init [config_file]
+# Preflight: assess a deck + config (estimates, warnings) WITHOUT rendering
+slide-stream doctor <input_file>            # or: create ... --dry-run
 
-# List available providers and their status
+# Add images to a deck and write a new deck (Markdown + images/, and --pptx)
+slide-stream enrich <input_file> <out_dir> --pptx [--notes all|fill]
+
+# AI-rename an image folder to match slides (used by the 'local' image provider)
+slide-stream scan <folder>
+
+# List the built-in mascot avatars / voices / provider status
+slide-stream avatars
+slide-stream voices
 slide-stream providers
+
+# Generate an example configuration
+slide-stream init [config_file]
 
 # Web UI: upload a deck + voice + photo in the browser, render, download
 slide-stream serve                    # needs: pip install "slide-stream[serve]"
@@ -215,13 +230,20 @@ slide-stream serve --host 0.0.0.0 --token "$(openssl rand -hex 24)"   # VPS, tok
 ```
 
 Upload a deck (`.md`/`.pptx`) plus an optional **voice sample** and **photo**;
-it renders as a background job and returns a video. Token-authenticated (set
-`--token` / `SLIDESTREAM_TOKEN`; auto-minted on a non-local bind). The server
-is **stateless about biometric data** — an uploaded voice/photo is used only
-for that render and deleted afterwards; the lecturer's **browser** remembers
-them (IndexedDB) so they need not re-pick each job, keeping the data on their
-own laptop. Voice server, image provider, avatar engine, and API keys come
-from the server's own layered config (`~/.slidestream.yaml`).
+it renders as a background job and returns a video. The same UI can also:
+
+- **Check deck first** — run the [preflight](docs/USE_CASES.md#5-check-a-deck-before-you-render)
+  in the browser (estimates + warnings) before committing to a render.
+- **Output: PowerPoint** — produce a downloadable deck (`.pptx` + images) with
+  optional AI presenter notes, instead of a video.
+
+Token-authenticated (set `--token` / `SLIDESTREAM_TOKEN`; auto-minted on a
+non-local bind). The server is **stateless about biometric data** — an uploaded
+voice/photo is used only for that render and deleted afterwards; the lecturer's
+**browser** remembers them (IndexedDB) so they need not re-pick each job. Voice
+server, image provider, avatar engine, and API keys come from the server's own
+layered config (`~/.slidestream.yaml`). The desktop app and Docker deploy are
+the same UI.
 
 ### Examples
 
@@ -258,6 +280,27 @@ slide-stream init my-config.yaml
 - **HD Video**: 1920x1080 resolution by default
 - **Quality Audio**: Synchronized speech with proper timing
 - **Custom Timing**: Configurable slide durations and padding
+
+### Talking-head presenter
+
+A presenter in a corner circle — a built-in mascot, or your own photo/video.
+Set `providers.avatar` and enable per run with `--avatar`
+([full recipe](docs/USE_CASES.md#3-add-a-talking-head-presenter)):
+
+- `static` / `puppet` — a held image or a no-GPU cartoon mouth-flap.
+- **`wan-s2v`** — Wan2.2-S2V lip-syncs a still image from the narration audio
+  with **no face detector**, so it animates the built-in mascots *and* human
+  head shots (self-hosted ComfyUI). This is the one that animates a teddy/owl.
+- `sadtalker` / `wav2lip` / `d-id` — human-face-only engines (a mascot won't
+  animate on these).
+
+### Preflight (`doctor` / `--dry-run`)
+
+Assess a deck + config before rendering — estimated duration, cost and render
+time, plus warnings (missing notes, stage directions in notes, voice-sample
+length, image resolution, mascot/engine mismatch, missing ffmpeg/keys). Add
+`--fail-on-warn` for a CI gate. See
+[Check a deck before you render](docs/USE_CASES.md#5-check-a-deck-before-you-render).
 
 ## 🔑 Getting API Keys
 
@@ -342,12 +385,18 @@ Beyond making videos, SlideStream can add an image to each slide and write a
 # Markdown deck + images/ folder (default). Add --pptx for a PowerPoint too.
 slide-stream enrich deck.md out/ --image-provider dalle3
 slide-stream enrich deck.md out/ --image-provider local --image-folder ./pics --pptx
+
+# ...and write AI presenter notes into the PowerPoint (needs an LLM):
+slide-stream enrich deck.md out/ --pptx --notes all    # every slide
+slide-stream enrich deck.md out/ --pptx --notes fill   # only slides missing notes
 ```
 
 The output is a real artifact you can review, hand-edit, or narrate as a second
-pass (`slide-stream create out/deck.md video.mp4`). For a one-pass video that
-adds images *and* narrates internally, just run `create` with an image
-provider configured — `enrich` is the deck-only track.
+pass (`slide-stream create out/deck.md video.mp4`). `--notes` are written as a
+spoken script, so an enriched `.pptx` **round-trips**: `create out/deck.pptx`
+narrates straight from them. For a one-pass video that adds images *and*
+narrates internally, just run `create` with an image provider configured —
+`enrich` is the deck-only track.
 
 `scan` AI-renames a folder of images to keyword slugs so the `local` provider
 can match them to slides (dry-run by default):

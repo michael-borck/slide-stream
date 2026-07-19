@@ -1,6 +1,12 @@
-# SlideStream 2.0 User Guide
+# SlideStream User Guide
 
-Comprehensive guide for creating professional video presentations with SlideStream's AI-powered tools.
+Comprehensive reference for creating video presentations with SlideStream's
+AI-powered tools.
+
+> **Prefer recipes?** The task-based [use-case guide](USE_CASES.md) walks the
+> typical jobs step by step (video, cloned voice, animated presenter,
+> PowerPoint export with notes, the preflight, self-hosting). This guide is the
+> deeper reference behind them.
 
 ## Table of Contents
 
@@ -390,6 +396,63 @@ providers:
 ```
 
 ## Advanced Workflows
+
+### Talking-head presenter
+
+Composite a presenter into a corner circle. Set `providers.avatar` and enable
+per run with `--avatar` (disable with `--no-avatar`):
+
+| Provider | Input | Notes |
+|----------|-------|-------|
+| `static` | image / mascot name | held still, no GPU |
+| `puppet` | image / mascot name | no-GPU cartoon mouth-flap driven by loudness |
+| `precomputed` | `head_N.mp4` clips in `assets_dir` | drop-in, no service |
+| **`wan-s2v`** | still image + narration audio | **no face detector** — animates mascots *and* human head shots (self-hosted ComfyUI); ~minutes of GPU/slide |
+| `sadtalker` | photo | human faces only |
+| `wav2lip` | short video | human faces only |
+| `d-id` | photo | hosted, BYOK, bills per minute |
+
+The built-in mascots (`slide-stream avatars`: teddy, panda, koala, robot,
+wizard, owl) only lip-sync on `wan-s2v` or `d-id` — the others need a human
+face. Example:
+
+```yaml
+providers:
+  avatar:
+    provider: wan-s2v
+    base_url: https://comfyui.example.org
+    api_key: "${COMFYUI_TOKEN}"
+    source: owl            # a built-in name, or ./me.jpg
+    clip_seconds: 4        # short clip looped under the narration (default)
+```
+
+### PowerPoint export with AI notes
+
+`enrich` writes a new deck (Markdown + `images/`, plus a `.pptx` with `--pptx`)
+instead of a video. `--notes` adds AI presenter notes to the PowerPoint:
+
+```bash
+slide-stream enrich deck.md out/ --pptx --notes all    # write for every slide
+slide-stream enrich deck.md out/ --pptx --notes fill   # keep existing, fill gaps
+```
+
+Notes are written as a spoken script and **round-trip** — `create out/deck.pptx`
+narrates from them. `--notes` needs an LLM provider configured.
+
+### Preflight before rendering (`doctor` / `--dry-run`)
+
+Assess a deck + config and report warnings and estimates **without rendering**:
+
+```bash
+slide-stream doctor deck.pptx                     # standalone report
+slide-stream create deck.pptx out.mp4 --dry-run   # same, with create's flags
+slide-stream doctor deck.pptx --fail-on-warn      # non-zero exit for CI
+```
+
+It flags missing notes, stage directions in notes ("[pause]", "click"), voice-
+sample length, image resolution vs the frame, mascot/engine mismatches, missing
+ffmpeg/keys, and estimates duration, cost, and render time — worth running
+before a slow `wan-s2v` render.
 
 ### Multi-Configuration Workflow
 

@@ -4,6 +4,14 @@ Reference for choosing how to generate the lip-synced talking head that
 slide-stream composites over each slide. Written 2026 during the avatar work;
 revisit when picking a local engine to prototype.
 
+> **Update — resolved.** The parked "audio-synced mascot" problem (see below)
+> was solved by **Wan2.2-S2V**: a still image + audio → lip-synced video with
+> **no face detector at all**, so it animates the built-in mascots *and* human
+> head shots. It shipped as the **`wan-s2v`** avatar provider and is the
+> recommended animated option. The engines below are kept as the decision
+> record. User docs: [USE_CASES.md](USE_CASES.md#3-add-a-talking-head-presenter);
+> API: [wan-s2v-api.md](wan-s2v-api.md).
+
 ## The one distinction that matters: two families
 
 Every talking-head tool falls into one of two families, and this is what
@@ -107,8 +115,14 @@ self-hosted. More pipeline than a corner mascot usually warrants (hence
 
 ## Current status
 
-- `none`, `precomputed`, and `d-id` avatar providers are implemented.
-- MuseTalk (original Phase-4 target) is **deprioritized** in favour of
-  LatentSync (better) and/or a ComfyUI-driven provider (reuses existing infra).
-- Next action: prototype SadTalker locally, view via `precomputed` at corner
-  size, then decide between "good enough", LatentSync, or D-ID.
+Implemented avatar providers: `none`, `static`, `puppet`, `precomputed`,
+`d-id`, `sadtalker`, `wav2lip`, `comfyui` (auto-router), and **`wan-s2v`**.
+
+- **`wan-s2v`** is the recommended *animated* option — it is the only one that
+  lip-syncs the stylized mascots (no face detector), and it works on human head
+  shots too. Cost is ~a few minutes of GPU per slide; use `--dry-run` for an
+  estimate. See [wan-s2v-api.md](wan-s2v-api.md).
+- `sadtalker` (photo) and `wav2lip` (video) are the human-face-only ComfyUI
+  engines; `comfyui` auto-routes photo→SadTalker / video→Wav2Lip.
+- MuseTalk (original Phase-4 target) was **dropped**; the two-stage
+  mascot pipeline parked above is **superseded** by wan-s2v.
