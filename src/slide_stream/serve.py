@@ -50,6 +50,9 @@ class Job:
     # Per-job download secret: knowing the job UUID alone must not be enough
     # to fetch the video, and the long-lived instance token never goes in a URL.
     download_token: str = ""
+    # Output media (video render vs enriched-deck zip) for the download response.
+    media_type: str = "video/mp4"
+    download_name: str = "slidestream.mp4"
 
 
 # In-memory job registry (single-process v1). job_id -> Job.
@@ -176,6 +179,17 @@ def _count_slides(deck_path: Path) -> int | None:
         return None
 
 
+def _parse_deck_slides(deck_path: Path) -> list[dict[str, Any]]:
+    """Parse a deck to slide dicts for the doctor preflight (.md or .pptx)."""
+    if deck_path.suffix.lower() == ".pptx":
+        from .powerpoint import parse_powerpoint
+
+        return parse_powerpoint(deck_path)
+    from .parser import parse_markdown
+
+    return parse_markdown(deck_path.read_text(encoding="utf-8"))
+
+
 # Remote engines that animate a stylized mascot (no human face to detect):
 # Wan2.2-S2V has no detector at all, and D-ID handles stylized faces. The
 # others (sadtalker/wav2lip/comfyui-auto) start with a human face detector and
@@ -278,17 +292,36 @@ def _build_job_config(base: dict[str, Any], workdir: Path, options: dict[str, An
 
 
 def _run_job(job: Job, deck_path: Path, job_yaml: Path,
-             voice_path: Path | None, photo_path: Path | None) -> None:
-    """Render one job in a subprocess, then wipe the biometric inputs."""
+             voice_path: Path | None, photo_path: Path | None,
+             mode: str = "video", notes: str | None = None) -> None:
+    """Run one job in a subprocess, then wipe the biometric inputs.
+
+    ``mode`` 'video' renders an MP4 (``create``); 'pptx' produces an enriched
+    deck zip (``enrich --pptx --zip``), optionally with AI presenter notes.
+    """
     assert job.workdir is not None
-    output = job.workdir / "output.mp4"
+    if mode == "pptx":
+        out_dir = job.workdir / "enriched"
+        output = job.workdir / "enriched.zip"  # enrich --zip writes <dir>.zip
+        command = [sys.executable, "-m", "slide_stream", "enrich",
+                   str(deck_path), str(out_dir), "--config", str(job_yaml),
+                   "--pptx", "--zip"]
+        if notes in ("fill", "all"):
+            command += ["--notes", notes]
+        media_type, download_name = "application/zip", "slidestream-deck.zip"
+    else:
+        output = job.workdir / "output.mp4"
+        command = [sys.executable, "-m", "slide_stream", "create",
+                   str(deck_path), str(output), "--config", str(job_yaml)]
+        media_type, download_name = "video/mp4", "slidestream.mp4"
+
     with _LOCK:
         job.status = "running"
+        job.media_type = media_type
+        job.download_name = download_name
     try:
         proc = subprocess.run(
-            [sys.executable, "-m", "slide_stream", "create",
-             str(deck_path), str(output), "--config", str(job_yaml)],
-            capture_output=True, text=True, timeout=3600,
+            command, capture_output=True, text=True, timeout=3600,
         )
         log = (proc.stdout or "") + (proc.stderr or "")
         with _LOCK:
@@ -298,7 +331,7 @@ def _run_job(job: Job, deck_path: Path, job_yaml: Path,
                 job.output_path = output
             else:
                 job.status = "error"
-                job.error = f"render exited {proc.returncode}"
+                job.error = f"{'enrich' if mode == 'pptx' else 'render'} exited {proc.returncode}"
     except subprocess.TimeoutExpired:
         with _LOCK:
             job.status = "error"
@@ -480,6 +513,8 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
             ),
             "avatars": avatar_names(),
             "accents": list(GTTS_ACCENTS) if tts_provider == "gtts" else [],
+            # The UI offers a PowerPoint output; AI presenter notes need an LLM.
+            "llm": base_config.get("providers", {}).get("llm", {}).get("provider", "none") != "none",
         }
 
     settings_path = Path.home() / ".slidestream.yaml"
@@ -552,12 +587,18 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
         avatar: str | None = Form(default=None),
         avatar_name: str | None = Form(default=None),
         accent: str | None = Form(default=None),
+        output: str | None = Form(default=None),
+        notes: str | None = Form(default=None),
         _: None = Depends(require_token),
     ) -> JSONResponse:
         _reap_expired_jobs()
         suffix = Path(deck.filename or "deck.md").suffix.lower()
         if suffix not in (".md", ".pptx"):
             raise HTTPException(status_code=400, detail="Deck must be .md or .pptx")
+        mode = "pptx" if (output or "video").lower() == "pptx" else "video"
+        notes_mode = (notes or "").lower() if notes else None
+        if notes_mode not in (None, "fill", "all"):
+            raise HTTPException(status_code=400, detail="notes must be 'fill' or 'all'")
 
         # Reject obviously oversized requests before touching the body.
         declared = request.headers.get("content-length")
@@ -632,9 +673,84 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
                   download_token=secrets.token_urlsafe(24))
         with _LOCK:
             _JOBS[job_id] = job
-        executor.submit(_run_job, job, deck_path, job_yaml, voice_path, photo_path)
+        executor.submit(_run_job, job, deck_path, job_yaml, voice_path,
+                        photo_path, mode, notes_mode)
         return JSONResponse({"job_id": job_id, "status": job.status,
                              "token": job.download_token})
+
+    @app.post("/api/check")
+    async def check_deck(
+        deck: UploadFile = File(...),
+        voice: UploadFile | None = File(default=None),
+        photo: UploadFile | None = File(default=None),
+        narration_seconds: str | None = Form(default=None),
+        image_provider: str | None = Form(default=None),
+        avatar: str | None = Form(default=None),
+        avatar_name: str | None = Form(default=None),
+        accent: str | None = Form(default=None),
+        output: str | None = Form(default=None),
+        _: None = Depends(require_token),
+    ) -> JSONResponse:
+        """Offline preflight (the 'doctor'): assess the deck + resolved config
+        and return warnings + estimates as JSON, without rendering anything."""
+        suffix = Path(deck.filename or "deck.md").suffix.lower()
+        if suffix not in (".md", ".pptx"):
+            raise HTTPException(status_code=400, detail="Deck must be .md or .pptx")
+
+        workdir = jobs_root / ("check_" + uuid.uuid4().hex)
+        workdir.mkdir(parents=True)
+        try:
+            deck_path = workdir / f"deck{suffix}"
+            await save_upload(deck, deck_path, MAX_DECK_BYTES, "Deck")
+            voice_path = None
+            if voice is not None and voice.filename:
+                voice_path = workdir / f"voice{Path(voice.filename).suffix or '.wav'}"
+                await save_upload(voice, voice_path, MAX_VOICE_BYTES, "Voice sample")
+            photo_path = None
+            if photo is not None and photo.filename:
+                photo_path = workdir / f"photo{Path(photo.filename).suffix or '.png'}"
+                await save_upload(photo, photo_path, MAX_PHOTO_BYTES, "Photo")
+
+            options = {
+                "narration_seconds": narration_seconds,
+                "image_provider": image_provider,
+                "avatar": (avatar or "true").lower() != "false",
+                "avatar_name": avatar_name,
+                "accent": accent,
+            }
+            job_base = load_config() if local_mode else base_config
+            job_yaml = _build_job_config(job_base, workdir, options, voice_path, photo_path)
+            cfg = yaml.safe_load(job_yaml.read_text(encoding="utf-8")) or {}
+
+            slides = _parse_deck_slides(deck_path)
+            if not slides:
+                raise HTTPException(status_code=400, detail="Could not parse the deck")
+
+            from .doctor import run_doctor
+
+            avatar_enabled = (
+                cfg.get("providers", {}).get("avatar", {}).get("provider", "none") != "none"
+            )
+            report = run_doctor(slides, cfg, {
+                "mode": "pptx" if (output or "video").lower() == "pptx" else "create",
+                "input_ext": suffix,
+                "verbatim_notes": False,
+                "script_blocks": None,
+                "avatar_enabled": avatar_enabled,
+                "narration_seconds": float(narration_seconds) if narration_seconds else None,
+                "output_path": None,
+            })
+            return JSONResponse({
+                "blockers": report.blockers,
+                "warnings": report.warnings,
+                "findings": [
+                    {"group": f.group, "severity": f.severity, "message": f.message}
+                    for f in report.findings
+                ],
+                "estimates": report.estimates,
+            })
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
 
     @app.get("/api/jobs/{job_id}")
     def job_status(job_id: str, _: None = Depends(require_token)) -> dict[str, Any]:
@@ -694,8 +810,8 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
                     shutil.rmtree(workdir, ignore_errors=True)
 
             background = BackgroundTask(_wipe)
-        return FileResponse(str(job.output_path), media_type="video/mp4",
-                            filename="slidestream.mp4", background=background)
+        return FileResponse(str(job.output_path), media_type=job.media_type,
+                            filename=job.download_name, background=background)
 
     return app
 
@@ -759,6 +875,16 @@ details summary:hover{color:var(--ink)}
  padding:.7rem .8rem;border-radius:9px;font-family:ui-monospace,Menlo,monospace;
  font-size:.75rem;max-height:220px;overflow:auto;color:var(--muted)}
 #log.on{display:block}
+#report{display:none;margin-top:1rem;border:1px solid var(--line);border-radius:9px;
+ padding:.7rem 1rem .9rem;font-size:.88rem}
+#report.on{display:block}
+#report h4{margin:.7rem 0 .25rem;font-size:.72rem;text-transform:uppercase;
+ letter-spacing:.07em;color:var(--accent)}
+#report h4:first-child{margin-top:.2rem}
+#report .f{margin:.16rem 0} #report .est{color:var(--muted)}
+#report .sum{margin-top:.7rem;padding-top:.5rem;border-top:1px solid var(--line);font-weight:600}
+#check{background:transparent;border:1px solid var(--line);color:var(--ink);margin-top:.7rem}
+#check:hover{border-color:var(--accent);color:var(--accent)}
 footer{margin-top:2rem;padding-top:1.1rem;border-top:1px solid var(--line);
  font-size:.85rem;color:var(--muted);display:flex;gap:1.2rem;flex-wrap:wrap}
 footer a{color:var(--muted);text-decoration:none;font-weight:500}
@@ -813,6 +939,20 @@ footer a:hover{color:var(--accent)}
 <label>Slide deck <span class="req">required</span> <span style="font-weight:400;color:var(--muted)">(.md or .pptx)</span></label>
 <input id="deck" type="file" accept=".md,.pptx">
 <p class="muted">This is all you need — everything below is optional.</p>
+<label>Output</label>
+<select id="output">
+ <option value="video">🎬 Narrated video (.mp4)</option>
+ <option value="pptx">🖼️ PowerPoint deck (.pptx + images, no video)</option>
+</select>
+<div id="notesRow" style="display:none">
+ <label>AI presenter notes</label>
+ <select id="notes">
+  <option value="">None</option>
+  <option value="all">Write for every slide</option>
+  <option value="fill">Only where notes are missing</option>
+ </select>
+ <p class="muted">Adds speaker notes to the PowerPoint.</p>
+</div>
 <details id="extras">
 <summary>Voice &amp; presenter <span style="font-weight:400">(optional)</span></summary>
 <label>Your voice <span style="font-weight:400;color:var(--muted)">(a 10–30s sample clones it for this render only)</span></label>
@@ -831,8 +971,9 @@ Off: the presenter appears as a still image in the corner.</p>
 <label>Seconds of narration per slide</label>
 <input id="secs" type="number" min="10" placeholder="e.g. 30">
 </details>
+<button id="check">Check deck first</button>
 <button id="go">Create video</button>
-<p id="status"></p><div id="log"></div>
+<p id="status"></p><div id="report"></div><div id="log"></div>
 </div>
 <footer>
  <a href="https://slidestream.eduserver.au">About</a>
@@ -857,16 +998,25 @@ const $=id=>document.getElementById(id);
 $("token").value=localStorage.getItem("ss_token")||"";
 $("token").oninput=e=>localStorage.setItem("ss_token",e.target.value);
 // Bootstrap: show the token field only if required, and the demo banner if on.
+let hasLLM=false;
 fetch("/api/config").then(r=>r.json()).then(c=>{
  if(c.auth_required)$("tokrow").style.display="block";
  if(c.demo){$("demo").style.display="block";
   if(c.limits)$("limits").textContent=
    c.limits.max_slides+" slides per deck, "+c.limits.jobs_per_hour+" videos per hour";}
  if(c.local)$("gear").style.display="inline-block";
+ hasLLM=!!c.llm;
  (c.avatars||[]).forEach(a=>{const o=document.createElement("option");o.value=a;o.textContent=a;$("avatarName").appendChild(o)});
  if((c.accents||[]).length){$("accentRow").style.display="block";$("accent").style.display="block";
   c.accents.forEach(a=>{const o=document.createElement("option");o.value=a;o.textContent=a;$("accent").appendChild(o)})}
 }).catch(()=>{});
+// Output mode: video (create) vs PowerPoint (enrich). PowerPoint hides the
+// voice/presenter extras (unused) and, with an LLM, offers AI notes.
+$("output").onchange=()=>{const pptx=$("output").value==="pptx";
+ $("notesRow").style.display=(pptx&&hasLLM)?"block":"none";
+ $("extras").style.display=pptx?"none":"";
+ $("go").textContent=pptx?"Create PowerPoint":"Create video";
+ $("report").classList.remove("on")};
 // IndexedDB: remember voice + photo across jobs (client-side only).
 let db;const openDB=()=>new Promise(r=>{const q=indexedDB.open("ss",1);
  q.onupgradeneeded=()=>q.result.createObjectStore("files");q.onsuccess=()=>{db=q.result;r()}});
@@ -880,17 +1030,42 @@ openDB().then(async()=>{savedVoice=await get("voice");savedPhoto=await get("phot
 const auth=()=>({Authorization:"Bearer "+$("token").value});
 async function fileOrSaved(input,key,saved){const f=input.files[0];
  if(f){await put(key,f);return f}return saved||null}
-$("go").onclick=async()=>{
- const deck=$("deck").files[0];if(!deck){$("status").textContent="Pick a deck first.";return}
- const voice=await fileOrSaved($("voice"),"voice",savedVoice);
- const photo=await fileOrSaved($("photo"),"photo",savedPhoto);
- const fd=new FormData();fd.append("deck",deck);
- if(voice)fd.append("voice",voice);if(photo)fd.append("photo",photo);
- fd.append("avatar",$("avatar").checked?"true":"false");
- if($("avatarName").value)fd.append("avatar_name",$("avatarName").value);
- if($("accent").value)fd.append("accent",$("accent").value);
+async function buildFD(){
+ const deck=$("deck").files[0];
+ if(!deck){$("status").textContent="Pick a deck first.";return null}
+ const fd=new FormData();fd.append("deck",deck);fd.append("output",$("output").value);
+ if($("output").value==="pptx"){if($("notes").value)fd.append("notes",$("notes").value)}
+ else{
+  const voice=await fileOrSaved($("voice"),"voice",savedVoice);
+  const photo=await fileOrSaved($("photo"),"photo",savedPhoto);
+  if(voice)fd.append("voice",voice);if(photo)fd.append("photo",photo);
+  fd.append("avatar",$("avatar").checked?"true":"false");
+  if($("avatarName").value)fd.append("avatar_name",$("avatarName").value);
+  if($("accent").value)fd.append("accent",$("accent").value);
+ }
  if($("secs").value)fd.append("narration_seconds",$("secs").value);
- $("status").textContent="Uploading…";$("log").textContent="";
+ return fd}
+const ICON={ok:"✅",warn:"⚠️",blocker:"❌"};
+const esc=s=>{const d=document.createElement("div");d.textContent=s;return d.innerHTML};
+function renderReport(rep){
+ const groups={};rep.findings.forEach(f=>{(groups[f.group]=groups[f.group]||[]).push(f)});
+ let h="";Object.keys(groups).forEach(g=>{h+="<h4>"+esc(g)+"</h4>";
+  groups[g].forEach(f=>{h+='<div class="f">'+(ICON[f.severity]||"")+" "+esc(f.message)+"</div>"})});
+ if((rep.estimates||[]).length){h+="<h4>Estimates</h4>";
+  rep.estimates.forEach(e=>{h+='<div class="f est">• '+esc(e)+"</div>"})}
+ h+='<div class="sum">'+(rep.blockers?("❌ "+rep.blockers+" blocker(s) · "):"")+
+  (rep.warnings?("⚠️ "+rep.warnings+" warning(s)"):"✅ no warnings")+"</div>";
+ $("report").innerHTML=h;$("report").classList.add("on")}
+$("check").onclick=async()=>{
+ const fd=await buildFD();if(!fd)return;
+ $("check").disabled=true;$("status").textContent="Checking…";$("report").classList.remove("on");
+ try{const r=await fetch("/api/check",{method:"POST",headers:auth(),body:fd});
+  if(!r.ok){$("status").textContent="Error: "+(await r.text());return}
+  $("status").textContent="";renderReport(await r.json())}
+ finally{$("check").disabled=false}};
+$("go").onclick=async()=>{
+ const fd=await buildFD();if(!fd)return;
+ $("status").textContent="Uploading…";$("log").textContent="";$("report").classList.remove("on");
  let res=await fetch("/api/jobs",{method:"POST",headers:auth(),body:fd});
  if(!res.ok){$("status").textContent="Error: "+(await res.text());return}
  const {job_id,token}=await res.json();poll(job_id,token)};
@@ -915,8 +1090,9 @@ async function poll(id,tok){
  const r=await fetch("/api/jobs/"+id,{headers:auth()});const j=await r.json();
  $("status").innerHTML='<span class="badge">'+j.status+'</span>';
  $("log").textContent=j.log||"";$("log").classList.toggle("on",!!j.log);
- if(j.status==="done"){$("status").innerHTML+=' <a href="/api/jobs/'+id+'/result?t='+
-   encodeURIComponent(tok||j.token||"")+'" download>⬇ download video</a>';return}
+ if(j.status==="done"){const lbl=$("output").value==="pptx"?"download deck (.zip)":"download video";
+  $("status").innerHTML+=' <a href="/api/jobs/'+id+'/result?t='+
+   encodeURIComponent(tok||j.token||"")+'" download>⬇ '+lbl+'</a>';return}
  if(j.status==="error"){$("status").textContent="Failed: "+(j.error||"see log");return}
  setTimeout(()=>poll(id,tok),2500)}
 </script></body></html>"""

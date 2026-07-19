@@ -78,7 +78,8 @@ def test_create_job_rejects_bad_deck_type(base_config):
 def test_job_lifecycle_and_download(base_config, tmp_path, monkeypatch):
     """Submit a deck; the (mocked) render produces a video that downloads."""
 
-    def fake_run_job(job, deck_path, job_yaml, voice_path, photo_path):
+    def fake_run_job(job, deck_path, job_yaml, voice_path, photo_path,
+                     mode="video", notes=None):
         # Simulate a successful render writing output.mp4.
         assert job.workdir is not None
         out = job.workdir / "output.mp4"
@@ -122,6 +123,66 @@ def test_job_lifecycle_and_download(base_config, tmp_path, monkeypatch):
     result = client.get(f"/api/jobs/{job_id}/result", params={"t": token})
     assert result.status_code == 200
     assert result.content == b"FAKEMP4"
+
+
+def test_api_check_returns_doctor_report(base_config):
+    """The preflight endpoint parses the deck + config and returns findings."""
+    client = TestClient(serve.create_app(config=base_config, token=None))
+    r = client.post(
+        "/api/check",
+        files={"deck": ("deck.md", b"# One\n\n- a\n\n# Two\n\n- b\n", "text/markdown")},
+        data={"output": "video"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert "findings" in body and "estimates" in body
+    assert any("2 slide(s)" in f["message"] for f in body["findings"])
+    assert any("Video length" in e for e in body["estimates"])
+
+
+def test_pptx_output_runs_enrich(base_config, monkeypatch):
+    """Output=pptx routes the job through enrich (zip), not create (mp4)."""
+    seen = {}
+
+    def fake_run_job(job, deck_path, job_yaml, voice_path, photo_path,
+                     mode="video", notes=None):
+        seen["mode"] = mode
+        seen["notes"] = notes
+        assert job.workdir is not None
+        out = job.workdir / "enriched.zip"
+        out.write_bytes(b"PK\x03\x04zip")
+        job.status = "done"
+        job.output_path = out
+        job.media_type = "application/zip"
+        job.download_name = "slidestream-deck.zip"
+
+    monkeypatch.setattr(serve, "_run_job", fake_run_job)
+    monkeypatch.setattr(
+        serve.ThreadPoolExecutor, "submit", lambda self, fn, *a, **k: fn(*a, **k)
+    )
+    client = TestClient(serve.create_app(config=base_config, token=None))
+    r = client.post(
+        "/api/jobs",
+        files={"deck": ("deck.md", b"# One\n\n- a\n", "text/markdown")},
+        data={"output": "pptx", "notes": "all"},
+    )
+    assert r.status_code == 200
+    assert seen == {"mode": "pptx", "notes": "all"}
+    token = r.json()["token"]
+    job_id = r.json()["job_id"]
+    result = client.get(f"/api/jobs/{job_id}/result", params={"t": token})
+    assert result.status_code == 200
+    assert result.content.startswith(b"PK")  # a zip, not an mp4
+
+
+def test_pptx_rejects_bad_notes_mode(base_config):
+    client = TestClient(serve.create_app(config=base_config, token=None))
+    r = client.post(
+        "/api/jobs",
+        files={"deck": ("deck.md", b"# One\n\n- a\n", "text/markdown")},
+        data={"output": "pptx", "notes": "bogus"},
+    )
+    assert r.status_code == 400
 
 
 def test_job_config_ephemeral_voice_and_photo(base_config, tmp_path):
