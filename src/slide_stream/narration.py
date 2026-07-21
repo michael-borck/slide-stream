@@ -11,11 +11,39 @@ aloud. Source priority per slide:
 4. Title only — a brief spoken introduction of the topic.
 """
 
+import re
 from pathlib import Path
 from typing import Any
 
 # Average speaking rate used to convert a duration target into a word target.
 DEFAULT_WPM = 150
+
+# Stage directions that are safe to REMOVE from narration before it is voiced:
+# any [square-bracket] annotation, and (parentheticals) that clearly contain a
+# direction keyword. Deliberately narrower than doctor's warning pattern —
+# prose-form cues ("pause here", "click to advance") are left alone here because
+# deleting bare words would risk eating real narration; the doctor preflight
+# still flags those for a human to fix.
+_STRIP_STAGE_DIRECTION = re.compile(
+    r"\[[^\]]*\]"
+    r"|\((?:[^)]*\b(?:pause|click|next|slow|beat|breath|aside|note)\b[^)]*)\)",
+    re.IGNORECASE,
+)
+
+
+def strip_stage_directions(text: str) -> str:
+    """Remove unspoken stage directions (e.g. ``[pause]``, ``(click here)``)
+    from narration text before it is voiced, then tidy the whitespace and stray
+    punctuation left behind. Conservative — only bracketed/parenthetical
+    annotations are removed; returns the text unchanged if there are none."""
+    if not text or not _STRIP_STAGE_DIRECTION.search(text):
+        return text
+    cleaned = _STRIP_STAGE_DIRECTION.sub("", text)
+    cleaned = re.sub(r"[ \t]+([,.;:!?])", r"\1", cleaned)  # " ," -> ","
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)           # collapse runs
+    cleaned = re.sub(r" *\n *", "\n", cleaned)             # trim around newlines
+    cleaned = re.sub(r"\n{2,}", "\n", cleaned)             # drop blank lines
+    return cleaned.strip()
 
 
 def parse_script_file(path: str | Path) -> list[str]:

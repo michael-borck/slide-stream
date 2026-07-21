@@ -27,6 +27,7 @@ from .narration import (
     build_narration_prompt,
     narration_source,
     parse_script_file,
+    strip_stage_directions,
     target_words,
 )
 from .parser import parse_markdown
@@ -100,7 +101,11 @@ def _clean_narration(title: str, content: list[Any], notes: str = "") -> str:
         if text:
             parts.append(text)
     if notes.strip() and notes.strip() != "Click to add notes":
-        parts.append(notes.strip())
+        # Notes go straight to speech here (no LLM), so drop any unspoken stage
+        # directions first — otherwise "[pause]" etc. would be read aloud.
+        spoken_notes = strip_stage_directions(notes.strip())
+        if spoken_notes:
+            parts.append(spoken_notes)
     return ". ".join(parts)
 
 
@@ -484,7 +489,9 @@ def create(
                     if script_block.strip():
                         speech_text = script_block
                 elif verbatim_notes and str(slide.get("notes", "")).strip():
-                    speech_text = str(slide["notes"]).strip()
+                    # "Verbatim" means the notes' words, not the presenter's
+                    # unspoken cues — strip [pause]/(click here) style directions.
+                    speech_text = strip_stage_directions(str(slide["notes"]).strip())
 
                 # LLM narration, unless a verbatim source already set the text.
                 # Source priority: speaker notes (cleaned up and fitted to the
@@ -524,7 +531,9 @@ def create(
                         )
 
                     if natural_speech:
-                        speech_text = natural_speech.strip()
+                        # Safety net: the prompt forbids stage directions, but
+                        # strip any the model leaves in rather than voice them.
+                        speech_text = strip_stage_directions(natural_speech.strip())
                     elif strict_mode:
                         err_console.print(
                             f"Slide {slide_num}: LLM narration failed and "

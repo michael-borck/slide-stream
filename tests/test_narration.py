@@ -12,9 +12,49 @@ from slide_stream.llm import query_llm_with_image
 from slide_stream.narration import (
     build_narration_prompt,
     narration_source,
+    strip_stage_directions,
     target_words,
 )
 from slide_stream.powerpoint import parse_powerpoint
+
+
+# --- Stage-direction stripping ------------------------------------------------
+
+
+def test_strip_removes_square_bracket_directions():
+    assert strip_stage_directions("Welcome [pause] everyone.") == "Welcome everyone."
+
+
+def test_strip_removes_parenthetical_direction():
+    assert strip_stage_directions("Say hello (pause here) then go.") == "Say hello then go."
+
+
+def test_strip_preserves_bare_direction_words():
+    # A prose word that merely contains a cue keyword must not be deleted.
+    text = "We must emphasize safety at all times."
+    assert strip_stage_directions(text) == text
+
+
+def test_strip_tidies_punctuation_and_spacing():
+    assert strip_stage_directions("Intro [pause], then begin.") == "Intro, then begin."
+
+
+def test_strip_returns_unchanged_when_no_directions():
+    text = "A perfectly ordinary sentence."
+    assert strip_stage_directions(text) is text  # early-out, same object
+
+
+def test_strip_handles_note_that_is_only_a_direction():
+    assert strip_stage_directions("[click to advance]") == ""
+
+
+def test_clean_narration_strips_directions_from_notes():
+    """The default (no-LLM) narration builder must not voice bracketed cues."""
+    from slide_stream.cli import _clean_narration
+
+    spoken = _clean_narration("My Title", ["a bullet"], "Explain the chart [pause] slowly.")
+    assert "[pause]" not in spoken
+    assert "Explain the chart slowly." in spoken
 
 # --- Source selection ---------------------------------------------------------
 

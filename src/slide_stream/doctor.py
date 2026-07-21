@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from .avatars import BUILTIN_AVATARS
-from .narration import narration_source
+from .narration import narration_source, strip_stage_directions
 
 # Severity ranks for the summary/exit code.
 OK, WARN, BLOCKER = "ok", "warn", "blocker"
@@ -246,9 +246,11 @@ def _check_narration(report, slides, options, target_seconds, wpm) -> list[float
             words = _wc(text)
         per_slide.append(max(words, 1) / wpm * 60)
 
-        # Stage directions in notes that would be spoken (verbatim or as source).
+        # Stage directions in notes that would STILL be spoken after the
+        # automatic strip (bracketed forms are removed for us; only prose-form
+        # cues like "pause here" survive and need a human to fix).
         if notes and (verbatim or narration_source(slide) == "notes"):
-            m = _STAGE_DIRECTION.search(notes)
+            m = _STAGE_DIRECTION.search(strip_stage_directions(notes))
             if m:
                 report.add("Narration", WARN,
                            f"slide {i} note has a stage direction "
