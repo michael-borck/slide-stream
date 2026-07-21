@@ -33,6 +33,16 @@ from .providers.factory import ProviderFactory
 console = Console()
 err_console = Console(stderr=True, style="bold red")
 
+
+def _doctor_nudge(input_name: str) -> None:
+    """Point the user at the preflight, which explains *why* a provider failed
+    (missing package / key / base_url) — the per-slide errors only show *that*
+    it failed."""
+    console.print(
+        f"[dim]💡 Run [bold]slide-stream doctor {input_name}[/bold] "
+        "to check your providers & setup.[/dim]"
+    )
+
 # Typer Application Initialization
 app = typer.Typer(
     name="slide-stream",
@@ -343,6 +353,7 @@ def create(
                 )
             except (ImportError, ValueError) as e:
                 err_console.print(f"Error initializing LLM: {e}")
+                _doctor_nudge(input_path.name)
                 raise typer.Exit(code=1)
 
         # Parse the input file
@@ -541,6 +552,7 @@ def create(
                     )
                 except StrictModeError as e:
                     err_console.print(f"Slide {slide_num}: {e}")
+                    _doctor_nudge(input_path.name)
                     raise typer.Exit(code=1)
                 if not speech_text.strip():
                     # Nothing to say (e.g. an empty slide or a blank script
@@ -562,6 +574,7 @@ def create(
                                 f"Slide {slide_num}: audio generation failed and "
                                 "strict mode is enabled. Aborting."
                             )
+                            _doctor_nudge(input_path.name)
                             raise typer.Exit(code=1)
                         audio_failed += 1
 
@@ -629,6 +642,19 @@ def create(
                 f"[bold yellow]⚠ {fallback_count} slide(s) fell back to the "
                 "default gTTS voice due to provider errors.[/bold yellow]"
             )
+
+        # If any provider degraded this run, nudge toward the preflight, which
+        # explains the *why* (missing package/key/base_url) that the per-slide
+        # errors above don't.
+        degraded = bool(
+            len(video_fragments) < len(slides)
+            or audio_failed
+            or avatar_failed
+            or fallback_count
+            or (llm_client and llm_narration_failed)
+        )
+        if degraded:
+            _doctor_nudge(input_path.name)
 
         # Combine video fragments
         console.print("\n[bold]2. Combining Video Fragments...[/bold]")

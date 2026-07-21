@@ -2188,6 +2188,20 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+all = [
+    { name = "anthropic" },
+    { name = "elevenlabs" },
+    { name = "espeakng-loader" },
+    { name = "fastapi" },
+    { name = "google-genai" },
+    { name = "google-generativeai" },
+    { name = "groq" },
+    { name = "kokoro-onnx" },
+    { name = "openai" },
+    { name = "python-multipart" },
+    { name = "soundfile" },
+    { name = "uvicorn" },
+]
 all-ai = [
     { name = "anthropic" },
     { name = "elevenlabs" },
@@ -2240,37 +2254,49 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anthropic", marker = "extra == 'all'", specifier = ">=0.40.0" },
     { name = "anthropic", marker = "extra == 'all-ai'", specifier = ">=0.40.0" },
     { name = "anthropic", marker = "extra == 'claude'", specifier = ">=0.40.0" },
     { name = "beautifulsoup4", specifier = ">=4.12.0" },
+    { name = "elevenlabs", marker = "extra == 'all'", specifier = ">=1.5.0,<3.0.0" },
     { name = "elevenlabs", marker = "extra == 'all-ai'", specifier = ">=1.5.0,<3.0.0" },
     { name = "elevenlabs", marker = "extra == 'elevenlabs'", specifier = ">=1.5.0,<3.0.0" },
+    { name = "espeakng-loader", marker = "extra == 'all'", specifier = ">=0.2.4" },
     { name = "espeakng-loader", marker = "extra == 'local-tts'", specifier = ">=0.2.4" },
+    { name = "fastapi", marker = "extra == 'all'", specifier = ">=0.110.0" },
     { name = "fastapi", marker = "extra == 'serve'", specifier = ">=0.110.0" },
+    { name = "google-genai", marker = "extra == 'all'", specifier = ">=1.0.0" },
     { name = "google-genai", marker = "extra == 'all-ai'", specifier = ">=1.0.0" },
     { name = "google-genai", marker = "extra == 'gemini'", specifier = ">=1.0.0" },
+    { name = "google-generativeai", marker = "extra == 'all'", specifier = ">=0.8.0" },
     { name = "google-generativeai", marker = "extra == 'all-ai'", specifier = ">=0.8.0" },
     { name = "google-generativeai", marker = "extra == 'gemini'", specifier = ">=0.8.0" },
+    { name = "groq", marker = "extra == 'all'", specifier = ">=0.11.0" },
     { name = "groq", marker = "extra == 'all-ai'", specifier = ">=0.11.0" },
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.11.0" },
     { name = "gtts", specifier = ">=2.4.0" },
+    { name = "kokoro-onnx", marker = "extra == 'all'", specifier = ">=0.4.0" },
     { name = "kokoro-onnx", marker = "extra == 'local-tts'", specifier = ">=0.4.0" },
     { name = "markdown", specifier = ">=3.5.0" },
     { name = "moviepy", specifier = ">=2.0.0,<3.0.0" },
     { name = "numpy", specifier = ">=1.26.0" },
+    { name = "openai", marker = "extra == 'all'", specifier = ">=1.40.0" },
     { name = "openai", marker = "extra == 'all-ai'", specifier = ">=1.40.0" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.40.0" },
     { name = "pillow", specifier = ">=11.3.0" },
+    { name = "python-multipart", marker = "extra == 'all'", specifier = ">=0.0.9" },
     { name = "python-multipart", marker = "extra == 'serve'", specifier = ">=0.0.9" },
     { name = "python-pptx", specifier = ">=1.0.2" },
     { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "requests", specifier = ">=2.31.0" },
     { name = "rich", specifier = ">=13.0.0" },
+    { name = "soundfile", marker = "extra == 'all'", specifier = ">=0.12.0" },
     { name = "soundfile", marker = "extra == 'local-tts'", specifier = ">=0.12.0" },
     { name = "typer", specifier = ">=0.9.0" },
+    { name = "uvicorn", marker = "extra == 'all'", specifier = ">=0.29.0" },
     { name = "uvicorn", marker = "extra == 'serve'", specifier = ">=0.29.0" },
 ]
-provides-extras = ["gemini", "openai", "claude", "groq", "elevenlabs", "local-tts", "serve", "all-ai"]
+provides-extras = ["gemini", "openai", "claude", "groq", "elevenlabs", "local-tts", "serve", "all-ai", "all"]
 
 [package.metadata.requires-dev]
 dev = [

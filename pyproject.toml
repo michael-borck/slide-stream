@@ -69,6 +69,23 @@ all-ai = [
     "groq>=0.11.0",
     "elevenlabs>=1.5.0,<3.0.0",
 ]
+# Everything: all cloud AI providers + offline TTS + the web UI. This is the
+# "just give me the lot" install for a single machine; the granular extras
+# above exist for lean Docker images and conflict-prone environments.
+all = [
+    "google-generativeai>=0.8.0",
+    "google-genai>=1.0.0",
+    "openai>=1.40.0",
+    "anthropic>=0.40.0",
+    "groq>=0.11.0",
+    "elevenlabs>=1.5.0,<3.0.0",
+    "kokoro-onnx>=0.4.0",
+    "soundfile>=0.12.0",
+    "espeakng-loader>=0.2.4",
+    "fastapi>=0.110.0",
+    "uvicorn>=0.29.0",
+    "python-multipart>=0.0.9",
+]
 # Development tooling lives in [dependency-groups] dev (uv), not an extra.
 
 [project.scripts]

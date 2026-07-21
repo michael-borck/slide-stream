@@ -6,6 +6,7 @@ warnings and estimates so a user knows what they'll get before spending render
 time or money. Powers ``create --dry-run`` and the ``doctor`` command.
 """
 
+import importlib.util
 import os
 import re
 import shutil
@@ -47,6 +48,35 @@ _LLM_KEY = {"gemini": "GEMINI_API_KEY", "openai": "OPENAI_API_KEY",
 _IMAGE_KEY = {"dalle3": "OPENAI_API_KEY", "gemini": "GEMINI_API_KEY",
               "pexels": "PEXELS_API_KEY", "unsplash": "UNSPLASH_ACCESS_KEY"}
 _TTS_KEY = {"elevenlabs": "ELEVENLABS_API_KEY", "openai": "OPENAI_API_KEY"}
+
+# Providers whose SDK ships in an optional extra rather than the core install.
+# Maps provider -> (importable module, pip extra) per role, so the preflight can
+# tell a user who configured e.g. `claude` but never ran the extra install
+# exactly what to `pip install` — instead of a clean report then a render-time
+# crash. Providers backed by core `requests` (voicebox, swarmui, pexels, ...)
+# are absent here: nothing extra to install.
+_LLM_PKG = {"openai": ("openai", "openai"), "claude": ("anthropic", "claude"),
+            "gemini": ("google.generativeai", "gemini"), "groq": ("groq", "groq"),
+            "ollama": ("openai", "openai"), "openai-compatible": ("openai", "openai")}
+_IMAGE_PKG = {"dalle3": ("openai", "openai"), "gemini": ("google.genai", "gemini"),
+              "openai-compatible": ("openai", "openai")}
+_TTS_PKG = {"elevenlabs": ("elevenlabs", "elevenlabs"), "openai": ("openai", "openai"),
+            "openai-compatible": ("openai", "openai"), "kokoro": ("kokoro_onnx", "local-tts")}
+
+
+def _missing_extra(provider: str, pkg_map: dict[str, tuple[str, str]]) -> str | None:
+    """Return the pip extra a configured provider needs but is missing, else None.
+
+    A provider with no entry in ``pkg_map`` needs no extra (core install)."""
+    entry = pkg_map.get(provider)
+    if entry is None:
+        return None
+    module, extra = entry
+    try:
+        found = importlib.util.find_spec(module) is not None
+    except (ImportError, ValueError):
+        found = False  # parent package missing / namespace resolution failed
+    return None if found else extra
 
 
 @dataclass
@@ -333,6 +363,13 @@ def _check_providers_env(report, providers, settings, options) -> None:
 
     llm = providers.get("llm", {}).get("provider", "none")
     if llm != "none":
+        # A missing SDK aborts the whole render (get_llm_client raises), so it's
+        # a blocker regardless of strict mode — flag it before the key check.
+        extra = _missing_extra(llm, _LLM_PKG)
+        if extra:
+            report.add("Providers & environment", BLOCKER,
+                       f"LLM '{llm}' package not installed — run: "
+                       f'pip install "slide-stream[{extra}]"')
         ok = key_present(llm, providers.get("llm", {}), _LLM_KEY)
         if ok is False:
             report.add("Providers & environment",
@@ -341,12 +378,24 @@ def _check_providers_env(report, providers, settings, options) -> None:
                        + ("" if strict else " (falls back to un-narrated)"))
 
     img = providers.get("images", {}).get("provider", "text")
+    extra = _missing_extra(img, _IMAGE_PKG)
+    if extra:
+        report.add("Providers & environment", BLOCKER if strict else WARN,
+                   f"image provider '{img}' package not installed — run: "
+                   f'pip install "slide-stream[{extra}]"'
+                   + ("" if strict else " (falls back to text cards)"))
     ok = key_present(img, providers.get("images", {}), _IMAGE_KEY)
     if ok is False:
         report.add("Providers & environment", WARN,
                    f"image provider '{img}' has no key/base_url — will fall back to text cards")
 
     tts = providers.get("tts", {}).get("provider", "gtts")
+    extra = _missing_extra(tts, _TTS_PKG)
+    if extra:
+        report.add("Providers & environment", BLOCKER if strict else WARN,
+                   f"TTS '{tts}' package not installed — run: "
+                   f'pip install "slide-stream[{extra}]"'
+                   + ("" if strict else " (falls back to free gTTS)"))
     ok = key_present(tts, providers.get("tts", {}), _TTS_KEY)
     if ok is False:
         report.add("Providers & environment", WARN,
@@ -398,6 +447,7 @@ def _ids(nums: list[int]) -> str:
 
 def render_report(report: DoctorReport, console: Any, header: str) -> None:
     """Print a grouped, severity-coloured report to the console."""
+    from rich.markup import escape
     from rich.panel import Panel
 
     console.print(Panel.fit(f"[bold cyan]🩺 {header}[/bold cyan]", border_style="green"))
@@ -412,7 +462,10 @@ def render_report(report: DoctorReport, console: Any, header: str) -> None:
             continue
         console.print(f"\n[bold]{group}[/bold]")
         for f in items:
-            console.print(f"  {_ICON[f.severity]} [{style[f.severity]}]{f.message}[/{style[f.severity]}]")
+            # Escape the message: it is plain text and may contain [...] (e.g.
+            # a pip extra like slide-stream[claude]), which Rich would otherwise
+            # parse as markup and drop.
+            console.print(f"  {_ICON[f.severity]} [{style[f.severity]}]{escape(f.message)}[/{style[f.severity]}]")
 
     if report.estimates:
         console.print("\n[bold]Estimates[/bold]")
