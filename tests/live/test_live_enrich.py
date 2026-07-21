@@ -67,6 +67,6 @@ def test_live_enrich_writes_ai_notes(live_config, tmp_path):
     from pptx import Presentation
 
     slide = Presentation(str(out / "deck.pptx")).slides[0]
-    note = slide.notes_slide.notes_text_frame.text if slide.has_notes_slide else ""
+    note = slide.notes_slide.notes_text_frame.text if slide.has_notes_slide else ""  # type: ignore[union-attr]
     assert len(note.split()) >= 5, f"AI notes too short: {note!r}"
     print(f"\nAI notes generated via {llm['provider']} ({len(note.split())} words)")

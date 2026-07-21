@@ -39,8 +39,8 @@ def region_motion(path, box=(0.0, 1.0, 0.0, 1.0), t0=0.4, t1=None) -> float:
     with VideoFileClip(str(path)) as c:
         end = c.duration - 1e-3
         t1 = t1 if t1 is not None else max(c.duration - 0.2, t0 + 0.1)
-        f0 = c.get_frame(min(t0, end)).astype("int16")
-        f1 = c.get_frame(min(t1, end)).astype("int16")
+        f0 = c.get_frame(min(t0, end)).astype("int16")  # type: ignore[union-attr]
+        f1 = c.get_frame(min(t1, end)).astype("int16")  # type: ignore[union-attr]
     h, w, _ = f0.shape
     y0, y1, x0, x1 = box
     a = f0[int(h * y0):int(h * y1), int(w * x0):int(w * x1)]

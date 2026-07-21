@@ -17,7 +17,6 @@ from slide_stream.narration import (
 )
 from slide_stream.powerpoint import parse_powerpoint
 
-
 # --- Stage-direction stripping ------------------------------------------------
 
 

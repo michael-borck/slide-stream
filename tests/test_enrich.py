@@ -168,7 +168,7 @@ def _pptx_notes(pptx_path):
 
     prs = Presentation(str(pptx_path))
     return [
-        s.notes_slide.notes_text_frame.text if s.has_notes_slide else ""
+        s.notes_slide.notes_text_frame.text if s.has_notes_slide else ""  # type: ignore[union-attr]
         for s in prs.slides
     ]
 
