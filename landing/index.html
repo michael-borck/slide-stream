@@ -90,7 +90,7 @@
         <h2>Get it</h2>
         <p class="sub">Free and open source. The desktop app runs everything on your machine — no account, no terminal.<span id="dlVer"></span></p>
         <div class="cta-row">
-          <a class="btn btn-primary" id="dlMain" href="https://github.com/michael-borck/slide-stream/releases/download/desktop-v0.1.1/SlideStream-macos-apple-silicon.dmg">⬇ Download the desktop app</a>
+          <a class="btn btn-primary" id="dlMain" href="https://github.com/michael-borck/slide-stream/releases/download/desktop-v0.1.2/SlideStream-macos-apple-silicon.dmg">⬇ Download the desktop app</a>
           <a class="btn btn-ghost" href="https://app.slidestream.eduserver.au">▶ Try the hosted app</a>
         </div>
         <p class="dl-others" id="dlOthers"></p>
@@ -129,7 +129,7 @@ slide-stream serve</code></pre>
   // API resolves and if it's rate-limited — bump it whenever a desktop build ships.
   (function () {
     var REPO = "michael-borck/slide-stream";
-    var FALLBACK_TAG = "desktop-v0.1.1";
+    var FALLBACK_TAG = "desktop-v0.1.2";
     var tag = FALLBACK_TAG;
     var DL = function (n) {
       return "https://github.com/" + REPO + "/releases/download/" + tag + "/" + n;
