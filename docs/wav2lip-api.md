@@ -4,7 +4,7 @@ title: "Wav2Lip Video Lip-Sync API (via ComfyUI)"
 
 How to re-sync a talking-head **video** to new **audio** (video → lip-synced
 MP4) by calling the Wav2Lip node through ComfyUI's HTTP API. This is the
-video-driven counterpart to [SadTalker](/sadtalker-api/) (which is photo-driven).
+video-driven counterpart to [SadTalker](sadtalker-api.md) (which is photo-driven).
 
 > **Verified working** 2026-07-07: a reference video + 3s audio produced a
 > lip-synced h264+aac MP4 end-to-end via this exact API flow, on the 8 GB

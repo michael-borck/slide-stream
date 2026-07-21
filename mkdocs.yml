@@ -1,0 +1,77 @@
+# MkDocs site for the SlideStream user documentation.
+#
+# Deployed to https://slidestream.eduserver.au/docs/ as a SUBPATH — the marketing
+# landing page (landing/) stays the primary page at the site root. The Pages
+# workflow (.github/workflows/pages.yml) builds this into _site/docs and copies
+# the landing page over _site root.
+#
+# Preview locally:  pip install mkdocs-material && mkdocs serve
+site_name: SlideStream Docs
+site_description: Turn Markdown or PowerPoint decks into narrated video presentations.
+site_url: https://slidestream.eduserver.au/docs/
+repo_url: https://github.com/michael-borck/slide-stream
+repo_name: michael-borck/slide-stream
+edit_uri: edit/main/docs/
+docs_dir: docs
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.highlight
+    - search.suggest
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  # GitHub-compatible heading slugs so the docs' hand-written intra-page anchor
+  # links (authored for GitHub rendering) resolve on the built site too.
+  - toc:
+      permalink: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+
+# The first entry (index.md) is the docs home page, served at /docs/.
+nav:
+  - Home: index.md
+  - User Guide: USER_GUIDE.md
+  - Use Cases: USE_CASES.md
+  - Providers & integrations:
+    - Talking-head options: talking-head-options.md
+    - Voicebox (TTS) API: voicebox-api.md
+    - Wan2.2-S2V API: wan-s2v-api.md
+    - SadTalker API: sadtalker-api.md
+    - Wav2Lip API: wav2lip-api.md
+    - LivePortrait API: liveportrait-api.md
+    - Non-human avatars API: nonhuman-avatar-api.md
+    - Avatar feature plan: avatar-feature-plan.md
+  - Development:
+    - Development workflow: DEVELOPMENT_WORKFLOW.md
+    - Type safety: TYPE_SAFETY.md
+    - Typing improvements: TYPING_IMPROVEMENTS.md

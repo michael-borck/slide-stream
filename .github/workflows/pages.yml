@@ -1,14 +1,17 @@
-name: Deploy landing page to GitHub Pages
+name: Deploy landing page + docs to GitHub Pages
 
-# Publishes the static landing/ folder to GitHub Pages
-# (slidestream.eduserver.au via landing/CNAME). The app itself is
-# self-hosted separately (slide-stream serve).
+# Publishes to GitHub Pages (slidestream.eduserver.au via landing/CNAME):
+#   /        -> the static marketing landing page (landing/)
+#   /docs/   -> the MkDocs user documentation (docs/ via mkdocs.yml)
+# The app itself is self-hosted separately (slide-stream serve).
 
 on:
   push:
     branches: [main]
     paths:
       - 'landing/**'
+      - 'docs/**'
+      - 'mkdocs.yml'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -29,9 +32,24 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install MkDocs
+        run: pip install mkdocs-material
+
+      # Build the docs into _site/docs, then lay the landing page over _site
+      # root (landing/CNAME, favicon, styles.css, index.html included).
+      - name: Build site
+        run: |
+          mkdocs build --site-dir _site/docs
+          cp -r landing/. _site/
+
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: landing
+          path: _site
       - id: deployment
         uses: actions/deploy-pages@v4

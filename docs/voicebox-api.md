@@ -258,4 +258,4 @@ Both do voice-clone TTS. For a **provider abstraction** in the calling tool:
   flow above needs no server-side cleanup job.
 
 Adding both as selectable TTS providers is reasonable — they don't conflict.
-See [service topology](/service-topology/) for the full picture.
+See the [deployment guide](https://github.com/michael-borck/slide-stream/blob/main/deploy/README.md) for the full picture.

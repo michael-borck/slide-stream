@@ -638,4 +638,4 @@ When adding features, update:
 
 ---
 
-This development workflow ensures consistent, high-quality code and smooth collaboration in the modern SlideStream 2.0 architecture. For AI assistant guidelines, see [CLAUDE.md](../CLAUDE.md).
+This development workflow ensures consistent, high-quality code and smooth collaboration in the modern SlideStream 2.0 architecture. For AI assistant guidelines, see [CLAUDE.md](https://github.com/michael-borck/slide-stream/blob/main/CLAUDE.md).

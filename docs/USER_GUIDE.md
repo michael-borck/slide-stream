@@ -37,7 +37,7 @@ slide-stream init          # minimal starter — works with no API keys
 slide-stream init --full   # complete reference: every provider + option
 ```
 
-The default `init` writes a short `slidestream.yaml` that renders out of the box (text-slide images, free gTTS narration, no avatar). Switch providers on as you need them; `init --full` (mirrored by [`slidestream.example.yaml`](../slidestream.example.yaml)) documents every provider and setting. Run `slide-stream doctor <deck>` any time to check your setup.
+The default `init` writes a short `slidestream.yaml` that renders out of the box (text-slide images, free gTTS narration, no avatar). Switch providers on as you need them; `init --full` (mirrored by [`slidestream.example.yaml`](https://github.com/michael-borck/slide-stream/blob/main/slidestream.example.yaml)) documents every provider and setting. Run `slide-stream doctor <deck>` any time to check your setup.
 
 ### 3. Set Up API Keys
 

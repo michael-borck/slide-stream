@@ -171,7 +171,7 @@ slide-stream serve --host 127.0.0.1 --port 8080
 - **Desktop app** — a one-click bundle of the same UI (no terminal); see the
   [releases page](https://github.com/michael-borck/slide-stream/releases).
 - **Self-host for others** — Docker Compose behind a reverse proxy; see
-  [`deploy/README.md`](../deploy/README.md). Providers are chosen in a
+  [`deploy/README.md`](https://github.com/michael-borck/slide-stream/blob/main/deploy/README.md). Providers are chosen in a
   server-side `slidestream.yaml`; secrets come from the environment.
 
 The web UI, the desktop app, and the Docker deploy are the **same** interface,
