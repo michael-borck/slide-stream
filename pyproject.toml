@@ -61,6 +61,12 @@ serve = [
     "uvicorn>=0.29.0",
     "python-multipart>=0.0.9",
 ]
+# Document import for `slide-stream draft`: extract text from PDF / Word sources.
+# (.txt/.md/.pptx need no extra — .pptx uses the already-required python-pptx.)
+import = [
+    "pypdf>=4.0.0",
+    "python-docx>=1.1.0",
+]
 all-ai = [
     "google-generativeai>=0.8.0",
     "google-genai>=1.0.0",
@@ -85,6 +91,8 @@ all = [
     "fastapi>=0.110.0",
     "uvicorn>=0.29.0",
     "python-multipart>=0.0.9",
+    "pypdf>=4.0.0",
+    "python-docx>=1.1.0",
 ]
 # Development tooling lives in [dependency-groups] dev (uv), not an extra.
 

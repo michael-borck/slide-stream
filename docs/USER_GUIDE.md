@@ -54,6 +54,32 @@ export ELEVENLABS_API_KEY="your-elevenlabs-key"
 slide-stream create presentation.md output.mp4
 ```
 
+## Draft a deck from a document
+
+Don't have a deck yet? Turn an existing document into one with `draft` — a
+preprocessing step that extracts the text, has an LLM outline it into slides,
+and writes a Markdown deck you then render with `create`.
+
+```bash
+# From a PDF, Word doc, PowerPoint, or plain text/markdown:
+slide-stream draft report.pdf outline.md          # LLM picks the slide count
+slide-stream draft report.pdf outline.md --slides 12
+slide-stream draft messy-deck.pptx clean.md       # rewrite/restructure a deck
+
+# Then the normal pipeline takes over:
+slide-stream enrich outline.md                    # (optional) add images
+slide-stream create outline.md talk.mp4           # narrated video
+```
+
+Notes:
+
+- Each step is explicit — `draft` never renders a video on its own, so the
+  workflow stays understandable and you can edit the Markdown in between.
+- `draft` needs an LLM: set `providers.llm.provider` (or pass `--llm-provider`).
+- PDF and Word extraction need an extra: `pip install "slide-stream[import]"`
+  (`.txt`, `.md`, and `.pptx` need nothing beyond the core install). It's
+  included in `[all]`.
+
 ## Installation
 
 ### Core Installation
@@ -83,6 +109,9 @@ pip install slide-stream[groq]
 # Offline TTS (Kokoro) / the web UI
 pip install slide-stream[local-tts]
 pip install slide-stream[serve]
+
+# Document import for `draft` (PDF / Word extraction)
+pip install slide-stream[import]
 
 # All cloud AI providers (no offline TTS / web UI)
 pip install slide-stream[all-ai]

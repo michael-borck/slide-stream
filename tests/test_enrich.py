@@ -224,6 +224,28 @@ def test_enrich_cli_notes_without_llm_fails_cleanly(tmp_path, monkeypatch):
     assert "LLM provider" in result.output
 
 
+def test_enrich_cli_notes_llm_init_failure_is_graceful(tmp_path, monkeypatch, mocker):
+    """A configured LLM whose package/key is missing must fail with a message,
+    not an unhandled traceback."""
+    monkeypatch.setattr("slide_stream.config_loader.find_home_config", lambda: None)
+    monkeypatch.chdir(tmp_path)
+    deck = tmp_path / "deck.md"
+    deck.write_text("# One\n\n- a\n")
+    cfg = tmp_path / "slidestream.yaml"
+    cfg.write_text("providers:\n  llm:\n    provider: claude\n")
+    mocker.patch(
+        "slide_stream.cli.get_llm_client",
+        side_effect=ValueError("ANTHROPIC_API_KEY environment variable not set."),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["enrich", str(deck), str(tmp_path / "out"), "--notes", "all", "-c", str(cfg)],
+    )
+    assert result.exit_code == 1
+    assert "Error initializing LLM" in result.output
+
+
 def test_enrich_cli_end_to_end(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     runner = CliRunner()

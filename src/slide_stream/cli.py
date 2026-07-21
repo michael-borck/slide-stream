@@ -21,6 +21,14 @@ from .config_loader import (
     save_example_config,
     save_starter_config,
 )
+from .draft import (
+    DraftError,
+    build_draft_prompt,
+    clamp_source,
+    clean_llm_markdown,
+    extract_source_text,
+    validate_deck_markdown,
+)
 from .llm import get_llm_client, query_llm, query_llm_with_image
 from .media import create_video_fragment
 from .narration import (
@@ -907,8 +915,13 @@ def enrich(
             )
             raise typer.Exit(code=1)
         narration_cfg = config["settings"].get("narration", {})
+        try:
+            llm_client = get_llm_client(llm_provider, base_url=llm_cfg.get("base_url"))
+        except (ImportError, ValueError) as e:
+            err_console.print(f"Error initializing LLM: {e}")
+            raise typer.Exit(code=1)
         llm_ctx = {
-            "client": get_llm_client(llm_provider, base_url=llm_cfg.get("base_url")),
+            "client": llm_client,
             "provider": llm_provider,
             "model": llm_cfg.get("model"),
             "target_seconds": narration_cfg.get("target_seconds"),
@@ -1057,6 +1070,144 @@ def init(
             "[dim]Minimal starter written. For every provider + option: "
             "[bold]slide-stream init --full[/bold], or see docs/USER_GUIDE.md.[/dim]"
         )
+
+
+@app.command()
+def draft(
+    input_path: Annotated[
+        Path,
+        typer.Argument(
+            help="Source document to turn into a deck (.txt, .md, .pdf, .docx, .pptx)."
+        ),
+    ],
+    output_path: Annotated[
+        str | None,
+        typer.Argument(
+            help="Output Markdown deck (default: <input>.md). Feed it to `create`."
+        ),
+    ] = None,
+    slides: Annotated[
+        int | None,
+        typer.Option(
+            "--slides",
+            help="How many slides to produce. Omit to let the LLM choose.",
+        ),
+    ] = None,
+    llm_provider: Annotated[
+        str | None,
+        typer.Option(
+            "--llm-provider",
+            help="LLM provider (openai, gemini, claude, groq, ollama, "
+            "openai-compatible), overriding the config file.",
+        ),
+    ] = None,
+    llm_model_option: Annotated[
+        str | None,
+        typer.Option("--llm-model", help="Specific LLM model to use."),
+    ] = None,
+    config_file: Annotated[
+        str | None,
+        typer.Option("--config", "-c", help="Path to configuration file (YAML)."),
+    ] = None,
+    force: Annotated[
+        bool,
+        typer.Option("--force", "-f", help="Overwrite the output file if it exists."),
+    ] = False,
+) -> None:
+    """Draft a slide deck from a document (a preprocessing step).
+
+    Extracts the source text, has an LLM turn it into a slide outline, and
+    writes a Markdown deck. Then render it: `slide-stream create <deck>.md out.mp4`
+    (optionally `slide-stream enrich` first to add images).
+    """
+    if not input_path.is_file():
+        err_console.print(f"Source file not found: {input_path}")
+        raise typer.Exit(code=1)
+    if slides is not None and slides < 1:
+        err_console.print("--slides must be a positive number.")
+        raise typer.Exit(code=1)
+
+    try:
+        config = load_config(config_file)
+    except ConfigurationError as e:
+        err_console.print(f"Configuration Error: {e}")
+        raise typer.Exit(code=1)
+
+    if llm_provider:
+        config["providers"]["llm"]["provider"] = llm_provider
+    if llm_model_option:
+        config["providers"]["llm"]["model"] = llm_model_option
+
+    provider = config["providers"]["llm"]["provider"]
+    model = config["providers"]["llm"]["model"]
+    base_url = config["providers"]["llm"].get("base_url")
+    if provider == "none":
+        err_console.print(
+            "draft needs an LLM. Set providers.llm.provider in your config or "
+            "pass --llm-provider (e.g. claude, openai, gemini)."
+        )
+        raise typer.Exit(code=1)
+
+    # Resolve the output path; never silently clobber the source (e.g. a .md in).
+    out = Path(output_path) if output_path else input_path.with_suffix(".md")
+    if out.resolve() == input_path.resolve():
+        out = input_path.with_suffix(".deck.md")
+    if out.exists() and not force:
+        err_console.print(
+            f"{out} already exists. Re-run with --force to overwrite it."
+        )
+        raise typer.Exit(code=1)
+
+    try:
+        llm_client = get_llm_client(provider, base_url=base_url)
+    except (ImportError, ValueError) as e:
+        err_console.print(f"Error initializing LLM: {e}")
+        raise typer.Exit(code=1)
+
+    console.print(f"[bold]1. Extracting text from {input_path.name}...[/bold]")
+    try:
+        source_text = extract_source_text(input_path)
+    except DraftError as e:
+        err_console.print(str(e))
+        raise typer.Exit(code=1)
+    if not source_text.strip():
+        err_console.print(
+            f"No extractable text found in {input_path.name} "
+            "(a scanned/image-only PDF, perhaps?)."
+        )
+        raise typer.Exit(code=1)
+
+    source_text, truncated = clamp_source(source_text)
+    if truncated:
+        console.print(
+            "[yellow]⚠ Source is long; using the first part for the outline.[/yellow]"
+        )
+
+    console.print(f"[bold]2. Drafting slides with {provider}...[/bold]")
+    prompt = build_draft_prompt(source_text, slides)
+    result = query_llm(llm_client, provider, prompt, console, model)
+    if not result:
+        err_console.print("The LLM returned no content. Try again.")
+        raise typer.Exit(code=1)
+
+    deck_markdown = clean_llm_markdown(result)
+    try:
+        parsed = validate_deck_markdown(deck_markdown)
+    except DraftError as e:
+        err_console.print(str(e))
+        raise typer.Exit(code=1)
+
+    out.write_text(deck_markdown.rstrip() + "\n", encoding="utf-8")
+    console.print(
+        Panel(
+            f"📝 [bold green]Draft deck written![/bold green]\n\n"
+            f"Slides: [yellow]{len(parsed)}[/yellow]  ·  File: [yellow]{out}[/yellow]\n\n"
+            f"Next: [bold]slide-stream create {out} video.mp4[/bold]\n"
+            f"(add images first with [bold]slide-stream enrich {out}[/bold])",
+            border_style="green",
+            expand=False,
+        )
+    )
 
 
 # Ephemeral per-run voice uploads are named <uuid4>.<ext>; they are internal
