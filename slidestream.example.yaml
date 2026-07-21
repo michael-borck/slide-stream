@@ -20,7 +20,9 @@ providers:
 
   images:
     provider: dalle3        # text, local, dalle3, gemini, swarmui, openai-compatible, pexels, unsplash
-    fallback: text         # fallback when primary fails
+    fallback: text         # used only if the primary is unavailable at startup
+                           # (missing key/base_url); a per-image failure while
+                           # rendering always falls straight to a text card.
     # folder: ./images     # for the 'local' provider — matched by filename keywords
     # model: imagen-4.0-fast-generate-001   # for the 'gemini' (Imagen) provider
     # --- self-hosted SwarmUI ---

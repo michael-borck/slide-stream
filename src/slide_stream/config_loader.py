@@ -309,6 +309,67 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ConfigurationError("Video resolution must be a list of two integers")
 
 
+def create_starter_config() -> str:
+    """A minimal, valid starter config — what ``slide-stream init`` writes.
+
+    As-is it renders a video with no API keys (text image cards, free gTTS
+    narration, no avatar). Every provider variation lives in the full reference
+    (``slide-stream init --full`` / ``slidestream.example.yaml``) and the docs,
+    so this file stays short and hard to get wrong."""
+    return """# SlideStream configuration
+#
+# This minimal file works as-is with no API keys: text-slide images, free gTTS
+# narration, no avatar. Switch a provider on below when you want more.
+#
+# Config is layered, later winning:
+#   1. built-in defaults
+#   2. ~/.slidestream.yaml   (personal: server URLs + API keys, set once)
+#   3. ./slidestream.yaml    (this deck; or pass --config FILE)
+#   4. CLI flags             (e.g. --voice, --tts-provider)
+#
+# Every provider + option, with examples:  slide-stream init --full
+#   (writes the complete slidestream.example.yaml reference)
+# Full guide:  docs/USER_GUIDE.md
+# Sanity-check a deck + this config any time:  slide-stream doctor <deck>
+
+providers:
+  # Rewrites slide content into spoken narration. `none` speaks the slide text
+  # as-is (no key needed). For AI narration set a provider + its API key env var:
+  #   openai | claude | gemini | groq | ollama | openai-compatible
+  llm:
+    provider: none
+
+  # Slide pictures. `text` draws clean text cards (no key, always works).
+  # Others: dalle3, gemini, swarmui, pexels, unsplash, local, openai-compatible.
+  images:
+    provider: text
+
+  # Voice. `gtts` is free (needs internet). Offline: kokoro. Self-hosted/cloned:
+  # voicebox, chatterbox. Premium: elevenlabs, openai, openai-compatible.
+  tts:
+    provider: gtts
+
+  # Talking-head overlay, off by default. Set a provider (static, puppet,
+  # wan-s2v, sadtalker, wav2lip, d-id, ...) then enable per run with --avatar.
+  # List the built-in mascots:  slide-stream avatars
+  avatar:
+    provider: none
+
+settings:
+  # Fail the run if a configured provider is unusable, instead of silently
+  # degrading (e.g. a missing voice -> gTTS). Also per run: --strict
+  strict: false
+"""
+
+
+def save_starter_config(path: str = "slidestream.yaml") -> None:
+    """Write the minimal starter config (owner-only; it may hold secrets later)."""
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(create_starter_config())
+    os.chmod(path, 0o600)
+    console.print(f"📁 Created configuration: {path}")
+
+
 def create_example_config() -> str:
     """Create example configuration file content."""
     return """# SlideStream Configuration File
@@ -333,7 +394,9 @@ providers:
 
   images:
     provider: dalle3        # text, local, dalle3, gemini, swarmui, openai-compatible, pexels, unsplash
-    fallback: text         # fallback when primary fails
+    fallback: text         # used only if the primary is unavailable at startup
+                           # (missing key/base_url); a per-image failure while
+                           # rendering always falls straight to a text card.
     # folder: ./images     # for the 'local' provider — matched by filename keywords
     # model: imagen-4.0-fast-generate-001   # for the 'gemini' (Imagen) provider
     # --- self-hosted SwarmUI ---

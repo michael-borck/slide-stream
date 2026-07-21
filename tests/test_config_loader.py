@@ -7,11 +7,13 @@ import pytest
 from slide_stream.config_loader import (
     ConfigurationError,
     create_example_config,
+    create_starter_config,
     expand_env_vars,
     find_config_file,
     load_config,
     merge_configs,
     save_example_config,
+    save_starter_config,
     validate_config,
 )
 
@@ -20,8 +22,9 @@ EXAMPLE_FILE = Path(__file__).resolve().parent.parent / "slidestream.example.yam
 
 
 def test_committed_example_matches_template():
-    """slidestream.example.yaml must equal `slide-stream init` output, so the
-    browsable reference can never drift from the generated one. Regenerate with:
+    """slidestream.example.yaml must equal the full reference (`slide-stream
+    init --full`), so the browsable reference can never drift from the generated
+    one. Regenerate with:
         python -c "from slide_stream.config_loader import create_example_config as f; open('slidestream.example.yaml','w').write(f())"
     """
     assert EXAMPLE_FILE.exists(), "slidestream.example.yaml is missing at the repo root"
@@ -311,6 +314,41 @@ def test_save_example_config_is_owner_only(tmp_path):
     """The example config gets filled with API keys — 0600, owner only."""
     out = tmp_path / "example.yaml"
     save_example_config(str(out))
+    assert (out.stat().st_mode & 0o777) == 0o600
+
+
+def test_starter_config_is_valid_yaml():
+    import yaml
+
+    parsed = yaml.safe_load(create_starter_config())
+    assert "providers" in parsed
+    assert "settings" in parsed
+
+
+def test_starter_config_works_without_api_keys():
+    """The `init` default must render out of the box: no-key providers only."""
+    import yaml
+
+    parsed = yaml.safe_load(create_starter_config())
+    providers = parsed["providers"]
+    assert providers["llm"]["provider"] == "none"
+    assert providers["images"]["provider"] == "text"
+    assert providers["tts"]["provider"] == "gtts"
+    assert providers["avatar"]["provider"] == "none"
+
+
+def test_starter_config_loads_and_validates(tmp_path):
+    """A freshly-written starter must pass load_config's validation once merged
+    over the built-in defaults (which supply the video settings it omits)."""
+    out = tmp_path / "slidestream.yaml"
+    save_starter_config(str(out))
+    config = load_config(str(out))
+    assert config["settings"]["video"]["resolution"] == [1920, 1080]
+
+
+def test_save_starter_config_is_owner_only(tmp_path):
+    out = tmp_path / "slidestream.yaml"
+    save_starter_config(str(out))
     assert (out.stat().st_mode & 0o777) == 0o600
 
 

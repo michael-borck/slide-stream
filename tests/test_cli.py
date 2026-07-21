@@ -111,10 +111,35 @@ def test_cli_init_refuses_overwrite_without_force(runner, tmp_path):
     assert result.exit_code != 0
     assert target.read_text() == "existing: content\n"
 
-    # --force overwrites the existing file.
+    # --force overwrites the existing file (with the minimal starter by default).
     result = runner.invoke(app, ["init", str(target), "--force"])
     assert result.exit_code == 0
-    assert "SlideStream Configuration" in target.read_text()
+    written = target.read_text()
+    assert "providers:" in written
+    assert "provider: text" in written  # starter's no-key image default
+
+
+def test_cli_init_default_writes_minimal_starter(runner, tmp_path):
+    """The default `init` is the short starter, not the full reference."""
+    target = tmp_path / "slidestream.yaml"
+    result = runner.invoke(app, ["init", str(target)])
+    assert result.exit_code == 0
+    text = target.read_text()
+    # Starter defaults (no keys needed) and a pointer to the full reference.
+    assert "provider: none" in text
+    assert "init --full" in text
+    # It must NOT be the exhaustive reference.
+    assert "SlideStream Configuration File" not in text
+
+
+def test_cli_init_full_writes_reference(runner, tmp_path):
+    """`init --full` writes the complete all-providers reference."""
+    target = tmp_path / "slidestream.yaml"
+    result = runner.invoke(app, ["init", str(target), "--full"])
+    assert result.exit_code == 0
+    text = target.read_text()
+    assert "SlideStream Configuration File" in text
+    assert "elevenlabs" in text  # a provider only the full reference lists
 
 
 def test_cli_create_missing_input(runner):

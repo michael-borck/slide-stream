@@ -24,17 +24,20 @@ AI-powered tools.
 ### 1. Install SlideStream
 
 ```bash
-# Install with all AI providers
-pip install slide-stream[all-ai]
+# Everything: all AI providers + offline TTS + the web UI
+pip install "slide-stream[all]"
 ```
+
+(`[all-ai]` installs just the cloud AI providers, without the offline TTS or web UI — see [Installation](#installation) for the individual extras.)
 
 ### 2. Create Configuration
 
 ```bash
-slide-stream init
+slide-stream init          # minimal starter — works with no API keys
+slide-stream init --full   # complete reference: every provider + option
 ```
 
-This creates a `slidestream.yaml` file in your current directory with example configuration.
+The default `init` writes a short `slidestream.yaml` that renders out of the box (text-slide images, free gTTS narration, no avatar). Switch providers on as you need them; `init --full` (mirrored by [`slidestream.example.yaml`](../slidestream.example.yaml)) documents every provider and setting. Run `slide-stream doctor <deck>` any time to check your setup.
 
 ### 3. Set Up API Keys
 
@@ -77,9 +80,18 @@ pip install slide-stream[claude]
 # For Groq (fast inference)
 pip install slide-stream[groq]
 
-# All AI providers
+# Offline TTS (Kokoro) / the web UI
+pip install slide-stream[local-tts]
+pip install slide-stream[serve]
+
+# All cloud AI providers (no offline TTS / web UI)
 pip install slide-stream[all-ai]
+
+# Everything: all-ai + local-tts + serve
+pip install "slide-stream[all]"
 ```
+
+Not sure whether a provider's package is installed? `slide-stream doctor <deck>` reports any configured provider whose package or key is missing, with the exact `pip install` line to fix it.
 
 ### System Requirements
 

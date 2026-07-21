@@ -15,7 +15,12 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
 from . import __version__
-from .config_loader import ConfigurationError, load_config, save_example_config
+from .config_loader import (
+    ConfigurationError,
+    load_config,
+    save_example_config,
+    save_starter_config,
+)
 from .llm import get_llm_client, query_llm, query_llm_with_image
 from .media import create_video_fragment
 from .narration import (
@@ -1005,7 +1010,7 @@ def scan(
 def init(
     output_path: Annotated[
         str,
-        typer.Argument(help="Path where to create the example configuration file."),
+        typer.Argument(help="Path where to create the configuration file."),
     ] = "slidestream.yaml",
     force: Annotated[
         bool,
@@ -1015,15 +1020,34 @@ def init(
             help="Overwrite the file if it already exists.",
         ),
     ] = False,
+    full: Annotated[
+        bool,
+        typer.Option(
+            "--full",
+            help="Write the complete reference config (every provider + option) "
+            "instead of the minimal starter.",
+        ),
+    ] = False,
 ) -> None:
-    """Create an example configuration file."""
+    """Create a configuration file.
+
+    By default this writes a minimal starter that works with no API keys.
+    Use --full for the complete reference documenting every provider and option.
+    """
     target = Path(output_path)
     if target.exists() and not force:
         err_console.print(
             f"{output_path} already exists. Re-run with --force to overwrite it."
         )
         raise typer.Exit(code=1)
-    save_example_config(output_path)
+    if full:
+        save_example_config(output_path)
+    else:
+        save_starter_config(output_path)
+        console.print(
+            "[dim]Minimal starter written. For every provider + option: "
+            "[bold]slide-stream init --full[/bold], or see docs/USER_GUIDE.md.[/dim]"
+        )
 
 
 # Ephemeral per-run voice uploads are named <uuid4>.<ext>; they are internal
