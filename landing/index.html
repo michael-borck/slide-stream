@@ -89,7 +89,7 @@
         <h2>Get it</h2>
         <p class="sub">Free and open source. The desktop app runs everything on your machine — no account, no terminal.<span id="dlVer"></span></p>
         <div class="cta-row">
-          <a class="btn btn-primary" id="dlMain" href="https://github.com/michael-borck/slide-stream/releases/latest">⬇ Download the desktop app</a>
+          <a class="btn btn-primary" id="dlMain" href="https://github.com/michael-borck/slide-stream/releases/download/desktop-v0.1.1/SlideStream-macos-apple-silicon.dmg">⬇ Download the desktop app</a>
           <a class="btn btn-ghost" href="https://app.slidestream.eduserver.au">▶ Try the hosted app</a>
         </div>
         <p class="dl-others" id="dlOthers"></p>
@@ -119,11 +119,19 @@ slide-stream serve</code></pre>
   </footer>
 
   <script>
-  // Platform-detected desktop downloads. Assets have stable names, so the
-  // links work without any API call; the version label is a nice-to-have.
+  // Platform-detected desktop downloads. The desktop app ships under its own
+  // `desktop-*` tags, which are NOT the repo's marked "Latest" release (that's
+  // the pip package). So we can't use /releases/latest/download; instead we
+  // link to a specific desktop tag and auto-upgrade it to the newest desktop
+  // release found via the API. FALLBACK_TAG keeps every link working before the
+  // API resolves and if it's rate-limited — bump it whenever a desktop build ships.
   (function () {
     var REPO = "michael-borck/slide-stream";
-    var DL = function (n) { return "https://github.com/" + REPO + "/releases/latest/download/" + n; };
+    var FALLBACK_TAG = "desktop-v0.1.1";
+    var tag = FALLBACK_TAG;
+    var DL = function (n) {
+      return "https://github.com/" + REPO + "/releases/download/" + tag + "/" + n;
+    };
     var ALL = {
       "mac-arm":  { label: "macOS (Apple Silicon)", file: "SlideStream-macos-apple-silicon.dmg" },
       "mac-intel":{ label: "macOS (Intel)",         file: "SlideStream-macos-intel.dmg" },
@@ -142,23 +150,33 @@ slide-stream serve</code></pre>
     // than downloading blind; only the Get-it button deep-links the installer.
     var main = document.getElementById("dlMain"), hero = document.getElementById("dlHero");
     var pick = detect();
-    if (pick) {
-      main.href = DL(ALL[pick].file);
-      main.textContent = "⬇ Download for " + ALL[pick].label;
-      hero.textContent = "⬇ Download for " +
-        ALL[pick].label.replace(/ \((Apple Silicon|AppImage)\)/, "") + " — and more";
+    function render() {
+      if (pick) {
+        main.href = DL(ALL[pick].file);
+        main.textContent = "⬇ Download for " + ALL[pick].label;
+        hero.textContent = "⬇ Download for " +
+          ALL[pick].label.replace(/ \((Apple Silicon|AppImage)\)/, "") + " — and more";
+      }
+      var others = Object.keys(ALL).filter(function (k) { return k !== pick; })
+        .map(function (k) { return '<a href="' + DL(ALL[k].file) + '">' + ALL[k].label + "</a>"; });
+      document.getElementById("dlOthers").innerHTML = "Also for: " + others.join(" · ");
     }
-    var others = Object.keys(ALL).filter(function (k) { return k !== pick; })
-      .map(function (k) { return '<a href="' + DL(ALL[k].file) + '">' + ALL[k].label + "</a>"; });
-    document.getElementById("dlOthers").innerHTML = "Also for: " + others.join(" · ");
-    // Optional version badge (graceful if rate-limited).
-    fetch("https://api.github.com/repos/" + REPO + "/releases/latest")
+    render();
+    // Find the newest desktop release and repoint everything at it.
+    fetch("https://api.github.com/repos/" + REPO + "/releases")
       .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (rel) {
-        if (rel && rel.tag_name) {
-          document.getElementById("dlVer").textContent =
-            " Latest: " + rel.tag_name.replace("desktop-", "") + ".";
-        }
+      .then(function (rels) {
+        if (!rels || !rels.length) return;
+        var latest = rels.filter(function (rel) {
+          return rel.tag_name &&
+            rel.tag_name.indexOf("desktop-") === 0 &&
+            !rel.draft && !rel.prerelease;
+        })[0]; // API returns releases newest-first
+        if (!latest) return;
+        tag = latest.tag_name;
+        render();
+        document.getElementById("dlVer").textContent =
+          " Latest: " + tag.replace("desktop-", "") + ".";
       }).catch(function () {});
   })();
   </script>
