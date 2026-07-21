@@ -146,7 +146,7 @@ def test_cli_draft_requires_llm_provider(tmp_path, monkeypatch):
     # No --llm-provider and default provider is 'none' -> clean error.
     result = runner.invoke(app, ["draft", str(src)])
     assert result.exit_code == 1
-    assert "draft needs an LLM" in result.output
+    assert "draft needs an LLM" in " ".join(result.output.split())
 
 
 def test_cli_draft_refuses_overwrite_without_force(tmp_path, monkeypatch, mocker):
@@ -160,7 +160,9 @@ def test_cli_draft_refuses_overwrite_without_force(tmp_path, monkeypatch, mocker
 
     result = runner.invoke(app, ["draft", str(src), "--llm-provider", "openai"])
     assert result.exit_code == 1
-    assert "already exists" in result.output
+    # Normalise whitespace: Rich wraps the long path across lines in narrow (CI)
+    # terminals, which would otherwise split the "already exists" phrase.
+    assert "already exists" in " ".join(result.output.split())
     assert (tmp_path / "report.md").read_text() == "existing"
 
 
@@ -168,4 +170,4 @@ def test_cli_draft_missing_source(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     result = runner.invoke(app, ["draft", "nope.txt", "--llm-provider", "openai"])
     assert result.exit_code == 1
-    assert "not found" in result.output
+    assert "not found" in " ".join(result.output.split())
