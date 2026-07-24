@@ -55,11 +55,15 @@ local-tts = [
     "soundfile>=0.12.0",
     "espeakng-loader>=0.2.4",
 ]
-# Web UI (slide-stream serve): upload a deck + voice + photo, render in the browser
+# Web UI (slide-stream serve): upload a deck + voice + photo, render in the browser.
+# Includes the document-import deps so the web app's `draft` step works on any
+# serve install (PDF/Word); .txt/.md/.pptx need nothing beyond the core.
 serve = [
     "fastapi>=0.110.0",
     "uvicorn>=0.29.0",
     "python-multipart>=0.0.9",
+    "pypdf>=4.0.0",
+    "python-docx>=1.1.0",
 ]
 # Document import for `slide-stream draft`: extract text from PDF / Word sources.
 # (.txt/.md/.pptx need no extra — .pptx uses the already-required python-pptx.)

@@ -59,6 +59,25 @@ class Job:
 _JOBS: dict[str, Job] = {}
 _LOCK = threading.Lock()
 
+
+@dataclass
+class Project:
+    """A workflow session: a server-side workdir holding the deck (and, once
+    enriched, its images) so the draft -> enrich -> render steps chain without
+    re-uploading between each. Unlike a Job, a Project persists across requests;
+    it is reaped on a TTL like jobs. Voice/photo inputs are NEVER stored on a
+    project — those stay ephemeral, attached per render job."""
+    id: str
+    workdir: Path
+    created_at: float = field(default_factory=lambda: 0.0)
+    # Per-project secret: the project id alone must not authorize edits/reads.
+    token: str = ""
+
+
+# In-memory project registry (single-process v1). project_id -> Project.
+_PROJECTS: dict[str, Project] = {}
+
+
 def _shutdown() -> None:  # pragma: no cover - kills the process
     os._exit(0)
 
@@ -106,6 +125,56 @@ def _reap_expired_jobs(now: float | None = None) -> None:
     for job in expired:
         if job.workdir is not None:
             shutil.rmtree(job.workdir, ignore_errors=True)
+
+
+# Projects live at least as long as jobs; a workflow spans several requests.
+PROJECT_TTL_SECONDS = _env_int("SLIDESTREAM_PROJECT_TTL_MIN", 240) * 60
+
+
+def _reap_expired_projects(now: float | None = None) -> None:
+    """Evict projects past the TTL and delete their workdirs (lazy, like jobs)."""
+    t = now if now is not None else time.time()
+    expired: list[Project] = []
+    with _LOCK:
+        for project in list(_PROJECTS.values()):
+            if project.created_at and t - project.created_at > PROJECT_TTL_SECONDS:
+                expired.append(project)
+                del _PROJECTS[project.id]
+    for project in expired:
+        shutil.rmtree(project.workdir, ignore_errors=True)
+
+
+def _project_deck(project: Project) -> Path | None:
+    """The project's canonical deck file (.md preferred), or None if unset."""
+    for name in ("deck.md", "deck.pptx"):
+        candidate = project.workdir / name
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _project_state(project: Project) -> dict[str, Any]:
+    """A JSON-able snapshot of what the project currently holds."""
+    deck = _project_deck(project)
+    images_dir = project.workdir / "images"
+    images = (
+        sorted(p.name for p in images_dir.iterdir() if p.is_file())
+        if images_dir.is_dir()
+        else []
+    )
+    slide_count = None
+    if deck is not None:
+        try:
+            slide_count = len(_parse_deck_slides(deck))
+        except Exception:
+            slide_count = None
+    return {
+        "project_id": project.id,
+        "has_deck": deck is not None,
+        "deck_format": deck.suffix.lstrip(".") if deck else None,
+        "slide_count": slide_count,
+        "images": images,
+    }
 
 
 # Origins the local (desktop) server accepts state-changing requests from:
@@ -348,6 +417,49 @@ def _run_job(job: Job, deck_path: Path, job_yaml: Path,
             if p is not None:
                 Path(p).unlink(missing_ok=True)
         shutil.rmtree(job.workdir / "tmp", ignore_errors=True)
+
+
+def _do_draft(source_path: Path, slides: int | None, provider: str,
+              model: str | None, base_url: str | None) -> str:
+    """Extract a document and draft deck Markdown from it (blocking: offload to
+    a threadpool). Raises DraftError / ValueError with a user-facing message."""
+    from .draft import (
+        build_draft_prompt,
+        clamp_source,
+        clean_llm_markdown,
+        extract_source_text,
+        validate_deck_markdown,
+    )
+    from .llm import get_llm_client, query_llm
+
+    source_text = extract_source_text(source_path)
+    if not source_text.strip():
+        from .draft import DraftError
+
+        raise DraftError(
+            "No extractable text was found in the document "
+            "(a scanned/image-only PDF, perhaps?)."
+        )
+    source_text, _ = clamp_source(source_text)
+
+    import io
+
+    from rich.console import Console
+
+    client = get_llm_client(provider, base_url=base_url)
+    # Swallow query_llm's progress prints — they'd land in the server log.
+    quiet_console = Console(file=io.StringIO())
+    result = query_llm(
+        client, provider, build_draft_prompt(source_text, slides),
+        quiet_console, model,
+    )
+    if not result:
+        from .draft import DraftError
+
+        raise DraftError("The LLM returned no content. Try again.")
+    deck_markdown = clean_llm_markdown(result)
+    validate_deck_markdown(deck_markdown)  # raises DraftError if unusable
+    return deck_markdown.rstrip() + "\n"
 
 
 SETTINGS_TEMPLATE = """\
@@ -812,6 +924,276 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
             background = BackgroundTask(_wipe)
         return FileResponse(str(job.output_path), media_type=job.media_type,
                             filename=job.download_name, background=background)
+
+    # ---- Project workflow: draft -> edit -> enrich -> render --------------
+    # A stateful session (unlike the one-shot jobs above) so a document can
+    # become a deck, be edited, enriched, and rendered without re-uploading
+    # between steps. Gated to non-demo mode: it needs an LLM and persists state,
+    # so it's the desktop / self-hosted experience, not the open demo.
+    projects_root = jobs_root / "projects"
+    projects_root.mkdir(exist_ok=True)
+
+    def _project_or_401(project_id: str, token: str | None) -> Project:
+        if demo_mode:
+            raise HTTPException(
+                status_code=403,
+                detail="The project workflow is available in the app / "
+                "self-hosted mode, not the open demo.",
+            )
+        _reap_expired_projects()
+        project = _PROJECTS.get(project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="Unknown project")
+        if not (
+            token
+            and secrets.compare_digest(token.encode(), project.token.encode())
+        ):
+            raise HTTPException(
+                status_code=401, detail="Invalid or missing project token"
+            )
+        return project
+
+    @app.post("/api/projects")
+    async def create_project(
+        deck: UploadFile | None = File(default=None),
+        _: None = Depends(require_token),
+    ) -> JSONResponse:
+        if demo_mode:
+            raise HTTPException(
+                status_code=403,
+                detail="The project workflow is available in the app / "
+                "self-hosted mode, not the open demo.",
+            )
+        _reap_expired_projects()
+        pid = uuid.uuid4().hex
+        workdir = projects_root / pid
+        workdir.mkdir(parents=True)
+        try:
+            if deck is not None and deck.filename:
+                suffix = Path(deck.filename).suffix.lower()
+                if suffix not in (".md", ".pptx"):
+                    raise HTTPException(
+                        status_code=400, detail="Deck must be .md or .pptx"
+                    )
+                await save_upload(
+                    deck, workdir / f"deck{suffix}", MAX_DECK_BYTES, "Deck"
+                )
+        except Exception:
+            shutil.rmtree(workdir, ignore_errors=True)
+            raise
+        project = Project(
+            id=pid, workdir=workdir, created_at=time.time(),
+            token=secrets.token_urlsafe(24),
+        )
+        with _LOCK:
+            _PROJECTS[pid] = project
+        return JSONResponse(
+            {"project_id": pid, "token": project.token,
+             "state": _project_state(project)}
+        )
+
+    @app.get("/api/projects/{project_id}")
+    def project_state_endpoint(
+        project_id: str,
+        x_project_token: str | None = Header(default=None),
+        _: None = Depends(require_token),
+    ) -> dict[str, Any]:
+        return _project_state(_project_or_401(project_id, x_project_token))
+
+    @app.post("/api/projects/{project_id}/draft")
+    async def project_draft(
+        project_id: str,
+        source: UploadFile = File(...),
+        slides: str | None = Form(default=None),
+        x_project_token: str | None = Header(default=None),
+        _: None = Depends(require_token),
+    ) -> JSONResponse:
+        project = _project_or_401(project_id, x_project_token)
+        job_base = load_config() if local_mode else base_config
+        llm = job_base.get("providers", {}).get("llm", {})
+        provider = llm.get("provider", "none")
+        if provider == "none":
+            raise HTTPException(
+                status_code=400,
+                detail="draft needs an LLM provider configured in Settings "
+                "(e.g. claude, openai, gemini).",
+            )
+        n: int | None = None
+        if slides:
+            try:
+                n = int(slides)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="slides must be a number")
+            if n < 1:
+                raise HTTPException(status_code=400, detail="slides must be positive")
+
+        from .draft import SUPPORTED_SUFFIXES
+
+        suffix = Path(source.filename or "source").suffix.lower()
+        if suffix not in SUPPORTED_SUFFIXES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported source type. Use: {', '.join(SUPPORTED_SUFFIXES)}",
+            )
+        src_path = project.workdir / f"source{suffix}"
+        await save_upload(source, src_path, MAX_DECK_BYTES, "Document")
+
+        from starlette.concurrency import run_in_threadpool
+
+        from .draft import DraftError
+
+        try:
+            markdown = await run_in_threadpool(
+                _do_draft, src_path, n, provider, llm.get("model"),
+                llm.get("base_url"),
+            )
+        except (DraftError, ValueError, ImportError) as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        finally:
+            src_path.unlink(missing_ok=True)
+
+        (project.workdir / "deck.md").write_text(markdown, encoding="utf-8")
+        # A freshly drafted deck supersedes any previously uploaded .pptx.
+        (project.workdir / "deck.pptx").unlink(missing_ok=True)
+        return JSONResponse(
+            {"markdown": markdown, "state": _project_state(project)}
+        )
+
+    @app.put("/api/projects/{project_id}/deck")
+    async def save_deck(
+        project_id: str,
+        request: Request,
+        x_project_token: str | None = Header(default=None),
+        _: None = Depends(require_token),
+    ) -> JSONResponse:
+        project = _project_or_401(project_id, x_project_token)
+        body = await request.json()
+        markdown = body.get("markdown", "")
+        if not isinstance(markdown, str) or not markdown.strip():
+            raise HTTPException(
+                status_code=400, detail="markdown must be a non-empty string"
+            )
+        if len(markdown.encode("utf-8")) > MAX_DECK_BYTES:
+            raise HTTPException(status_code=413, detail="Deck too large")
+
+        from .parser import parse_markdown
+
+        if not parse_markdown(markdown):
+            raise HTTPException(
+                status_code=400,
+                detail="No slides found (need at least one '# ' heading).",
+            )
+        (project.workdir / "deck.md").write_text(markdown, encoding="utf-8")
+        (project.workdir / "deck.pptx").unlink(missing_ok=True)
+        return JSONResponse({"state": _project_state(project)})
+
+    def _spawn_project_job(
+        project: Project, mode: str, options: dict[str, Any],
+        voice_path: Path | None, photo_path: Path | None, notes: str | None,
+    ) -> JSONResponse:
+        """Copy the project deck into a fresh job workdir and run it, so the
+        canonical project deck is never consumed/deleted by the render."""
+        deck = _project_deck(project)
+        if deck is None:
+            raise HTTPException(
+                status_code=400, detail="Project has no deck yet"
+            )
+        job_id = uuid.uuid4().hex
+        workdir = jobs_root / job_id
+        workdir.mkdir(parents=True)
+        deck_copy = workdir / deck.name
+        shutil.copyfile(deck, deck_copy)
+        # Voice/photo were uploaded into a temp area; move them under the job.
+        moved_voice = moved_photo = None
+        if voice_path is not None:
+            moved_voice = workdir / voice_path.name
+            shutil.move(str(voice_path), moved_voice)
+        if photo_path is not None:
+            moved_photo = workdir / photo_path.name
+            shutil.move(str(photo_path), moved_photo)
+        job_base = load_config() if local_mode else base_config
+        job_yaml = _build_job_config(
+            job_base, workdir, options, moved_voice, moved_photo
+        )
+        job = Job(
+            id=job_id, workdir=workdir, created_at=time.time(),
+            download_token=secrets.token_urlsafe(24),
+        )
+        with _LOCK:
+            _JOBS[job_id] = job
+        executor.submit(
+            _run_job, job, deck_copy, job_yaml, moved_voice, moved_photo,
+            mode, notes,
+        )
+        return JSONResponse(
+            {"job_id": job_id, "status": job.status, "token": job.download_token}
+        )
+
+    @app.post("/api/projects/{project_id}/enrich")
+    async def enrich_project(
+        project_id: str,
+        image_provider: str | None = Form(default=None),
+        notes: str | None = Form(default=None),
+        x_project_token: str | None = Header(default=None),
+        _: None = Depends(require_token),
+    ) -> JSONResponse:
+        _reap_expired_jobs()
+        project = _project_or_401(project_id, x_project_token)
+        notes_mode = (notes or "").lower() if notes else None
+        if notes_mode not in (None, "fill", "all"):
+            raise HTTPException(status_code=400, detail="notes must be 'fill' or 'all'")
+        options = {"image_provider": image_provider, "avatar": False}
+        return _spawn_project_job(
+            project, "pptx", options, None, None, notes_mode
+        )
+
+    @app.post("/api/projects/{project_id}/render")
+    async def render_project(
+        project_id: str,
+        voice: UploadFile | None = File(default=None),
+        photo: UploadFile | None = File(default=None),
+        narration_seconds: str | None = Form(default=None),
+        image_provider: str | None = Form(default=None),
+        avatar: str | None = Form(default=None),
+        avatar_name: str | None = Form(default=None),
+        accent: str | None = Form(default=None),
+        x_project_token: str | None = Header(default=None),
+        _: None = Depends(require_token),
+    ) -> JSONResponse:
+        _reap_expired_jobs()
+        project = _project_or_401(project_id, x_project_token)
+        if _project_deck(project) is None:
+            raise HTTPException(
+                status_code=400, detail="Project has no deck to render yet"
+            )
+        staging = project.workdir / ("render_" + uuid.uuid4().hex)
+        staging.mkdir()
+        voice_path = photo_path = None
+        try:
+            if voice is not None and voice.filename:
+                voice_path = staging / f"voice{Path(voice.filename).suffix or '.wav'}"
+                await save_upload(voice, voice_path, MAX_VOICE_BYTES, "Voice sample")
+            if photo is not None and photo.filename:
+                photo_path = staging / f"photo{Path(photo.filename).suffix or '.png'}"
+                await save_upload(photo, photo_path, MAX_PHOTO_BYTES, "Photo")
+                from .providers.avatar import _source_kind
+
+                if _source_kind(str(photo_path)) == "image":
+                    problem = _validate_photo_upload(photo_path)
+                    if problem:
+                        raise HTTPException(status_code=400, detail=problem)
+            options = {
+                "narration_seconds": narration_seconds,
+                "image_provider": image_provider,
+                "avatar": (avatar or "true").lower() != "false",
+                "avatar_name": avatar_name,
+                "accent": accent,
+            }
+            return _spawn_project_job(
+                project, "video", options, voice_path, photo_path, None
+            )
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
 
     return app
 

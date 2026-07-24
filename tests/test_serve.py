@@ -705,3 +705,185 @@ def test_settings_template_mentions_voicebox():
     assert "voicebox" in serve.SETTINGS_TEMPLATE
     for key in ("base_url", "profile_id", "voice_sample", "engine"):
         assert key in serve.SETTINGS_TEMPLATE
+
+
+# --- Project workflow (draft -> edit -> enrich -> render) ---------------------
+
+
+@pytest.fixture(autouse=True)
+def _clear_projects():
+    serve._PROJECTS.clear()
+    yield
+    serve._PROJECTS.clear()
+
+
+def _llm_config():
+    cfg = copy.deepcopy(DEFAULT_CONFIG)
+    cfg["providers"]["llm"]["provider"] = "openai"
+    return cfg
+
+
+def test_create_empty_project_and_state():
+    client = TestClient(serve.create_app(config=_llm_config(), token=None))
+    r = client.post("/api/projects")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    pid, token = body["project_id"], body["token"]
+    assert token
+    assert body["state"]["has_deck"] is False
+
+    # State needs the per-project token, not just the id.
+    assert client.get(f"/api/projects/{pid}").status_code == 401
+    ok = client.get(f"/api/projects/{pid}", headers={"X-Project-Token": token})
+    assert ok.status_code == 200
+    assert ok.json()["has_deck"] is False
+
+
+def test_create_project_with_deck_upload():
+    client = TestClient(serve.create_app(config=_llm_config(), token=None))
+    r = client.post(
+        "/api/projects",
+        files={"deck": ("deck.md", b"# One\n\n- a\n# Two\n\n- b\n", "text/markdown")},
+    )
+    assert r.status_code == 200, r.text
+    state = r.json()["state"]
+    assert state["has_deck"] is True
+    assert state["slide_count"] == 2
+    assert state["deck_format"] == "md"
+
+
+def test_project_draft_writes_deck(monkeypatch):
+    monkeypatch.setattr(
+        serve, "_do_draft",
+        lambda *a, **k: "# Intro\n\n- point\n# Details\n\n- more\n",
+    )
+    client = TestClient(serve.create_app(config=_llm_config(), token=None))
+    pid = client.post("/api/projects").json()["project_id"]
+    token = serve._PROJECTS[pid].token
+
+    r = client.post(
+        f"/api/projects/{pid}/draft",
+        files={"source": ("report.pdf", b"%PDF-fake", "application/pdf")},
+        data={"slides": "2"},
+        headers={"X-Project-Token": token},
+    )
+    assert r.status_code == 200, r.text
+    assert "# Intro" in r.json()["markdown"]
+    assert r.json()["state"]["slide_count"] == 2
+
+
+def test_project_draft_requires_llm_provider():
+    # DEFAULT_CONFIG has llm provider 'none' -> draft must refuse cleanly.
+    client = TestClient(serve.create_app(config=copy.deepcopy(DEFAULT_CONFIG), token=None))
+    pid = client.post("/api/projects").json()["project_id"]
+    token = serve._PROJECTS[pid].token
+    r = client.post(
+        f"/api/projects/{pid}/draft",
+        files={"source": ("a.txt", b"hi", "text/plain")},
+        headers={"X-Project-Token": token},
+    )
+    assert r.status_code == 400
+    assert "LLM" in r.json()["detail"]
+
+
+def test_project_save_deck_validates():
+    client = TestClient(serve.create_app(config=_llm_config(), token=None))
+    pid = client.post("/api/projects").json()["project_id"]
+    token = serve._PROJECTS[pid].token
+
+    # Prose with no headings is not a deck.
+    bad = client.put(
+        f"/api/projects/{pid}/deck",
+        json={"markdown": "just prose"},
+        headers={"X-Project-Token": token},
+    )
+    assert bad.status_code == 400
+
+    good = client.put(
+        f"/api/projects/{pid}/deck",
+        json={"markdown": "# A\n\n- x\n# B\n\n- y\n"},
+        headers={"X-Project-Token": token},
+    )
+    assert good.status_code == 200
+    assert good.json()["state"]["slide_count"] == 2
+
+
+def test_project_render_spawns_job(monkeypatch):
+    def fake_run_job(job, deck_path, job_yaml, voice_path, photo_path,
+                     mode="video", notes=None):
+        assert job.workdir is not None
+        assert deck_path.exists()  # the project deck was copied in
+        out = job.workdir / "output.mp4"
+        out.write_bytes(b"VID")
+        job.status = "done"
+        job.output_path = out
+
+    monkeypatch.setattr(serve, "_run_job", fake_run_job)
+    monkeypatch.setattr(
+        serve.ThreadPoolExecutor, "submit", lambda self, fn, *a, **k: fn(*a, **k)
+    )
+    client = TestClient(serve.create_app(config=_llm_config(), token=None))
+    pid = client.post(
+        "/api/projects",
+        files={"deck": ("deck.md", b"# One\n\n- a\n", "text/markdown")},
+    ).json()["project_id"]
+    token = serve._PROJECTS[pid].token
+
+    r = client.post(
+        f"/api/projects/{pid}/render",
+        data={"avatar": "false"},
+        headers={"X-Project-Token": token},
+    )
+    assert r.status_code == 200, r.text
+    job_id, jtok = r.json()["job_id"], r.json()["token"]
+    result = client.get(f"/api/jobs/{job_id}/result", params={"t": jtok})
+    assert result.status_code == 200
+    assert result.content == b"VID"
+    # The canonical project deck survives the render (was copied, not consumed).
+    assert (serve._PROJECTS[pid].workdir / "deck.md").exists()
+
+
+def test_project_enrich_spawns_pptx_job(monkeypatch):
+    captured = {}
+
+    def fake_run_job(job, deck_path, job_yaml, voice_path, photo_path,
+                     mode="video", notes=None):
+        captured["mode"] = mode
+        assert job.workdir is not None
+        out = job.workdir / "enriched.zip"
+        out.write_bytes(b"ZIP")
+        job.status = "done"
+        job.output_path = out
+
+    monkeypatch.setattr(serve, "_run_job", fake_run_job)
+    monkeypatch.setattr(
+        serve.ThreadPoolExecutor, "submit", lambda self, fn, *a, **k: fn(*a, **k)
+    )
+    client = TestClient(serve.create_app(config=_llm_config(), token=None))
+    pid = client.post(
+        "/api/projects",
+        files={"deck": ("deck.md", b"# One\n\n- a\n", "text/markdown")},
+    ).json()["project_id"]
+    token = serve._PROJECTS[pid].token
+
+    r = client.post(
+        f"/api/projects/{pid}/enrich",
+        data={"image_provider": "text"},
+        headers={"X-Project-Token": token},
+    )
+    assert r.status_code == 200, r.text
+    assert captured["mode"] == "pptx"
+
+
+def test_project_workflow_blocked_in_demo():
+    client = TestClient(serve.create_app(config=_llm_config(), demo=True))
+    assert client.post("/api/projects").status_code == 403
+
+
+def test_reap_expired_projects(tmp_path):
+    p = serve.Project(id="old", workdir=tmp_path, created_at=1.0, token="t")
+    serve._PROJECTS["old"] = p
+    marker = tmp_path / "deck.md"
+    marker.write_text("# A\n")
+    serve._reap_expired_projects(now=1.0 + serve.PROJECT_TTL_SECONDS + 1)
+    assert "old" not in serve._PROJECTS

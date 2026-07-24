@@ -2264,6 +2264,8 @@ openai = [
 ]
 serve = [
     { name = "fastapi" },
+    { name = "pypdf" },
+    { name = "python-docx" },
     { name = "python-multipart" },
     { name = "uvicorn" },
 ]
@@ -2317,8 +2319,10 @@ requires-dist = [
     { name = "pillow", specifier = ">=11.3.0" },
     { name = "pypdf", marker = "extra == 'all'", specifier = ">=4.0.0" },
     { name = "pypdf", marker = "extra == 'import'", specifier = ">=4.0.0" },
+    { name = "pypdf", marker = "extra == 'serve'", specifier = ">=4.0.0" },
     { name = "python-docx", marker = "extra == 'all'", specifier = ">=1.1.0" },
     { name = "python-docx", marker = "extra == 'import'", specifier = ">=1.1.0" },
+    { name = "python-docx", marker = "extra == 'serve'", specifier = ">=1.1.0" },
     { name = "python-multipart", marker = "extra == 'all'", specifier = ">=0.0.9" },
     { name = "python-multipart", marker = "extra == 'serve'", specifier = ">=0.0.9" },
     { name = "python-pptx", specifier = ">=1.0.2" },
