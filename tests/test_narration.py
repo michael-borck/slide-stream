@@ -343,3 +343,24 @@ def test_cli_tts_overrides_reach_the_provider(tmp_path, monkeypatch):
     )
     assert result.exit_code == 1
     assert "chatterbox" in result.output.lower()
+
+
+# --- Pre-built slide images -------------------------------------------------
+
+
+def test_prebuilt_slide_image_uses_existing_local_file(tmp_path):
+    from slide_stream.cli import _prebuilt_slide_image
+
+    (tmp_path / "images").mkdir()
+    img = tmp_path / "images" / "slide_1.png"
+    img.write_bytes(b"\x89PNG")
+    slide = {"title": "T", "image_path": "images/slide_1.png"}
+    assert _prebuilt_slide_image(slide, tmp_path) == img
+
+
+def test_prebuilt_slide_image_ignores_missing_and_remote(tmp_path):
+    from slide_stream.cli import _prebuilt_slide_image
+
+    assert _prebuilt_slide_image({"image_path": "images/nope.png"}, tmp_path) is None
+    assert _prebuilt_slide_image({"image_path": "https://x/y.png"}, tmp_path) is None
+    assert _prebuilt_slide_image({}, tmp_path) is None

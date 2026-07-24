@@ -419,6 +419,55 @@ def _run_job(job: Job, deck_path: Path, job_yaml: Path,
         shutil.rmtree(job.workdir / "tmp", ignore_errors=True)
 
 
+def _run_project_enrich(job: Job, project: Project, deck_path: Path,
+                        job_yaml: Path, notes: str | None) -> None:
+    """Enrich a project's deck into a downloadable zip AND copy the generated
+    images back into the project's ``images/`` so the UI can preview them and a
+    later render can reuse them."""
+    assert job.workdir is not None
+    out_dir = job.workdir / "enriched"
+    output = job.workdir / "enriched.zip"  # enrich --zip writes <dir>.zip
+    command = [sys.executable, "-m", "slide_stream", "enrich",
+               str(deck_path), str(out_dir), "--config", str(job_yaml),
+               "--pptx", "--zip"]
+    if notes in ("fill", "all"):
+        command += ["--notes", notes]
+    with _LOCK:
+        job.status = "running"
+        job.media_type = "application/zip"
+        job.download_name = "slidestream-deck.zip"
+    try:
+        proc = subprocess.run(command, capture_output=True, text=True, timeout=3600)
+        with _LOCK:
+            job.log = ((proc.stdout or "") + (proc.stderr or ""))[-8000:]
+        if proc.returncode == 0 and output.exists():
+            src_images = out_dir / "images"
+            if src_images.is_dir():
+                proj_images = project.workdir / "images"
+                proj_images.mkdir(exist_ok=True)
+                for img in src_images.iterdir():
+                    if img.is_file():
+                        shutil.copyfile(img, proj_images / img.name)
+            with _LOCK:
+                job.status = "done"
+                job.output_path = output
+        else:
+            with _LOCK:
+                job.status = "error"
+                job.error = f"enrich exited {proc.returncode}"
+    except subprocess.TimeoutExpired:
+        with _LOCK:
+            job.status = "error"
+            job.error = "enrich timed out"
+    except Exception as e:  # pragma: no cover - defensive
+        with _LOCK:
+            job.status = "error"
+            job.error = str(e)
+    finally:
+        for p in (deck_path, job_yaml):
+            Path(p).unlink(missing_ok=True)
+
+
 def _do_draft(source_path: Path, slides: int | None, provider: str,
               model: str | None, base_url: str | None) -> str:
     """Extract a document and draft deck Markdown from it (blocking: offload to
@@ -1087,22 +1136,31 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
         (project.workdir / "deck.pptx").unlink(missing_ok=True)
         return JSONResponse({"state": _project_state(project)})
 
-    def _spawn_project_job(
-        project: Project, mode: str, options: dict[str, Any],
-        voice_path: Path | None, photo_path: Path | None, notes: str | None,
-    ) -> JSONResponse:
-        """Copy the project deck into a fresh job workdir and run it, so the
-        canonical project deck is never consumed/deleted by the render."""
+    def _prepare_project_job(
+        project: Project, options: dict[str, Any],
+        voice_path: Path | None, photo_path: Path | None, include_images: bool,
+    ) -> tuple[Job, Path, Path, Path | None, Path | None]:
+        """Copy the project deck (and, for renders, its enriched images) into a
+        fresh job workdir so the canonical project is never consumed. Returns the
+        job plus the paths the runner needs."""
         deck = _project_deck(project)
         if deck is None:
-            raise HTTPException(
-                status_code=400, detail="Project has no deck yet"
-            )
+            raise HTTPException(status_code=400, detail="Project has no deck yet")
         job_id = uuid.uuid4().hex
         workdir = jobs_root / job_id
         workdir.mkdir(parents=True)
         deck_copy = workdir / deck.name
         shutil.copyfile(deck, deck_copy)
+        # Bring the enriched images alongside the deck so its ``images/slide_N``
+        # references resolve during the render.
+        if include_images:
+            proj_images = project.workdir / "images"
+            if proj_images.is_dir():
+                dest = workdir / "images"
+                dest.mkdir(exist_ok=True)
+                for img in proj_images.iterdir():
+                    if img.is_file():
+                        shutil.copyfile(img, dest / img.name)
         # Voice/photo were uploaded into a temp area; move them under the job.
         moved_voice = moved_photo = None
         if voice_path is not None:
@@ -1121,13 +1179,26 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
         )
         with _LOCK:
             _JOBS[job_id] = job
-        executor.submit(
-            _run_job, job, deck_copy, job_yaml, moved_voice, moved_photo,
-            mode, notes,
-        )
+        return job, deck_copy, job_yaml, moved_voice, moved_photo
+
+    def _job_response(job: Job) -> JSONResponse:
         return JSONResponse(
-            {"job_id": job_id, "status": job.status, "token": job.download_token}
+            {"job_id": job.id, "status": job.status, "token": job.download_token}
         )
+
+    @app.get("/api/projects/{project_id}/images/{name}")
+    def project_image(
+        project_id: str, name: str, t: str | None = None,
+        x_project_token: str | None = Header(default=None),
+        _: None = Depends(require_token),
+    ):
+        # An <img> tag can't set a header, so accept the project token via ?t=.
+        project = _project_or_401(project_id, x_project_token or t)
+        safe = Path(name).name  # strip any path components (traversal guard)
+        img = project.workdir / "images" / safe
+        if not img.is_file():
+            raise HTTPException(status_code=404, detail="No such image")
+        return FileResponse(str(img))
 
     @app.post("/api/projects/{project_id}/enrich")
     async def enrich_project(
@@ -1143,9 +1214,13 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
         if notes_mode not in (None, "fill", "all"):
             raise HTTPException(status_code=400, detail="notes must be 'fill' or 'all'")
         options = {"image_provider": image_provider, "avatar": False}
-        return _spawn_project_job(
-            project, "pptx", options, None, None, notes_mode
+        job, deck_copy, job_yaml, _v, _p = _prepare_project_job(
+            project, options, None, None, include_images=False
         )
+        executor.submit(
+            _run_project_enrich, job, project, deck_copy, job_yaml, notes_mode
+        )
+        return _job_response(job)
 
     @app.post("/api/projects/{project_id}/render")
     async def render_project(
@@ -1189,9 +1264,11 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
                 "avatar_name": avatar_name,
                 "accent": accent,
             }
-            return _spawn_project_job(
-                project, "video", options, voice_path, photo_path, None
+            job, deck_copy, job_yaml, mv, mp = _prepare_project_job(
+                project, options, voice_path, photo_path, include_images=True
             )
+            executor.submit(_run_job, job, deck_copy, job_yaml, mv, mp, "video", None)
+            return _job_response(job)
         finally:
             shutil.rmtree(staging, ignore_errors=True)
 
@@ -1281,6 +1358,8 @@ details summary:hover{color:var(--ink)}
 #report h4:first-child{margin-top:.2rem}
 #report .f{margin:.16rem 0} #report .est{color:var(--muted)}
 #report .sum{margin-top:.7rem;padding-top:.5rem;border-top:1px solid var(--line);font-weight:600}
+.thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:.4rem;margin-top:.9rem}
+.thumbs img{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:6px;border:1px solid var(--line)}
 footer{margin-top:2rem;padding-top:1.1rem;border-top:1px solid var(--line);
  font-size:.85rem;color:var(--muted);display:flex;gap:1.2rem;flex-wrap:wrap}
 footer a{color:var(--muted);text-decoration:none;font-weight:500}
@@ -1424,7 +1503,7 @@ footer a:hover{color:var(--accent)}
  </div>
  <button id="exportBtn" class="ghost">Export deck (.zip)</button>
  </details>
- <p id="status"></p><div id="report"></div><div id="log"></div>
+ <p id="status"></p><div id="report"></div><div id="thumbs" class="thumbs"></div><div id="log"></div>
  <div class="navbtns"><button class="ghost" data-goto="configure">← Back</button></div>
 </div>
 </div>
@@ -1674,9 +1753,18 @@ async function poll(id,tok,kind){
  $("log").textContent=j.log||"";$("log").classList.toggle("on",!!j.log);
  if(j.status==="done"){const lbl=kind==="pptx"?"download deck (.zip)":"download video";
   $("status").innerHTML+=' <a href="/api/jobs/'+id+'/result?t='+
-   encodeURIComponent(tok||j.token||"")+'" download>⬇ '+lbl+'</a>';return}
+   encodeURIComponent(tok||j.token||"")+'" download>⬇ '+lbl+'</a>';
+  if(kind==="pptx"&&!demo&&projectId)showThumbs();return}
  if(j.status==="error"){$("status").textContent="Failed: "+(j.error||"see log");return}
  setTimeout(()=>poll(id,tok,kind),2500)}
+// After an enrich, show the images it added to the project.
+async function showThumbs(){
+ try{const r=await fetch("/api/projects/"+projectId,{headers:pauth()});
+  if(!r.ok)return;const st=await r.json();
+  $("thumbs").innerHTML=(st.images||[]).map(n=>
+   '<img alt="'+n+'" src="/api/projects/'+projectId+'/images/'+encodeURIComponent(n)+
+   '?t='+encodeURIComponent(projectToken||"")+'">').join("")}
+ catch(e){}}
 
 // --- Settings (desktop/local mode): edit ~/.slidestream.yaml in-app ---------
 let setTemplate="";

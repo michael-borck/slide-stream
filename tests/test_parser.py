@@ -260,3 +260,28 @@ def test_markdown_slides_flag_real_titles():
 
     separator_slides = parse_markdown("# One\n- a\n---\n# Two\n- b\n")
     assert all(s["has_real_title"] is True for s in separator_slides)
+
+
+# --- Pre-made per-slide images (enriched decks) ------------------------------
+
+
+def test_heading_style_captures_slide_image():
+    md = "# One\n\n![](images/slide_1.png)\n\n- a bullet\n\n# Two\n\n- b\n"
+    slides = parse_markdown(md)
+    assert slides[0]["image_path"] == "images/slide_1.png"
+    assert "a bullet" in slides[0]["content"]  # bullets still captured
+    assert "image_path" not in slides[1]  # no image on slide two
+
+
+def test_separator_style_captures_slide_image():
+    md = "# One\n\n![alt](images/slide_1.png)\n\n- a\n\n---\n\n# Two\n\n- b\n"
+    slides = parse_markdown(md)
+    assert len(slides) == 2
+    assert slides[0]["image_path"] == "images/slide_1.png"
+    # The image line is never narrated content.
+    assert not any("slide_1.png" in c for c in slides[0]["content"])
+
+
+def test_image_not_captured_when_absent():
+    slides = parse_markdown("# Only\n\n- a\n")
+    assert "image_path" not in slides[0]

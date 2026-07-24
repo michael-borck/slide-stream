@@ -117,6 +117,19 @@ def _clean_narration(title: str, content: list[Any], notes: str = "") -> str:
     return ". ".join(parts)
 
 
+def _prebuilt_slide_image(slide: dict[str, Any], deck_dir: Path) -> Path | None:
+    """A pre-made image the deck already references for this slide, if it exists
+    on disk (e.g. an enriched deck's ``images/slide_1.png``). Resolved relative
+    to the deck file. Remote (http) references and missing files return None, so
+    the renderer falls back to generating an image — backward compatible with
+    decks that merely link a decorative or absent image."""
+    src = str(slide.get("image_path", "")).strip()
+    if not src or src.lower().startswith(("http://", "https://", "data:")):
+        return None
+    candidate = (deck_dir / src).expanduser()
+    return candidate if candidate.is_file() else None
+
+
 def _slide_query(title: str, content: list[Any]) -> str:
     """Choose a meaningful image/search query for a slide.
 
@@ -567,15 +580,20 @@ def create(
                 audio_path = temp_dir / f"slide_{slide_num}.mp3"
                 fragment_path = temp_dir / f"fragment_{slide_num}.mp4"
 
-                # Generate image, audio, and video
-                try:
-                    image_provider.generate_image(
-                        search_query, str(img_path), slide=slide
-                    )
-                except StrictModeError as e:
-                    err_console.print(f"Slide {slide_num}: {e}")
-                    _doctor_nudge(input_path.name)
-                    raise typer.Exit(code=1)
+                # Use a pre-made image the deck already references (e.g. from
+                # `enrich`), else generate one via the provider.
+                prebuilt = _prebuilt_slide_image(slide, input_path.parent)
+                if prebuilt is not None:
+                    shutil.copyfile(prebuilt, img_path)
+                else:
+                    try:
+                        image_provider.generate_image(
+                            search_query, str(img_path), slide=slide
+                        )
+                    except StrictModeError as e:
+                        err_console.print(f"Slide {slide_num}: {e}")
+                        _doctor_nudge(input_path.name)
+                        raise typer.Exit(code=1)
                 if not speech_text.strip():
                     # Nothing to say (e.g. an empty slide or a blank script
                     # block): render the slide silently rather than sending

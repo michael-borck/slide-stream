@@ -9,6 +9,9 @@ from bs4 import BeautifulSoup, Tag
 # A markdown image line, e.g. ``![Title](images/slide_1.png)`` — slide
 # artwork (as written by ``enrich``), never spoken content.
 _IMAGE_LINE_RE = re.compile(r"^!\[.*\]\(.*\)\s*$")
+# The source path inside a markdown image, used to carry a pre-made per-slide
+# image (e.g. an enriched deck's ``images/slide_1.png``) through to the renderer.
+_IMAGE_SRC_RE = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
 # An ATX H1 heading line (``# Title``).
 _H1_RE = re.compile(r"^#\s+\S")
 # A YAML front-matter mapping line (``key: value``).
@@ -90,19 +93,27 @@ def _parse_separator_style(text: str) -> list[dict[str, Any]]:
             continue
         title = ""
         content: list[str] = []
+        image_path = ""
         for line in block.splitlines():
             stripped = line.strip()
             if _IMAGE_LINE_RE.match(stripped):
-                continue  # slide artwork, never narrated aloud
+                if not image_path:  # capture the first slide image; never spoken
+                    m = _IMAGE_SRC_RE.search(stripped)
+                    if m:
+                        image_path = m.group(1).strip()
+                continue
             if not title and stripped.startswith("#"):
                 title = stripped.lstrip("#").strip()
             elif stripped:
                 content.append(_BULLET_RE.sub("", stripped))
         if not title and content:
             title, content = content[0], content[1:]
-        slides.append(
-            {"title": title, "content": content, "has_real_title": bool(title)}
-        )
+        slide: dict[str, Any] = {
+            "title": title, "content": content, "has_real_title": bool(title)
+        }
+        if image_path:
+            slide["image_path"] = image_path
+        slides.append(slide)
     return slides
 
 
@@ -133,6 +144,7 @@ def parse_markdown(markdown_text: str) -> list[dict[str, Any]]:
     for header in soup.find_all("h1"):
         slide_title = header.get_text()
         content_items: list[str] = []
+        slide_image = ""
 
         next_sibling = header.find_next_sibling()
         while next_sibling:
@@ -148,6 +160,13 @@ def parse_markdown(markdown_text: str) -> list[dict[str, Any]]:
                         item.get_text() for item in next_sibling.find_all("li")
                     )
                 elif name == "p":
+                    # A pre-made slide image (``![](images/slide_1.png)``) becomes
+                    # the slide's artwork, not narration; capture the first one.
+                    img = next_sibling.find("img")
+                    if isinstance(img, Tag) and not slide_image:
+                        src = img.get("src")
+                        if isinstance(src, str) and src.strip():
+                            slide_image = src.strip()
                     text = next_sibling.get_text()
                     if text:
                         content_items.append(text)
@@ -164,8 +183,11 @@ def parse_markdown(markdown_text: str) -> list[dict[str, Any]]:
                         content_items.append(text)
             next_sibling = next_sibling.find_next_sibling()
 
-        slides.append(
-            {"title": slide_title, "content": content_items, "has_real_title": True}
-        )
+        slide: dict[str, Any] = {
+            "title": slide_title, "content": content_items, "has_real_title": True
+        }
+        if slide_image:
+            slide["image_path"] = slide_image
+        slides.append(slide)
 
     return slides

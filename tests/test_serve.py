@@ -843,19 +843,19 @@ def test_project_render_spawns_job(monkeypatch):
     assert (serve._PROJECTS[pid].workdir / "deck.md").exists()
 
 
-def test_project_enrich_spawns_pptx_job(monkeypatch):
+def test_project_enrich_spawns_enrich_job(monkeypatch):
     captured = {}
 
-    def fake_run_job(job, deck_path, job_yaml, voice_path, photo_path,
-                     mode="video", notes=None):
-        captured["mode"] = mode
+    def fake_enrich(job, project, deck_path, job_yaml, notes):
+        captured["notes"] = notes
+        captured["project_id"] = project.id
         assert job.workdir is not None
         out = job.workdir / "enriched.zip"
         out.write_bytes(b"ZIP")
         job.status = "done"
         job.output_path = out
 
-    monkeypatch.setattr(serve, "_run_job", fake_run_job)
+    monkeypatch.setattr(serve, "_run_project_enrich", fake_enrich)
     monkeypatch.setattr(
         serve.ThreadPoolExecutor, "submit", lambda self, fn, *a, **k: fn(*a, **k)
     )
@@ -868,11 +868,12 @@ def test_project_enrich_spawns_pptx_job(monkeypatch):
 
     r = client.post(
         f"/api/projects/{pid}/enrich",
-        data={"image_provider": "text"},
+        data={"image_provider": "text", "notes": "all"},
         headers={"X-Project-Token": token},
     )
     assert r.status_code == 200, r.text
-    assert captured["mode"] == "pptx"
+    assert captured["notes"] == "all"
+    assert captured["project_id"] == pid
 
 
 def test_project_workflow_blocked_in_demo():
@@ -887,3 +888,82 @@ def test_reap_expired_projects(tmp_path):
     marker.write_text("# A\n")
     serve._reap_expired_projects(now=1.0 + serve.PROJECT_TTL_SECONDS + 1)
     assert "old" not in serve._PROJECTS
+
+
+def test_run_project_enrich_populates_project_images(tmp_path, monkeypatch):
+    proj_dir = tmp_path / "proj"
+    proj_dir.mkdir()
+    job_dir = tmp_path / "job"
+    job_dir.mkdir()
+    proj = serve.Project(id="p", workdir=proj_dir, created_at=time.time(), token="t")
+    job = serve.Job(id="j", workdir=job_dir, created_at=time.time())
+    deck = job_dir / "deck.md"
+    deck.write_text("# A\n")
+    jy = job_dir / "job.yaml"
+    jy.write_text("{}")
+
+    def fake_run(cmd, **kw):
+        images = job_dir / "enriched" / "images"
+        images.mkdir(parents=True)
+        (images / "slide_1.png").write_bytes(b"PNG")
+        (job_dir / "enriched.zip").write_bytes(b"ZIP")
+
+        class R:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return R()
+
+    monkeypatch.setattr(serve.subprocess, "run", fake_run)
+    serve._run_project_enrich(job, proj, deck, jy, None)
+    assert job.status == "done"
+    assert (proj_dir / "images" / "slide_1.png").read_bytes() == b"PNG"
+
+
+def test_project_image_thumbnail_endpoint():
+    client = TestClient(serve.create_app(config=_llm_config(), token=None))
+    pid = client.post("/api/projects").json()["project_id"]
+    project = serve._PROJECTS[pid]
+    (project.workdir / "images").mkdir()
+    (project.workdir / "images" / "slide_1.png").write_bytes(b"\x89PNGdata")
+
+    # Wrong/absent token is rejected; the ?t= token works (for <img> tags).
+    assert client.get(f"/api/projects/{pid}/images/slide_1.png").status_code == 401
+    r = client.get(f"/api/projects/{pid}/images/slide_1.png", params={"t": project.token})
+    assert r.status_code == 200
+    assert r.content == b"\x89PNGdata"
+    # Path traversal is neutralised.
+    assert client.get(f"/api/projects/{pid}/images/nope.png",
+                      params={"t": project.token}).status_code == 404
+
+
+def test_project_render_includes_enriched_images(monkeypatch):
+    seen = {}
+
+    def fake_run_job(job, deck_path, job_yaml, voice_path, photo_path,
+                     mode="video", notes=None):
+        assert job.workdir is not None
+        seen["has_images"] = (job.workdir / "images" / "slide_1.png").exists()
+        out = job.workdir / "output.mp4"
+        out.write_bytes(b"VID")
+        job.status = "done"
+        job.output_path = out
+
+    monkeypatch.setattr(serve, "_run_job", fake_run_job)
+    monkeypatch.setattr(
+        serve.ThreadPoolExecutor, "submit", lambda self, fn, *a, **k: fn(*a, **k)
+    )
+    client = TestClient(serve.create_app(config=_llm_config(), token=None))
+    pid = client.post(
+        "/api/projects",
+        files={"deck": ("deck.md", b"# One\n\n![](images/slide_1.png)\n\n- a\n", "text/markdown")},
+    ).json()["project_id"]
+    project = serve._PROJECTS[pid]
+    (project.workdir / "images").mkdir()
+    (project.workdir / "images" / "slide_1.png").write_bytes(b"PNG")
+
+    r = client.post(f"/api/projects/{pid}/render", data={"avatar": "false"},
+                    headers={"X-Project-Token": project.token})
+    assert r.status_code == 200, r.text
+    assert seen["has_images"] is True  # enriched images travelled with the deck
