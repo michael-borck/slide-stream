@@ -1221,15 +1221,18 @@ h1 em{font-style:italic;color:var(--accent)}
  padding:1.4rem 1.5rem;box-shadow:0 1px 2px rgba(0,0,0,.03)}
 label{display:block;margin:1.05rem 0 .3rem;font-weight:600;font-size:.92rem}
 label:first-child{margin-top:0}
-input,select{font:inherit;color:inherit;width:100%;padding:.55rem .7rem;border:1px solid var(--line);
+input,select,textarea{font:inherit;color:inherit;width:100%;padding:.55rem .7rem;border:1px solid var(--line);
  border-radius:9px;background:var(--bg)}
 input[type=file]{padding:.45rem .5rem;cursor:pointer}
 input[type=file]::file-selector-button{font:inherit;font-weight:600;margin-right:.8rem;
  padding:.4rem .9rem;border:0;border-radius:7px;background:var(--accent-soft);color:var(--accent);cursor:pointer}
-input:focus,select:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:transparent}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:transparent}
 button{font:inherit;font-weight:600;width:100%;margin-top:1.4rem;padding:.75rem 1.2rem;
  border:0;border-radius:10px;background:var(--accent);color:#fff;cursor:pointer;transition:transform .06s}
 button:active{transform:translateY(1px)}
+button:disabled{opacity:.55;cursor:not-allowed}
+.ghost{background:transparent;border:1px solid var(--line);color:var(--ink)}
+.ghost:hover{border-color:var(--accent);color:var(--accent)}
 .row{display:flex;gap:.55rem;align-items:center;margin-top:1rem}
 .row input{width:auto;accent-color:var(--accent)} .row label{margin:0}
 .muted{color:var(--muted);font-size:.85rem;margin:.35rem 0 0}
@@ -1238,10 +1241,6 @@ button:active{transform:translateY(1px)}
 .banner a{color:var(--accent);font-weight:600;text-decoration:none}
 .banner code{font-family:ui-monospace,Menlo,monospace;font-size:.88em;
  background:rgba(120,120,120,.14);padding:.08em .4em;border-radius:5px}
-.paths{display:grid;gap:.45rem;margin:0 0 1.3rem;font-size:.88rem;color:var(--muted)}
-.paths div{display:flex;gap:.6rem;align-items:baseline}
-.paths span{flex:none;font-weight:600;font-size:.72rem;text-transform:uppercase;
- letter-spacing:.08em;color:var(--accent);min-width:6.5em}
 .req{font-size:.72rem;font-weight:600;color:var(--accent);background:var(--accent-soft);
  padding:.1rem .5rem;border-radius:99px;vertical-align:middle}
 details{margin-top:1.3rem;border-top:1px solid var(--line);padding-top:1rem}
@@ -1249,6 +1248,23 @@ details summary{cursor:pointer;font-weight:600;font-size:.95rem;color:var(--mute
 details summary::before{content:"▸ ";color:var(--accent)}
 details[open] summary::before{content:"▾ "}
 details summary:hover{color:var(--ink)}
+/* Stepper */
+.steps{display:flex;gap:.3rem;margin:0 0 1.3rem;flex-wrap:wrap}
+.steps button{flex:1;min-width:110px;margin:0;padding:.5rem .4rem;background:transparent;
+ border:1px solid var(--line);border-radius:9px;color:var(--muted);font-size:.85rem;font-weight:600;
+ display:flex;gap:.4rem;align-items:center;justify-content:center}
+.steps button .n{display:inline-flex;width:1.35rem;height:1.35rem;flex:none;align-items:center;
+ justify-content:center;border-radius:99px;background:var(--accent-soft);color:var(--accent);font-size:.78rem}
+.steps button.active{border-color:var(--accent);color:var(--ink)}
+.steps button.done .n{background:var(--accent);color:#fff}
+.step{display:none}.step.on{display:block}
+.opt{border:1px solid var(--line);border-radius:11px;padding:1rem 1.1rem;margin-top:.9rem}
+.opt:first-of-type{margin-top:0}
+.opt h3{margin:0 0 .3rem;font-size:1rem}
+#deckEditor{min-height:300px;font-family:ui-monospace,Menlo,monospace;font-size:.8rem;line-height:1.5;resize:vertical}
+.sc{font-size:.85rem;color:var(--muted);margin-top:.5rem}
+.navbtns{display:flex;gap:.6rem;margin-top:1.4rem}
+.navbtns button{margin:0;flex:1}
 #status{margin:1rem 0 .4rem;font-weight:500}
 #status a{color:var(--accent);font-weight:600}
 .badge{display:inline-block;padding:.12rem .65rem;border-radius:99px;font-size:.8rem;
@@ -1265,8 +1281,6 @@ details summary:hover{color:var(--ink)}
 #report h4:first-child{margin-top:.2rem}
 #report .f{margin:.16rem 0} #report .est{color:var(--muted)}
 #report .sum{margin-top:.7rem;padding-top:.5rem;border-top:1px solid var(--line);font-weight:600}
-#check{background:transparent;border:1px solid var(--line);color:var(--ink);margin-top:.7rem}
-#check:hover{border-color:var(--accent);color:var(--accent)}
 footer{margin-top:2rem;padding-top:1.1rem;border-top:1px solid var(--line);
  font-size:.85rem;color:var(--muted);display:flex;gap:1.2rem;flex-wrap:wrap}
 footer a{color:var(--muted);text-decoration:none;font-weight:500}
@@ -1281,16 +1295,15 @@ footer a:hover{color:var(--accent)}
  border-left:1px solid var(--line);padding:1.3rem 1.4rem;overflow:auto;display:flex;flex-direction:column}
 .panel h2{font-family:Fraunces,Georgia,serif;font-weight:600;margin:0 0 .2rem;font-size:1.3rem}
 .panel textarea{flex:1;min-height:320px;font-family:ui-monospace,Menlo,monospace;font-size:.8rem;
- line-height:1.5;width:100%;padding:.7rem;border:1px solid var(--line);border-radius:9px;
- background:var(--bg);color:inherit;resize:vertical;margin:.8rem 0}
+ line-height:1.5;padding:.7rem;resize:vertical;margin:.8rem 0}
 .panel .btns{display:flex;gap:.6rem}
 .panel .btns button{margin:0;width:auto;padding:.55rem 1rem}
-.panel .ghost{background:transparent;border:1px solid var(--line);color:var(--ink)}
 #saveMsg{font-size:.85rem;margin:.5rem 0 0}
 </style></head><body><div class="wrap">
 <div class="head"><h1>🎬 Slide<em>Stream</em></h1>
 <button id="gear" title="Providers &amp; settings">⚙ Settings</button></div>
-<p class="tag">Slides in, narrated video out — in your voice, or a friendly mascot's.</p>
+<p class="tag">A document or a deck in — a narrated video out. In your voice, or a friendly mascot's.</p>
+
 <div id="settings"><div class="panel">
 <h2>Settings</h2>
 <p class="muted" id="setPath">Edits your ~/.slidestream.yaml — providers, servers, keys.</p>
@@ -1302,74 +1315,135 @@ footer a:hover{color:var(--accent)}
 </div>
 <p id="saveMsg"></p>
 </div></div>
+
 <div id="demo" class="banner">
  <strong>Hosted demo</strong> — <span id="limits">limited</span>, nothing stored.
- Want unlimited renders, your own AI providers and full privacy?
+ Want unlimited renders, drafting from documents, your own AI providers and full privacy?
  <a id="dlBanner" href="https://github.com/michael-borck/slide-stream/releases/latest">⬇ Get the desktop app</a> &middot;
  <code>pip install slide-stream</code> &middot;
  <a href="https://slidestream.eduserver.au">learn more</a>
 </div>
-<div class="paths">
- <div><span>Minimal</span>Just a slide deck → narrated video with a stock voice.</div>
- <div><span>Your voice</span>Add a 10–30s voice sample → narration in your voice.</div>
- <div><span>Presenter</span>Pick a mascot, or add your photo/video → a talking head in the corner.</div>
+
+<div class="steps" id="steps">
+ <button data-step="source" class="active"><span class="n">1</span>Source</button>
+ <button data-step="deck" disabled><span class="n">2</span>Deck</button>
+ <button data-step="configure" disabled><span class="n">3</span>Configure</button>
+ <button data-step="render" disabled><span class="n">4</span>Render</button>
 </div>
+
 <div class="card">
 <div id="tokrow" style="display:none"><label>Access token</label>
  <input id="token" type="password" placeholder="paste your token">
  <p class="muted">Stored in this browser only.</p></div>
-<label>Slide deck <span class="req">required</span> <span style="font-weight:400;color:var(--muted)">(.md or .pptx)</span></label>
-<input id="deck" type="file" accept=".md,.pptx">
-<p class="muted">This is all you need — everything below is optional.</p>
-<label>Output</label>
-<select id="output">
- <option value="video">🎬 Narrated video (.mp4)</option>
- <option value="pptx">🖼️ PowerPoint deck (.pptx + images, no video)</option>
-</select>
-<div id="notesRow" style="display:none">
- <label>AI presenter notes</label>
- <select id="notes">
-  <option value="">None</option>
-  <option value="all">Write for every slide</option>
-  <option value="fill">Only where notes are missing</option>
+
+<!-- STEP 1: SOURCE -->
+<div class="step on" id="step-source">
+ <div class="opt" id="draftOpt" style="display:none">
+  <h3>✍️ Draft from a document</h3>
+  <p class="muted">Upload a PDF, Word doc, PowerPoint, or text file — AI turns it into a slide deck you can edit.</p>
+  <label>Document <span style="font-weight:400;color:var(--muted)">(.pdf, .docx, .pptx, .txt, .md)</span></label>
+  <input id="draftFile" type="file" accept=".pdf,.docx,.pptx,.txt,.md">
+  <label>Number of slides <span style="font-weight:400;color:var(--muted)">(blank = let the AI decide)</span></label>
+  <input id="draftSlides" type="number" min="1" placeholder="e.g. 10">
+  <button id="draftGo">Generate deck</button>
+ </div>
+ <div class="opt">
+  <h3>📄 Use an existing deck</h3>
+  <p class="muted">Already have a deck? Upload it and skip straight to configuring the video.</p>
+  <label>Deck file <span class="req">.md or .pptx</span></label>
+  <input id="deckFile" type="file" accept=".md,.pptx">
+  <button id="deckGo" class="ghost">Use this deck</button>
+ </div>
+</div>
+
+<!-- STEP 2: DECK -->
+<div class="step" id="step-deck">
+ <div id="deckEditWrap">
+  <label>Edit your deck <span style="font-weight:400;color:var(--muted)">(Markdown — one '# ' heading per slide)</span></label>
+  <textarea id="deckEditor" spellcheck="false"></textarea>
+  <p class="sc" id="deckCount"></p>
+ </div>
+ <div id="deckPptxNote" style="display:none">
+  <p>🖼️ <strong>PowerPoint deck loaded.</strong> Edit its content in PowerPoint; continue to configure the video.</p>
+ </div>
+ <div class="navbtns">
+  <button class="ghost" data-goto="source">← Back</button>
+  <button id="deckNext">Save &amp; continue →</button>
+ </div>
+</div>
+
+<!-- STEP 3: CONFIGURE -->
+<div class="step" id="step-configure">
+ <label>Slide images</label>
+ <select id="imageProvider">
+  <option value="">Use my configured provider</option>
+  <option value="text">Text cards (no AI, always works)</option>
+  <option value="dalle3">DALL·E 3 (OpenAI)</option>
+  <option value="gemini">Imagen (Gemini)</option>
+  <option value="pexels">Pexels stock photos</option>
+  <option value="unsplash">Unsplash stock photos</option>
  </select>
- <p class="muted">Adds speaker notes to the PowerPoint.</p>
+ <label>Seconds of narration per slide</label>
+ <input id="secs" type="number" min="10" placeholder="e.g. 30">
+ <details id="extras" open>
+ <summary>Voice &amp; presenter <span style="font-weight:400">(optional)</span></summary>
+ <label>Your voice <span style="font-weight:400;color:var(--muted)">(a 10–30s sample clones it for this render only)</span></label>
+ <input id="voice" type="file" accept="audio/*">
+ <label>Mascot presenter</label>
+ <select id="avatarName"><option value="">None</option></select>
+ <p class="muted">A friendly character presents in the corner — or upload yourself below.</p>
+ <label>Your photo or short video <span style="font-weight:400;color:var(--muted)">(front-facing)</span></label>
+ <input id="photo" type="file" accept="image/*,video/*">
+ <p class="muted" id="remembered"></p>
+ <div class="row"><input id="avatar" type="checkbox" checked><label>Animate the presenter</label></div>
+ <p class="muted">On: a mascot gets a cartoon mouth-flap; your photo becomes an AI talking head.
+ Off: the presenter appears as a still image in the corner.</p>
+ <label id="accentRow" style="display:none">Accent</label>
+ <select id="accent" style="display:none"><option value="">— default —</option></select>
+ </details>
+ <div class="navbtns">
+  <button class="ghost" data-goto="deck">← Back</button>
+  <button data-goto="render">Continue →</button>
+ </div>
 </div>
-<details id="extras">
-<summary>Voice &amp; presenter <span style="font-weight:400">(optional)</span></summary>
-<label>Your voice <span style="font-weight:400;color:var(--muted)">(a 10–30s sample clones it for this render only)</span></label>
-<input id="voice" type="file" accept="audio/*">
-<label>Mascot presenter</label>
-<select id="avatarName"><option value="">None</option></select>
-<p class="muted">A friendly character presents in the corner — or upload yourself below.</p>
-<label>Your photo or short video <span style="font-weight:400;color:var(--muted)">(front-facing)</span></label>
-<input id="photo" type="file" accept="image/*,video/*">
-<p class="muted" id="remembered"></p>
-<div class="row"><input id="avatar" type="checkbox" checked><label>Animate the presenter</label></div>
-<p class="muted">On: a mascot gets a cartoon mouth-flap; your photo becomes an AI talking head.
-Off: the presenter appears as a still image in the corner.</p>
-<label id="accentRow" style="display:none">Accent</label>
-<select id="accent" style="display:none"><option value="">— default —</option></select>
-<label>Seconds of narration per slide</label>
-<input id="secs" type="number" min="10" placeholder="e.g. 30">
-</details>
-<button id="check">Check deck first</button>
-<button id="go">Create video</button>
-<p id="status"></p><div id="report"></div><div id="log"></div>
+
+<!-- STEP 4: RENDER -->
+<div class="step" id="step-render">
+ <p class="muted">Preview the plan, then render. The video uses the images your provider generates.</p>
+ <button id="check" class="ghost">Check deck first</button>
+ <button id="go">Create video</button>
+ <details>
+ <summary>Or export an enriched deck <span style="font-weight:400">(images + notes, no video)</span></summary>
+ <div id="notesRow" style="display:none">
+  <label>AI presenter notes</label>
+  <select id="notes">
+   <option value="">None</option>
+   <option value="all">Write for every slide</option>
+   <option value="fill">Only where notes are missing</option>
+  </select>
+ </div>
+ <button id="exportBtn" class="ghost">Export deck (.zip)</button>
+ </details>
+ <p id="status"></p><div id="report"></div><div id="log"></div>
+ <div class="navbtns"><button class="ghost" data-goto="configure">← Back</button></div>
 </div>
+</div>
+
 <footer>
  <a href="https://slidestream.eduserver.au">About</a>
- <span style="color:var(--muted)">Desktop app:
-  <a href="https://github.com/michael-borck/slide-stream/releases/latest/download/SlideStream-macos-apple-silicon.dmg">macOS</a> ·
-  <a href="https://github.com/michael-borck/slide-stream/releases/latest/download/SlideStream-macos-intel.dmg">macOS Intel</a> ·
-  <a href="https://github.com/michael-borck/slide-stream/releases/latest/download/SlideStream-windows-setup.exe">Windows</a> ·
-  <a href="https://github.com/michael-borck/slide-stream/releases/latest/download/SlideStream-linux.AppImage">Linux</a></span>
+ <a href="https://github.com/michael-borck/slide-stream/blob/main/docs/USER_GUIDE.md">Docs</a>
  <a href="https://pypi.org/project/slide-stream/">pip install slide-stream</a>
  <a href="https://github.com/michael-borck/slide-stream">GitHub</a>
 </footer>
 </div>
 <script>
 const $=id=>document.getElementById(id);
+let cfg={},demo=false,canDraft=false;
+let projectId=null,projectToken=null;
+// The working deck, represented client-side so Check/Render/Export can reuse it:
+// {name, file (File|Blob|null), markdown (string|null), isPptx}
+let deck=null;
+
 // Platform-detected desktop download in the demo banner (stable asset names).
 (()=>{const ua=(navigator.userAgent||"").toLowerCase();
  const f=ua.includes("mac")?"SlideStream-macos-apple-silicon.dmg":
@@ -1377,29 +1451,46 @@ const $=id=>document.getElementById(id);
    ua.includes("linux")?"SlideStream-linux.AppImage":null;
  if(f)$("dlBanner").href=
   "https://github.com/michael-borck/slide-stream/releases/latest/download/"+f})();
+
 $("token").value=localStorage.getItem("ss_token")||"";
 $("token").oninput=e=>localStorage.setItem("ss_token",e.target.value);
-// Bootstrap: show the token field only if required, and the demo banner if on.
-let hasLLM=false;
+const auth=()=>{const h={};const t=$("token").value;if(t)h.Authorization="Bearer "+t;return h};
+const pauth=()=>{const h=auth();if(projectToken)h["X-Project-Token"]=projectToken;return h};
+
 fetch("/api/config").then(r=>r.json()).then(c=>{
+ cfg=c;demo=!!c.demo;
  if(c.auth_required)$("tokrow").style.display="block";
  if(c.demo){$("demo").style.display="block";
   if(c.limits)$("limits").textContent=
    c.limits.max_slides+" slides per deck, "+c.limits.jobs_per_hour+" videos per hour";}
  if(c.local)$("gear").style.display="inline-block";
- hasLLM=!!c.llm;
+ // Draft needs an LLM and the (non-demo) project workflow.
+ canDraft=!demo&&!!c.llm;
+ if(canDraft)$("draftOpt").style.display="block";
+ if(demo&&cfg.llm)$("notesRow").style.display="block";
  (c.avatars||[]).forEach(a=>{const o=document.createElement("option");o.value=a;o.textContent=a;$("avatarName").appendChild(o)});
  if((c.accents||[]).length){$("accentRow").style.display="block";$("accent").style.display="block";
   c.accents.forEach(a=>{const o=document.createElement("option");o.value=a;o.textContent=a;$("accent").appendChild(o)})}
 }).catch(()=>{});
-// Output mode: video (create) vs PowerPoint (enrich). PowerPoint hides the
-// voice/presenter extras (unused) and, with an LLM, offers AI notes.
-$("output").onchange=()=>{const pptx=$("output").value==="pptx";
- $("notesRow").style.display=(pptx&&hasLLM)?"block":"none";
- $("extras").style.display=pptx?"none":"";
- $("go").textContent=pptx?"Create PowerPoint":"Create video";
- $("report").classList.remove("on")};
-// IndexedDB: remember voice + photo across jobs (client-side only).
+
+// --- Step navigation --------------------------------------------------------
+const ORDER=["source","deck","configure","render"];
+let reached={source:true};
+function go(step){
+ ORDER.forEach(s=>{$("step-"+s).classList.toggle("on",s===step)});
+ document.querySelectorAll("#steps button").forEach(b=>{
+  const s=b.dataset.step;b.classList.toggle("active",s===step);
+  b.classList.toggle("done",reached[s]&&s!==step);
+  b.disabled=!reached[s]});
+ window.scrollTo({top:0,behavior:"smooth"});
+}
+function reach(step){reached[step]=true}
+document.querySelectorAll("#steps button").forEach(b=>{
+ b.onclick=()=>{if(reached[b.dataset.step])go(b.dataset.step)}});
+document.querySelectorAll("[data-goto]").forEach(b=>{
+ b.onclick=()=>{const t=b.dataset.goto;reach(t);go(t)}});
+
+// --- IndexedDB: remember voice + photo across renders (client-side only) -----
 let db;const openDB=()=>new Promise(r=>{const q=indexedDB.open("ss",1);
  q.onupgradeneeded=()=>q.result.createObjectStore("files");q.onsuccess=()=>{db=q.result;r()}});
 const put=(k,v)=>new Promise(r=>{db.transaction("files","readwrite").objectStore("files").put(v,k).onsuccess=r});
@@ -1407,26 +1498,108 @@ const get=k=>new Promise(r=>{const q=db.transaction("files").objectStore("files"
 let savedVoice,savedPhoto;
 openDB().then(async()=>{savedVoice=await get("voice");savedPhoto=await get("photo");
  const b=[];if(savedVoice)b.push("voice: "+savedVoice.name);if(savedPhoto)b.push("photo: "+savedPhoto.name);
- $("remembered").textContent=b.length?("Remembered "+b.join(", ")+" — leave the fields empty to reuse."):"";
- if(b.length)$("extras").open=true});
-const auth=()=>({Authorization:"Bearer "+$("token").value});
+ $("remembered").textContent=b.length?("Remembered "+b.join(", ")+" — leave the fields empty to reuse."):""});
 async function fileOrSaved(input,key,saved){const f=input.files[0];
  if(f){await put(key,f);return f}return saved||null}
-async function buildFD(){
- const deck=$("deck").files[0];
- if(!deck){$("status").textContent="Pick a deck first.";return null}
- const fd=new FormData();fd.append("deck",deck);fd.append("output",$("output").value);
- if($("output").value==="pptx"){if($("notes").value)fd.append("notes",$("notes").value)}
- else{
-  const voice=await fileOrSaved($("voice"),"voice",savedVoice);
-  const photo=await fileOrSaved($("photo"),"photo",savedPhoto);
-  if(voice)fd.append("voice",voice);if(photo)fd.append("photo",photo);
-  fd.append("avatar",$("avatar").checked?"true":"false");
-  if($("avatarName").value)fd.append("avatar_name",$("avatarName").value);
-  if($("accent").value)fd.append("accent",$("accent").value);
+
+// --- Deck helpers -----------------------------------------------------------
+function countSlides(md){return (md.match(/^#\\s+\\S/gm)||[]).length}
+function refreshDeckCount(){const n=countSlides($("deckEditor").value);
+ $("deckCount").textContent=n?(n+" slide"+(n===1?"":"s")):"No slides yet — add a '# ' heading per slide."}
+$("deckEditor").oninput=refreshDeckCount;
+// The bytes to send to the stateless /api/check (and, in demo, /api/jobs).
+function deckBlob(){
+ if(deck&&deck.isPptx&&deck.file)return deck.file;
+ return new Blob([$("deckEditor").value],{type:"text/markdown"});
+}
+function deckName(){return deck&&deck.isPptx?(deck.name||"deck.pptx"):"deck.md"}
+
+async function ensureProject(){
+ if(demo||projectId)return;
+ const r=await fetch("/api/projects",{method:"POST",headers:auth()});
+ if(!r.ok)throw new Error(await r.text());
+ const j=await r.json();projectId=j.project_id;projectToken=j.token;
+}
+
+// --- Source step ------------------------------------------------------------
+$("draftGo").onclick=async()=>{
+ const f=$("draftFile").files[0];
+ if(!f){$("draftGo").textContent="Pick a document first";return}
+ $("draftGo").disabled=true;$("draftGo").textContent="Drafting…";
+ try{
+  await ensureProject();
+  const fd=new FormData();fd.append("source",f);
+  if($("draftSlides").value)fd.append("slides",$("draftSlides").value);
+  const r=await fetch("/api/projects/"+projectId+"/draft",{method:"POST",headers:pauth(),body:fd});
+  if(!r.ok){alert("Draft failed: "+(await r.json().catch(()=>({}))).detail||"error");return}
+  const j=await r.json();
+  deck={name:"deck.md",file:null,markdown:j.markdown,isPptx:false};
+  $("deckEditor").value=j.markdown;refreshDeckCount();
+  $("deckEditWrap").style.display="";$("deckPptxNote").style.display="none";
+  reach("deck");go("deck");
+ }catch(e){alert("Draft failed: "+e.message)}
+ finally{$("draftGo").disabled=false;$("draftGo").textContent="Generate deck"}
+};
+
+$("deckGo").onclick=async()=>{
+ const f=$("deckFile").files[0];
+ if(!f){$("deckGo").textContent="Pick a deck file first";return}
+ const isPptx=/\\.pptx$/i.test(f.name);
+ $("deckGo").disabled=true;
+ try{
+  if(!demo){
+   // Create a project seeded with the uploaded deck.
+   projectId=null;projectToken=null;
+   const fd=new FormData();fd.append("deck",f);
+   const r=await fetch("/api/projects",{method:"POST",headers:auth(),body:fd});
+   if(!r.ok){alert("Upload failed: "+await r.text());return}
+   const j=await r.json();projectId=j.project_id;projectToken=j.token;
+  }
+  deck={name:f.name,file:f,markdown:null,isPptx};
+  if(isPptx){
+   $("deckEditWrap").style.display="none";$("deckPptxNote").style.display="block";
+  }else{
+   deck.markdown=await f.text();$("deckEditor").value=deck.markdown;refreshDeckCount();
+   $("deckEditWrap").style.display="";$("deckPptxNote").style.display="none";
+  }
+  reach("deck");go("deck");
+ }catch(e){alert("Upload failed: "+e.message)}
+ finally{$("deckGo").disabled=false}
+};
+
+// --- Deck step: save edits, continue ----------------------------------------
+$("deckNext").onclick=async()=>{
+ if(deck&&!deck.isPptx){
+  const md=$("deckEditor").value;
+  if(!countSlides(md)){$("deckCount").textContent="Add at least one '# ' heading first.";return}
+  deck.markdown=md;
+  if(!demo){
+   $("deckNext").disabled=true;
+   try{
+    const r=await fetch("/api/projects/"+projectId+"/deck",{method:"PUT",
+     headers:Object.assign({"Content-Type":"application/json"},pauth()),
+     body:JSON.stringify({markdown:md})});
+    if(!r.ok){alert("Save failed: "+(await r.json().catch(()=>({}))).detail);return}
+   }finally{$("deckNext").disabled=false}
+  }
  }
+ reach("configure");go("configure");
+};
+
+// --- Configure / Render form fields -----------------------------------------
+async function renderOptions(fd){
+ const voice=await fileOrSaved($("voice"),"voice",savedVoice);
+ const photo=await fileOrSaved($("photo"),"photo",savedPhoto);
+ if(voice)fd.append("voice",voice);if(photo)fd.append("photo",photo);
+ fd.append("avatar",$("avatar").checked?"true":"false");
+ if($("avatarName").value)fd.append("avatar_name",$("avatarName").value);
+ if($("accent").value)fd.append("accent",$("accent").value);
+ if($("imageProvider").value)fd.append("image_provider",$("imageProvider").value);
  if($("secs").value)fd.append("narration_seconds",$("secs").value);
- return fd}
+ return fd;
+}
+
+// --- Doctor check -----------------------------------------------------------
 const ICON={ok:"✅",warn:"⚠️",blocker:"❌"};
 const esc=s=>{const d=document.createElement("div");d.textContent=s;return d.innerHTML};
 function renderReport(rep){
@@ -1439,19 +1612,73 @@ function renderReport(rep){
   (rep.warnings?("⚠️ "+rep.warnings+" warning(s)"):"✅ no warnings")+"</div>";
  $("report").innerHTML=h;$("report").classList.add("on")}
 $("check").onclick=async()=>{
- const fd=await buildFD();if(!fd)return;
  $("check").disabled=true;$("status").textContent="Checking…";$("report").classList.remove("on");
- try{const r=await fetch("/api/check",{method:"POST",headers:auth(),body:fd});
+ try{const fd=await renderOptions(new FormData());
+  fd.append("deck",deckBlob(),deckName());
+  const r=await fetch("/api/check",{method:"POST",headers:auth(),body:fd});
   if(!r.ok){$("status").textContent="Error: "+(await r.text());return}
   $("status").textContent="";renderReport(await r.json())}
  finally{$("check").disabled=false}};
+
+// --- Render (video) ---------------------------------------------------------
 $("go").onclick=async()=>{
- const fd=await buildFD();if(!fd)return;
  $("status").textContent="Uploading…";$("log").textContent="";$("report").classList.remove("on");
- let res=await fetch("/api/jobs",{method:"POST",headers:auth(),body:fd});
- if(!res.ok){$("status").textContent="Error: "+(await res.text());return}
- const {job_id,token}=await res.json();poll(job_id,token)};
-// Settings (desktop/local mode): edit ~/.slidestream.yaml in-app.
+ try{
+  let res;
+  if(!demo){
+   if(deck&&!deck.isPptx){ // persist any last edit
+    await fetch("/api/projects/"+projectId+"/deck",{method:"PUT",
+     headers:Object.assign({"Content-Type":"application/json"},pauth()),
+     body:JSON.stringify({markdown:$("deckEditor").value})});
+   }
+   res=await fetch("/api/projects/"+projectId+"/render",{method:"POST",headers:pauth(),
+    body:await renderOptions(new FormData())});
+  }else{
+   const fd=await renderOptions(new FormData());
+   fd.append("deck",deckBlob(),deckName());fd.append("output","video");
+   res=await fetch("/api/jobs",{method:"POST",headers:auth(),body:fd});
+  }
+  if(!res.ok){$("status").textContent="Error: "+(await res.text());return}
+  const {job_id,token}=await res.json();poll(job_id,token,"video")}
+ catch(e){$("status").textContent="Error: "+e.message}};
+
+// --- Export enriched deck ---------------------------------------------------
+$("exportBtn").onclick=async()=>{
+ $("status").textContent="Uploading…";$("log").textContent="";$("report").classList.remove("on");
+ try{
+  let res;
+  if(!demo){
+   if(deck&&!deck.isPptx){
+    await fetch("/api/projects/"+projectId+"/deck",{method:"PUT",
+     headers:Object.assign({"Content-Type":"application/json"},pauth()),
+     body:JSON.stringify({markdown:$("deckEditor").value})});
+   }
+   const fd=new FormData();
+   if($("imageProvider").value)fd.append("image_provider",$("imageProvider").value);
+   if($("notes").value)fd.append("notes",$("notes").value);
+   res=await fetch("/api/projects/"+projectId+"/enrich",{method:"POST",headers:pauth(),body:fd});
+  }else{
+   const fd=new FormData();fd.append("deck",deckBlob(),deckName());fd.append("output","pptx");
+   if($("imageProvider").value)fd.append("image_provider",$("imageProvider").value);
+   if($("notes").value)fd.append("notes",$("notes").value);
+   res=await fetch("/api/jobs",{method:"POST",headers:auth(),body:fd});
+  }
+  if(!res.ok){$("status").textContent="Error: "+(await res.text());return}
+  const {job_id,token}=await res.json();poll(job_id,token,"pptx")}
+ catch(e){$("status").textContent="Error: "+e.message}};
+
+// --- Job polling ------------------------------------------------------------
+async function poll(id,tok,kind){
+ const r=await fetch("/api/jobs/"+id,{headers:auth()});const j=await r.json();
+ $("status").innerHTML='<span class="badge">'+j.status+'</span>';
+ $("log").textContent=j.log||"";$("log").classList.toggle("on",!!j.log);
+ if(j.status==="done"){const lbl=kind==="pptx"?"download deck (.zip)":"download video";
+  $("status").innerHTML+=' <a href="/api/jobs/'+id+'/result?t='+
+   encodeURIComponent(tok||j.token||"")+'" download>⬇ '+lbl+'</a>';return}
+ if(j.status==="error"){$("status").textContent="Failed: "+(j.error||"see log");return}
+ setTimeout(()=>poll(id,tok,kind),2500)}
+
+// --- Settings (desktop/local mode): edit ~/.slidestream.yaml in-app ---------
 let setTemplate="";
 $("gear").onclick=async()=>{
  const r=await fetch("/api/settings");if(!r.ok)return;
@@ -1468,13 +1695,5 @@ $("setSave").onclick=async()=>{
  const j=await r.json().catch(()=>({}));
  $("saveMsg").textContent=r.ok?"✓ Saved — applies to your next video.":("✗ "+(j.detail||"Save failed"));
  $("saveMsg").style.color=r.ok?"":"var(--accent)"};
-async function poll(id,tok){
- const r=await fetch("/api/jobs/"+id,{headers:auth()});const j=await r.json();
- $("status").innerHTML='<span class="badge">'+j.status+'</span>';
- $("log").textContent=j.log||"";$("log").classList.toggle("on",!!j.log);
- if(j.status==="done"){const lbl=$("output").value==="pptx"?"download deck (.zip)":"download video";
-  $("status").innerHTML+=' <a href="/api/jobs/'+id+'/result?t='+
-   encodeURIComponent(tok||j.token||"")+'" download>⬇ '+lbl+'</a>';return}
- if(j.status==="error"){$("status").textContent="Failed: "+(j.error||"see log");return}
- setTimeout(()=>poll(id,tok),2500)}
-</script></body></html>"""
+</script></body></html>
+"""
