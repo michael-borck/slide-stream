@@ -14,6 +14,40 @@ from slide_stream.providers.factory import ProviderFactory
 from ._live_helpers import region_motion
 
 
+def _drive_audio(live_config, tmp_path) -> str:
+    """Real narration audio from the configured TTS (gTTS fallback is fine)."""
+    tts = ProviderFactory.create_tts_provider(live_config)
+    audio = tmp_path / "drive.mp3"
+    assert tts.synthesize("Hello, this is an avatar smoke test.", str(audio)), (
+        "could not synthesize driving audio"
+    )
+    return str(audio)
+
+
+def test_live_avatar_static_mascot(live_config, tmp_path):
+    """No-GPU static mascot: a still head clip is produced from the audio."""
+    live_config["providers"]["avatar"] = {"provider": "static", "source": "owl"}
+    provider = ProviderFactory.create_avatar_provider(live_config)
+    assert provider.name == "static"
+    out = tmp_path / "head.mp4"
+    result = provider.generate(_drive_audio(live_config, tmp_path), str(out), 1)
+    assert result and Path(result).exists(), "static mascot produced no clip"
+    print("\nStatic mascot clip produced")
+
+
+def test_live_avatar_puppet_moves(live_config, tmp_path):
+    """No-GPU puppet: a mouth-flap driven by the audio actually animates."""
+    live_config["providers"]["avatar"] = {"provider": "puppet", "source": "owl"}
+    provider = ProviderFactory.create_avatar_provider(live_config)
+    assert provider.name == "puppet"
+    out = tmp_path / "head.mp4"
+    result = provider.generate(_drive_audio(live_config, tmp_path), str(out), 1)
+    assert result and Path(result).exists(), "puppet produced no clip"
+    motion = region_motion(result)
+    assert motion > 0.5, f"puppet clip looks static (motion={motion:.2f})"
+    print(f"\nPuppet mouth-flap animates (motion={motion:.2f})")
+
+
 @pytest.mark.slow
 def test_live_avatar_animates(live_config, tmp_path):
     av_cfg = live_config["providers"].setdefault("avatar", {})
