@@ -467,6 +467,37 @@ providers:
     clip_seconds: 4        # short clip looped under the narration (default)
 ```
 
+**Show the head only on some slides.** Narration always plays on every slide;
+the talking head can be limited so it doesn't cover slide content — and so a
+heavy engine like `wan-s2v` renders a handful of clips instead of one per slide:
+
+```bash
+slide-stream create deck.md out.mp4 --avatar --avatar-slides first,last
+# also: all (default) | none | 1,3,5 | every:3
+```
+
+**Reuse one clip for the whole deck** (a cheap hack — one GPU render total,
+looped everywhere; lip-sync becomes approximate):
+
+```bash
+slide-stream create deck.md out.mp4 --avatar --reuse-avatar
+```
+
+Both are also settable in config under `settings.avatar` (`slides`,
+`reuse_clip`). For a slow engine, `providers.avatar.timeout` (seconds),
+`oom_retries`, and `oom_backoff` tune the render; a transient GPU OOM is retried
+automatically.
+
+### Crossfade transitions
+
+Dissolve between slides instead of hard-cutting:
+
+```bash
+slide-stream create deck.md out.mp4 --transition 0.4   # seconds; 0 = hard cut
+```
+
+Or set `settings.video.transition_seconds`.
+
 ### PowerPoint export with AI notes
 
 `enrich` writes a new deck (Markdown + `images/`, plus a `.pptx` with `--pptx`)

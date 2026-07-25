@@ -20,6 +20,26 @@ from rich.console import Console
 err_console = Console(stderr=True, style="bold red")
 
 
+def concatenate_with_transition(clips: list, transition_seconds: float):
+    """Concatenate slide fragments, optionally crossfading between them.
+
+    ``transition_seconds <= 0`` (or a single clip) is a plain hard-cut
+    concatenation — the default, unchanged behaviour. Otherwise each slide
+    after the first fades in over the previous one's tail, so slides dissolve
+    into each other instead of cutting."""
+    if transition_seconds <= 0 or len(clips) < 2:
+        return concatenate_videoclips(clips)
+    from moviepy.video.fx import CrossFadeIn
+
+    # A transition can't be longer than (most of) the shortest clip it overlaps.
+    shortest = min(c.duration for c in clips)
+    d = min(transition_seconds, shortest * 0.9)
+    faded = [clips[0]] + [c.with_effects([CrossFadeIn(d)]) for c in clips[1:]]
+    return concatenate_videoclips(
+        faded, method="compose", padding=-d  # type: ignore[arg-type]
+    )
+
+
 def _build_head_overlay(
     head_video: str,
     duration: float,

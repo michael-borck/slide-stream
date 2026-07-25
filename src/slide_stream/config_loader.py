@@ -56,7 +56,8 @@ DEFAULT_CONFIG = {
             "codec": "libx264",
             "audio_codec": "aac",
             "slide_duration_padding": 1.0,
-            "default_slide_duration": 5.0
+            "default_slide_duration": 5.0,
+            "transition_seconds": 0.0    # crossfade between slides (0 = hard cut)
         },
         "image": {
             "download_timeout": 15,
@@ -77,7 +78,13 @@ DEFAULT_CONFIG = {
             "position": "bottom-right",  # bottom-left | top-left | top-right
             "size": 0.28,                # circle diameter as fraction of frame height
             "margin": 24,                # px from the frame edges
-            "shape": "circle"            # circle only in v1
+            "shape": "circle",           # circle only in v1
+            # Which slides get the talking head (narration always plays):
+            # all | none | first | last | first,last | "1,3,5" | every:3
+            "slides": "all",
+            # Render the avatar clip once and reuse it on every avatar slide
+            # (one GPU render for the whole deck; lip-sync becomes approximate).
+            "reuse_clip": False
         },
         "temp_dir": "temp_files",
         "cleanup": True,

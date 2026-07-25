@@ -1,6 +1,7 @@
 """Tests for avatar providers and talking-head compositing (no GPU needed)."""
 
 import copy
+import shutil
 import wave
 
 import pytest
@@ -885,3 +886,118 @@ def test_wan_s2v_has_longer_default_timeout():
     cfg = {"providers": {"avatar": {}}}
     assert WanS2VAvatarProvider(cfg)._default_timeout() == 1800.0
     assert SadTalkerAvatarProvider(cfg)._default_timeout() == 600.0
+
+
+# --- per-slide avatar selection + transitions --------------------------------
+
+
+def test_resolve_avatar_slides_variants():
+    from slide_stream.cli import _resolve_avatar_slides as r
+
+    assert r("all", 4) == {1, 2, 3, 4}
+    assert r(None, 3) == {1, 2, 3}
+    assert r("none", 4) == set()
+    assert r("first", 4) == {1}
+    assert r("last", 4) == {4}
+    assert r("first,last", 4) == {1, 4}
+    assert r("1,3,5", 4) == {1, 3}          # out-of-range dropped
+    assert r("every:2", 5) == {1, 3, 5}
+    assert r("every 3", 7) == {1, 4, 7}
+    assert r([2, 4], 5) == {2, 4}
+    assert r("all", 0) == set()             # no slides
+
+
+def test_concatenate_with_transition_shortens_total():
+    from slide_stream.media import concatenate_with_transition
+
+    clips = [ColorClip((32, 24), color=(i * 40, 0, 0), duration=1.0) for i in range(3)]
+    hard = concatenate_with_transition(clips, 0)
+    assert abs(hard.duration - 3.0) < 0.05        # hard cut = sum of durations
+    hard.close()
+
+    clips2 = [ColorClip((32, 24), color=(i * 40, 0, 0), duration=1.0) for i in range(3)]
+    faded = concatenate_with_transition(clips2, 0.4)
+    # Two 0.4s overlaps remove ~0.8s from the 3.0s total.
+    assert faded.duration < 2.9
+    faded.close()
+
+
+def test_cli_avatar_slides_limits_which_slides_get_a_head(
+    tmp_path, mocker, monkeypatch, fast_video_yaml
+):
+    """--avatar-slides first,last renders a head only on those slides."""
+    monkeypatch.chdir(tmp_path)
+    md = tmp_path / "deck.md"
+    md.write_text("# A\n\n- a\n\n# B\n\n- b\n\n# C\n\n- c\n")
+    head = tmp_path / "head.mp4"
+    make_head_video(head, 0.6)
+
+    calls: list[int] = []
+    fake_av = mocker.MagicMock()
+    fake_av.name = "precomputed"
+
+    def gen(audio, out, slide_num):
+        calls.append(slide_num)
+        shutil.copyfile(head, out)
+        return out
+
+    fake_av.generate.side_effect = gen
+    mocker.patch(
+        "slide_stream.cli.ProviderFactory.create_avatar_provider", return_value=fake_av
+    )
+    fake_tts = mocker.MagicMock()
+    fake_tts.save.side_effect = write_silent_wav
+    mocker.patch("gtts.gTTS", return_value=fake_tts)
+
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text(
+        f"providers:\n  avatar:\n    provider: precomputed\n    assets_dir: {tmp_path}\n"
+        + fast_video_yaml
+    )
+    out = tmp_path / "o.mp4"
+    result = CliRunner().invoke(
+        app, ["create", str(md), str(out), "--config", str(cfg),
+              "--avatar-slides", "first,last"]
+    )
+    assert result.exit_code == 0, result.output
+    assert sorted(calls) == [1, 3]  # slide 2 got narration but no head
+
+
+def test_cli_reuse_avatar_renders_clip_once(
+    tmp_path, mocker, monkeypatch, fast_video_yaml
+):
+    """--reuse-avatar renders one clip and reuses it across every slide."""
+    monkeypatch.chdir(tmp_path)
+    md = tmp_path / "deck.md"
+    md.write_text("# A\n\n- a\n\n# B\n\n- b\n\n# C\n\n- c\n")
+    head = tmp_path / "head.mp4"
+    make_head_video(head, 0.6)
+
+    calls: list[int] = []
+    fake_av = mocker.MagicMock()
+    fake_av.name = "wan-s2v"
+
+    def gen(audio, out, slide_num):
+        calls.append(slide_num)
+        shutil.copyfile(head, out)
+        return out
+
+    fake_av.generate.side_effect = gen
+    mocker.patch(
+        "slide_stream.cli.ProviderFactory.create_avatar_provider", return_value=fake_av
+    )
+    fake_tts = mocker.MagicMock()
+    fake_tts.save.side_effect = write_silent_wav
+    mocker.patch("gtts.gTTS", return_value=fake_tts)
+
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text(
+        f"providers:\n  avatar:\n    provider: precomputed\n    assets_dir: {tmp_path}\n"
+        + fast_video_yaml
+    )
+    out = tmp_path / "o.mp4"
+    result = CliRunner().invoke(
+        app, ["create", str(md), str(out), "--config", str(cfg), "--reuse-avatar"]
+    )
+    assert result.exit_code == 0, result.output
+    assert calls == [1]  # rendered once, reused on slides 2 and 3

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import typer
-from moviepy import VideoFileClip, concatenate_videoclips
+from moviepy import VideoFileClip
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
@@ -30,7 +30,7 @@ from .draft import (
     validate_deck_markdown,
 )
 from .llm import get_llm_client, query_llm, query_llm_with_image
-from .media import create_video_fragment
+from .media import concatenate_with_transition, create_video_fragment
 from .narration import (
     build_narration_prompt,
     narration_source,
@@ -130,6 +130,38 @@ def _prebuilt_slide_image(slide: dict[str, Any], deck_dir: Path) -> Path | None:
     return candidate if candidate.is_file() else None
 
 
+def _resolve_avatar_slides(spec: Any, total: int) -> set[int]:
+    """The 1-based slide numbers that get a talking head. ``spec`` may be:
+    ``None``/``"all"`` -> every slide; ``"none"`` -> none; ``"first"``,
+    ``"last"``, ``"first,last"``; ``"every:N"`` (or ``"every N"``); a comma/
+    space list of indices (``"1,3,5"``); or a real list of ints. Narration
+    still plays on every slide — this only controls where the head appears."""
+    if total <= 0:
+        return set()
+    if spec is None:
+        return set(range(1, total + 1))
+    if isinstance(spec, list | tuple):
+        return {int(x) for x in spec if 1 <= int(x) <= total}
+    text = str(spec).strip().lower()
+    if text in ("", "all"):
+        return set(range(1, total + 1))
+    if text == "none":
+        return set()
+    every = re.fullmatch(r"every[:\s]*(\d+)", text)
+    if every:
+        n = int(every.group(1))
+        return set(range(1, total + 1, n)) if n >= 1 else set()
+    result: set[int] = set()
+    for tok in re.split(r"[,\s]+", text):
+        if tok == "first":
+            result.add(1)
+        elif tok == "last":
+            result.add(total)
+        elif tok.isdigit() and 1 <= int(tok) <= total:
+            result.add(int(tok))
+    return result
+
+
 def _slide_query(title: str, content: list[Any]) -> str:
     """Choose a meaningful image/search query for a slide.
 
@@ -186,6 +218,34 @@ def create(
                 "Enable or disable the talking-head avatar overlay for this "
                 "run, overriding the config file."
             ),
+        ),
+    ] = None,
+    avatar_slides_opt: Annotated[
+        str | None,
+        typer.Option(
+            "--avatar-slides",
+            help=(
+                "Which slides get the talking head: all (default), none, first, "
+                "last, first,last, a list like 1,3,5, or every:3. Narration "
+                "still plays on every slide."
+            ),
+        ),
+    ] = None,
+    reuse_avatar: Annotated[
+        bool | None,
+        typer.Option(
+            "--reuse-avatar/--no-reuse-avatar",
+            help=(
+                "Render the avatar clip once and reuse it on every avatar slide "
+                "(one GPU render for the whole deck; lip-sync is approximate)."
+            ),
+        ),
+    ] = None,
+    transition: Annotated[
+        float | None,
+        typer.Option(
+            "--transition",
+            help="Crossfade seconds between slides (0 = hard cut; e.g. 0.4).",
         ),
     ] = None,
     llm_provider: Annotated[
@@ -330,6 +390,15 @@ def create(
         )
         raise typer.Exit(code=1)
 
+    # Per-run avatar-placement / transition overrides live under settings.
+    settings_avatar = config["settings"].setdefault("avatar", {})
+    if avatar_slides_opt is not None:
+        settings_avatar["slides"] = avatar_slides_opt
+    if reuse_avatar is not None:
+        settings_avatar["reuse_clip"] = reuse_avatar
+    if transition is not None:
+        config["settings"].setdefault("video", {})["transition_seconds"] = transition
+
     # FFmpeg is required to encode video; fail early with an actionable hint.
     if not shutil.which("ffmpeg"):
         err_console.print(
@@ -453,6 +522,14 @@ def create(
         llm_narration_failed = 0
         avatar_failed = 0
         strict_mode = config["settings"].get("strict", False)
+        # Which slides get a talking head, and whether to render it just once.
+        _av_settings = config["settings"].get("avatar", {})
+        avatar_slides = (
+            _resolve_avatar_slides(_av_settings.get("slides", "all"), len(slides))
+            if avatar_enabled else set()
+        )
+        reuse_avatar_clip = bool(_av_settings.get("reuse_clip", False))
+        reused_head: str | None = None
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -618,26 +695,33 @@ def create(
                             raise typer.Exit(code=1)
                         audio_failed += 1
 
-                # Talking-head overlay, driven by the slide's narration audio.
+                # Talking-head overlay, on the selected slides only (narration
+                # still plays everywhere). With reuse_clip, render once and
+                # loop the same clip under later slides — one GPU render total.
                 head_path = None
-                if avatar_enabled and audio_file:
-                    head_path = avatar_provider.generate(
-                        str(audio_path),
-                        str(temp_dir / f"head_{slide_num}.mp4"),
-                        slide_num,
-                    )
-                    if head_path is None:
-                        if strict_mode:
-                            err_console.print(
-                                f"Slide {slide_num}: avatar generation failed "
-                                "and strict mode is enabled. Aborting."
-                            )
-                            raise typer.Exit(code=1)
-                        avatar_failed += 1
-                elif avatar_enabled:
-                    # No narration audio to drive lip-sync, so no avatar
-                    # either; count it so the summary reflects every
-                    # headless slide.
+                want_head = avatar_enabled and slide_num in avatar_slides
+                if want_head and audio_file:
+                    if reuse_avatar_clip and reused_head is not None:
+                        head_path = reused_head
+                    else:
+                        head_path = avatar_provider.generate(
+                            str(audio_path),
+                            str(temp_dir / f"head_{slide_num}.mp4"),
+                            slide_num,
+                        )
+                        if head_path is None:
+                            if strict_mode:
+                                err_console.print(
+                                    f"Slide {slide_num}: avatar generation failed "
+                                    "and strict mode is enabled. Aborting."
+                                )
+                                raise typer.Exit(code=1)
+                            avatar_failed += 1
+                        elif reuse_avatar_clip:
+                            reused_head = head_path
+                elif want_head:
+                    # Avatar wanted for this slide but there is no narration
+                    # audio to drive it; count it as a headless slide.
                     avatar_failed += 1
 
                 fragment_file = create_video_fragment(
@@ -707,9 +791,11 @@ def create(
                 # below closes everything appended so far).
                 for fragment in video_fragments:
                     clips.append(VideoFileClip(fragment))
-                final_clip = concatenate_videoclips(clips)
-
                 video_settings = config["settings"]["video"]
+                final_clip = concatenate_with_transition(
+                    clips, float(video_settings.get("transition_seconds", 0) or 0)
+                )
+
                 final_clip.write_videofile(
                     output_filename,
                     fps=video_settings["fps"],
