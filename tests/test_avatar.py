@@ -820,3 +820,68 @@ def test_wan_s2v_generate_frees_vram_and_reads_gifs(config, tmp_path, mocker, mo
 
 def test_factory_registers_wan_s2v():
     assert "wan-s2v" in ProviderFactory.list_avatar_providers()
+
+
+# --- wan-s2v / ComfyUI OOM retry hardening -----------------------------------
+
+
+def test_is_gpu_oom_detection():
+    from slide_stream.providers.avatar import _is_gpu_oom
+
+    assert _is_gpu_oom(ValueError(
+        "ComfyUI workflow error: {'exception_type': 'torch.OutOfMemoryError'}"
+    ))
+    assert _is_gpu_oom(RuntimeError("CUDA out of memory. Tried to allocate ..."))
+    assert _is_gpu_oom(ValueError("Allocation on device ..."))
+    assert not _is_gpu_oom(ValueError("render timed out"))
+    assert not _is_gpu_oom(ValueError("no video output found"))
+
+
+def _wan_provider(**avatar_extra):
+    from slide_stream.providers.avatar import WanS2VAvatarProvider
+
+    cfg = {"providers": {"avatar": {
+        "provider": "wan-s2v", "base_url": "http://x", "source": "wizard",
+        "oom_backoff": 0,  # no real sleep in tests
+        **avatar_extra,
+    }}}
+    return WanS2VAvatarProvider(cfg)
+
+
+def test_generate_retries_once_on_oom_then_succeeds(mocker):
+    p = _wan_provider()
+    calls = mocker.patch.object(
+        p, "_generate_once",
+        side_effect=[ValueError("torch.OutOfMemoryError"), "out.mp4"],
+    )
+    assert p.generate("a.wav", "out.mp4", 1) == "out.mp4"
+    assert calls.call_count == 2  # retried once
+
+
+def test_generate_does_not_retry_non_oom(mocker):
+    p = _wan_provider()
+    calls = mocker.patch.object(
+        p, "_generate_once", side_effect=ValueError("render timed out")
+    )
+    assert p.generate("a.wav", "out.mp4", 1) is None
+    assert calls.call_count == 1  # failed fast, no retry
+
+
+def test_generate_gives_up_after_exhausting_retries(mocker):
+    p = _wan_provider(oom_retries=2)  # 3 attempts total
+    calls = mocker.patch.object(
+        p, "_generate_once", side_effect=ValueError("CUDA out of memory")
+    )
+    assert p.generate("a.wav", "out.mp4", 1) is None
+    assert calls.call_count == 3
+
+
+def test_wan_s2v_has_longer_default_timeout():
+    from slide_stream.providers.avatar import (
+        SadTalkerAvatarProvider,
+        WanS2VAvatarProvider,
+    )
+
+    cfg = {"providers": {"avatar": {}}}
+    assert WanS2VAvatarProvider(cfg)._default_timeout() == 1800.0
+    assert SadTalkerAvatarProvider(cfg)._default_timeout() == 600.0

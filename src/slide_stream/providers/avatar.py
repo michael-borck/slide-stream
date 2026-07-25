@@ -458,6 +458,22 @@ class DIDAvatarProvider(AvatarProvider):
             return None
 
 
+def _is_gpu_oom(exc: Exception) -> bool:
+    """True if an exception looks like a GPU out-of-memory / allocation failure.
+    ComfyUI surfaces these as a workflow error carrying torch's message, so we
+    match on the text rather than an exception type."""
+    text = str(exc).lower()
+    return any(
+        marker in text
+        for marker in (
+            "outofmemory",
+            "out of memory",
+            "allocation on device",
+            "cuda out of memory",
+        )
+    )
+
+
 class _ComfyUIAvatar(AvatarProvider):
     """Shared base for ComfyUI-driven talking heads (SadTalker / Wav2Lip).
 
@@ -502,6 +518,12 @@ class _ComfyUIAvatar(AvatarProvider):
         """Hook run just before the workflow is queued. No-op by default;
         S2V overrides it to free VRAM (POST /free)."""
         return None
+
+    def _default_timeout(self) -> float:
+        """Per-render timeout (seconds) when ``providers.avatar.timeout`` is
+        unset. Heavy engines override this — a default that suits SadTalker/
+        Wav2Lip would time out a Wan2.2-S2V render mid-flight."""
+        return 600.0
 
     def is_available(self) -> bool:
         """Available when a ComfyUI URL and a source are configured."""
@@ -560,103 +582,130 @@ class _ComfyUIAvatar(AvatarProvider):
         sad["gfpganAsFaceEnhancer"] = bool(cfg.get("face_enhancer", False))
         return wf
 
+    def _generate_once(
+        self, audio_path: str, output_path: str, slide_num: int
+    ) -> str:
+        """One render attempt. Raises on any failure (the retry lives in
+        ``generate``)."""
+        base_url = self._base_url()
+        if not base_url:
+            raise ValueError("ComfyUI base_url not configured")
+        cfg = self._avatar_config()
+        timeout = float(cfg.get("timeout") or self._default_timeout())
+        poll_interval = float(cfg.get("poll_interval") or 5)
+        headers = self._headers()
+
+        source_name = self._ensure_source()
+        kind = self._kind()
+        # These nodes load audio at 16kHz; some installs crash resampling
+        # from other rates (librosa/resampy/numba mismatch). Feed 16kHz
+        # mono WAV so they never resample.
+        audio_16k, is_temp = _to_16k_wav(audio_path)
+        try:
+            audio_name = self._upload(Path(audio_16k))
+            audio_seconds = _wav_seconds(audio_16k)
+        finally:
+            if is_temp:
+                Path(audio_16k).unlink(missing_ok=True)
+        workflow = self._build_workflow(
+            kind, source_name, audio_name, audio_seconds
+        )
+
+        # Provider-specific pre-flight (e.g. S2V frees VRAM before queueing).
+        self._pre_generate(base_url, headers)
+
+        # 1. Submit the workflow.
+        submit = requests.post(
+            f"{base_url}/prompt",
+            headers={**headers, "content-type": "application/json"},
+            json={"prompt": workflow},
+            timeout=60,
+        )
+        submit.raise_for_status()
+        prompt_id = submit.json()["prompt_id"]
+
+        # 2. Poll history until success.
+        deadline = time.monotonic() + timeout
+        video_path: str | None = None
+        subfolder = ""
+        succeeded = False
+        outputs: dict[str, Any] = {}
+        while time.monotonic() < deadline:
+            hist = requests.get(
+                f"{base_url}/history/{prompt_id}", headers=headers, timeout=30
+            )
+            hist.raise_for_status()
+            data = hist.json()
+            entry = data.get(prompt_id)
+            if entry:
+                status_str = entry.get("status", {}).get("status_str")
+                if status_str == "success":
+                    succeeded = True
+                    outputs = entry.get("outputs", {})
+                    found = _find_output_path(self._output_style(), outputs)
+                    if found:
+                        video_path, subfolder = found
+                    break
+                if status_str == "error":
+                    raise ValueError(f"ComfyUI workflow error: {entry.get('status')}")
+            time.sleep(poll_interval)
+
+        if not video_path:
+            if succeeded:
+                # The render finished but no recognisable video output was
+                # found — a node/output-shape mismatch, not a timeout.
+                raise ValueError(
+                    f"{self.name}: render succeeded but no video output found "
+                    f"(output nodes: {list(outputs)})"
+                )
+            raise TimeoutError(f"{self.name} render timed out after {timeout:.0f}s")
+
+        # 3. Download the result via /view. History entries may place the
+        # file in an output subfolder; pass it through when present.
+        params = {"filename": Path(video_path).name, "type": "output"}
+        if subfolder:
+            params["subfolder"] = subfolder
+        clip = requests.get(
+            f"{base_url}/view",
+            headers=headers,
+            params=params,
+            timeout=timeout,
+        )
+        clip.raise_for_status()
+        with open(output_path, "wb") as f:
+            f.write(clip.content)
+        console.print(f"  - Generated {self.name} talking head (slide {slide_num})")
+        return output_path
+
     def generate(
         self, audio_path: str, output_path: str, slide_num: int
     ) -> str | None:
-        try:
-            base_url = self._base_url()
-            if not base_url:
-                raise ValueError("ComfyUI base_url not configured")
-            cfg = self._avatar_config()
-            timeout = float(cfg.get("timeout") or 600)
-            poll_interval = float(cfg.get("poll_interval") or 5)
-            headers = self._headers()
+        """Render the talking head, retrying on a transient GPU allocation/OOM.
 
-            source_name = self._ensure_source()
-            kind = self._kind()
-            # These nodes load audio at 16kHz; some installs crash resampling
-            # from other rates (librosa/resampy/numba mismatch). Feed 16kHz
-            # mono WAV so they never resample.
-            audio_16k, is_temp = _to_16k_wav(audio_path)
+        Heavy ComfyUI graphs (Wan2.2-S2V especially) can OOM when a prior
+        model has not finished unloading — an intermittent race, not a real
+        capacity wall. Rather than fail the whole deck, back off and retry; the
+        next attempt's ``_pre_generate`` frees VRAM first. Tunable via
+        ``providers.avatar``: ``oom_retries`` (default 1) and ``oom_backoff``
+        seconds (default 15). Non-OOM errors fail fast (no retry)."""
+        cfg = self._avatar_config()
+        attempts = max(1, int(cfg.get("oom_retries", 1)) + 1)
+        backoff = float(cfg.get("oom_backoff") or 15)
+        for attempt in range(1, attempts + 1):
             try:
-                audio_name = self._upload(Path(audio_16k))
-                audio_seconds = _wav_seconds(audio_16k)
-            finally:
-                if is_temp:
-                    Path(audio_16k).unlink(missing_ok=True)
-            workflow = self._build_workflow(
-                kind, source_name, audio_name, audio_seconds
-            )
-
-            # Provider-specific pre-flight (e.g. S2V frees VRAM before queueing).
-            self._pre_generate(base_url, headers)
-
-            # 1. Submit the workflow.
-            submit = requests.post(
-                f"{base_url}/prompt",
-                headers={**headers, "content-type": "application/json"},
-                json={"prompt": workflow},
-                timeout=60,
-            )
-            submit.raise_for_status()
-            prompt_id = submit.json()["prompt_id"]
-
-            # 2. Poll history until success.
-            deadline = time.monotonic() + timeout
-            video_path: str | None = None
-            subfolder = ""
-            succeeded = False
-            outputs: dict[str, Any] = {}
-            while time.monotonic() < deadline:
-                hist = requests.get(
-                    f"{base_url}/history/{prompt_id}", headers=headers, timeout=30
-                )
-                hist.raise_for_status()
-                data = hist.json()
-                entry = data.get(prompt_id)
-                if entry:
-                    status_str = entry.get("status", {}).get("status_str")
-                    if status_str == "success":
-                        succeeded = True
-                        outputs = entry.get("outputs", {})
-                        found = _find_output_path(self._output_style(), outputs)
-                        if found:
-                            video_path, subfolder = found
-                        break
-                    if status_str == "error":
-                        raise ValueError(f"ComfyUI workflow error: {entry.get('status')}")
-                time.sleep(poll_interval)
-
-            if not video_path:
-                if succeeded:
-                    # The render finished but no recognisable video output was
-                    # found — a node/output-shape mismatch, not a timeout.
-                    raise ValueError(
-                        f"{self.name}: render succeeded but no video output found "
-                        f"(output nodes: {list(outputs)})"
+                return self._generate_once(audio_path, output_path, slide_num)
+            except Exception as e:
+                if attempt < attempts and _is_gpu_oom(e):
+                    err_console.print(
+                        f"  - {self.name}: GPU out of memory "
+                        f"(attempt {attempt}/{attempts}); freeing and retrying "
+                        f"in {backoff:.0f}s…"
                     )
-                raise TimeoutError(f"{self.name} render timed out after {timeout:.0f}s")
-
-            # 3. Download the result via /view. History entries may place the
-            # file in an output subfolder; pass it through when present.
-            params = {"filename": Path(video_path).name, "type": "output"}
-            if subfolder:
-                params["subfolder"] = subfolder
-            clip = requests.get(
-                f"{base_url}/view",
-                headers=headers,
-                params=params,
-                timeout=timeout,
-            )
-            clip.raise_for_status()
-            with open(output_path, "wb") as f:
-                f.write(clip.content)
-            console.print(f"  - Generated {self.name} talking head (slide {slide_num})")
-            return output_path
-
-        except Exception as e:
-            err_console.print(f"  - {self.name} avatar error: {e}")
-            return None
+                    time.sleep(backoff)
+                    continue
+                err_console.print(f"  - {self.name} avatar error: {e}")
+                return None
+        return None
 
 
 class SadTalkerAvatarProvider(_ComfyUIAvatar):
@@ -750,6 +799,11 @@ class WanS2VAvatarProvider(_ComfyUIAvatar):
     def _output_style(self) -> str:
         # S2V's SaveVideo node reports the MP4 under gifs[0], like the VHS path.
         return "video"
+
+    def _default_timeout(self) -> float:
+        # S2V is ~4 min per 3s of video; a short clip already nears the base
+        # 600s. Give it real headroom so normal renders don't time out.
+        return 1800.0
 
     def _pre_generate(self, base_url: str, headers: dict[str, str]) -> None:
         # The 16.4GB unet stays resident after a run, so the next run's text
