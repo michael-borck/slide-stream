@@ -303,6 +303,17 @@ def _build_job_config(base: dict[str, Any], workdir: Path, options: dict[str, An
         cfg["providers"]["images"]["provider"] = options["image_provider"]
     if options.get("accent"):
         cfg["providers"]["tts"]["accent"] = options["accent"]
+    # Presenter placement / reuse and slide transitions (from the wizard).
+    if options.get("avatar_slides"):
+        cfg["settings"].setdefault("avatar", {})["slides"] = options["avatar_slides"]
+    if options.get("reuse_avatar") is not None:
+        cfg["settings"].setdefault("avatar", {})["reuse_clip"] = bool(
+            options["reuse_avatar"]
+        )
+    if options.get("transition_seconds"):
+        cfg["settings"].setdefault("video", {})["transition_seconds"] = float(
+            options["transition_seconds"]
+        )
 
     # A per-job voice sample turns on ephemeral cloning. Chatterbox and
     # Voicebox both accept just the clip: Chatterbox needs no transcript, and
@@ -747,6 +758,9 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
         image_provider: str | None = Form(default=None),
         avatar: str | None = Form(default=None),
         avatar_name: str | None = Form(default=None),
+        avatar_slides: str | None = Form(default=None),
+        reuse_avatar: str | None = Form(default=None),
+        transition: str | None = Form(default=None),
         accent: str | None = Form(default=None),
         output: str | None = Form(default=None),
         notes: str | None = Form(default=None),
@@ -816,6 +830,10 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
                 "image_provider": image_provider,
                 "avatar": (avatar or "true").lower() != "false",
                 "avatar_name": avatar_name,
+                "avatar_slides": avatar_slides,
+                "reuse_avatar": (reuse_avatar or "").lower() == "true"
+                if reuse_avatar is not None else None,
+                "transition_seconds": transition,
                 "accent": accent,
             }
             # Desktop mode re-reads ~/.slidestream.yaml per job so Settings
@@ -1231,6 +1249,9 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
         image_provider: str | None = Form(default=None),
         avatar: str | None = Form(default=None),
         avatar_name: str | None = Form(default=None),
+        avatar_slides: str | None = Form(default=None),
+        reuse_avatar: str | None = Form(default=None),
+        transition: str | None = Form(default=None),
         accent: str | None = Form(default=None),
         x_project_token: str | None = Header(default=None),
         _: None = Depends(require_token),
@@ -1262,6 +1283,10 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
                 "image_provider": image_provider,
                 "avatar": (avatar or "true").lower() != "false",
                 "avatar_name": avatar_name,
+                "avatar_slides": avatar_slides,
+                "reuse_avatar": (reuse_avatar or "").lower() == "true"
+                if reuse_avatar is not None else None,
+                "transition_seconds": transition,
                 "accent": accent,
             }
             job, deck_copy, job_yaml, mv, mp = _prepare_project_job(
@@ -1464,6 +1489,8 @@ footer a:hover{color:var(--accent)}
  </select>
  <label>Seconds of narration per slide</label>
  <input id="secs" type="number" min="10" placeholder="e.g. 30">
+ <label>Slide transition <span style="font-weight:400;color:var(--muted)">(crossfade seconds; 0 = hard cut)</span></label>
+ <input id="transition" type="number" min="0" step="0.1" placeholder="0">
  <details id="extras" open>
  <summary>Voice &amp; presenter <span style="font-weight:400">(optional)</span></summary>
  <label>Your voice <span style="font-weight:400;color:var(--muted)">(a 10–30s sample clones it for this render only)</span></label>
@@ -1471,6 +1498,17 @@ footer a:hover{color:var(--accent)}
  <label>Mascot presenter</label>
  <select id="avatarName"><option value="">None</option></select>
  <p class="muted">A friendly character presents in the corner — or upload yourself below.</p>
+ <label>Show presenter on</label>
+ <select id="avatarSlides">
+  <option value="">Every slide</option>
+  <option value="first,last">First &amp; last slide</option>
+  <option value="first">First slide only</option>
+  <option value="every:3">Every 3rd slide</option>
+  <option value="none">No slides</option>
+ </select>
+ <p class="muted">Narration always plays; the talking head appears only on these slides — handy when a slide's corner is busy, or to spare a slow GPU.</p>
+ <div class="row"><input id="reuseAvatar" type="checkbox"><label>Render the presenter once and reuse it</label></div>
+ <p class="muted">One render for the whole deck instead of one per slide (much faster; lip-sync becomes approximate).</p>
  <label>Your photo or short video <span style="font-weight:400;color:var(--muted)">(front-facing)</span></label>
  <input id="photo" type="file" accept="image/*,video/*">
  <p class="muted" id="remembered"></p>
@@ -1672,9 +1710,12 @@ async function renderOptions(fd){
  if(voice)fd.append("voice",voice);if(photo)fd.append("photo",photo);
  fd.append("avatar",$("avatar").checked?"true":"false");
  if($("avatarName").value)fd.append("avatar_name",$("avatarName").value);
+ if($("avatarSlides").value)fd.append("avatar_slides",$("avatarSlides").value);
+ if($("reuseAvatar").checked)fd.append("reuse_avatar","true");
  if($("accent").value)fd.append("accent",$("accent").value);
  if($("imageProvider").value)fd.append("image_provider",$("imageProvider").value);
  if($("secs").value)fd.append("narration_seconds",$("secs").value);
+ if($("transition").value)fd.append("transition",$("transition").value);
  return fd;
 }
 

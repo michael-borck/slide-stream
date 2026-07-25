@@ -967,3 +967,54 @@ def test_project_render_includes_enriched_images(monkeypatch):
                     headers={"X-Project-Token": project.token})
     assert r.status_code == 200, r.text
     assert seen["has_images"] is True  # enriched images travelled with the deck
+
+
+def test_build_job_config_applies_avatar_placement_and_transition(tmp_path):
+    base = copy.deepcopy(DEFAULT_CONFIG)
+    options = {
+        "avatar_slides": "first,last",
+        "reuse_avatar": True,
+        "transition_seconds": "0.4",
+    }
+    p = serve._build_job_config(base, tmp_path, options, None, None)
+    cfg = yaml.safe_load(p.read_text(encoding="utf-8"))
+    assert cfg["settings"]["avatar"]["slides"] == "first,last"
+    assert cfg["settings"]["avatar"]["reuse_clip"] is True
+    assert cfg["settings"]["video"]["transition_seconds"] == 0.4
+
+
+def test_project_render_passes_placement_and_transition(monkeypatch):
+    from pathlib import Path
+
+    captured = {}
+
+    def fake_run_job(job, deck_path, job_yaml, voice, photo, mode="video", notes=None):
+        captured["cfg"] = yaml.safe_load(Path(job_yaml).read_text(encoding="utf-8"))
+        assert job.workdir is not None
+        out = job.workdir / "output.mp4"
+        out.write_bytes(b"V")
+        job.status = "done"
+        job.output_path = out
+
+    monkeypatch.setattr(serve, "_run_job", fake_run_job)
+    monkeypatch.setattr(
+        serve.ThreadPoolExecutor, "submit", lambda self, fn, *a, **k: fn(*a, **k)
+    )
+    client = TestClient(serve.create_app(config=_llm_config(), token=None))
+    pid = client.post(
+        "/api/projects",
+        files={"deck": ("deck.md", b"# A\n\n- a\n", "text/markdown")},
+    ).json()["project_id"]
+    token = serve._PROJECTS[pid].token
+
+    r = client.post(
+        f"/api/projects/{pid}/render",
+        data={"avatar": "false", "avatar_slides": "first",
+              "reuse_avatar": "true", "transition": "0.5"},
+        headers={"X-Project-Token": token},
+    )
+    assert r.status_code == 200, r.text
+    cfg = captured["cfg"]
+    assert cfg["settings"]["avatar"]["slides"] == "first"
+    assert cfg["settings"]["avatar"]["reuse_clip"] is True
+    assert cfg["settings"]["video"]["transition_seconds"] == 0.5
