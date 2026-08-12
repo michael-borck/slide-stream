@@ -177,12 +177,17 @@ def create_video_fragment(
                 )
 
             layers = [background, image_clip.with_position("center")]  # type: ignore[attr-defined]
+            if width == image_clip.w and height == image_clip.h:
+                layers = [image_clip]
+
             if head_clip is not None:
                 layers.append(head_clip)
-            image_clip = CompositeVideoClip(
-                layers,
-                size=(width, height),
-            ).with_duration(duration)
+
+            if len(layers) > 1:
+                image_clip = CompositeVideoClip(
+                    layers,
+                    size=(width, height),
+                ).with_duration(duration)
 
             # Combine with audio (MoviePy 2.x: .with_audio())
             final_clip = image_clip.with_audio(audio_clip) if audio_clip else image_clip
