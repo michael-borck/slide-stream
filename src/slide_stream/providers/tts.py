@@ -114,11 +114,12 @@ class GTTSProvider(TTSProvider):
             # An accent name (australian/british/...) picks the Google TLD;
             # a raw tld also works. Unknown -> default 'com'.
             accent = str(tts_config.get("accent") or "").lower()
+            language = str(tts_config.get("language") or "en").lower()
             tld = tts_config.get("tld") or GTTS_ACCENTS.get(accent, "com")
 
-            tts = gTTS(text=text, lang="en", tld=tld)
+            tts = gTTS(text=text, lang=language, tld=tld)
             tts.save(filename)
-            label = f" ({accent})" if accent in GTTS_ACCENTS else ""
+            label = f" ({language}:{accent})" if accent in GTTS_ACCENTS else f"({language})"
             console.print(f"  - Generated audio with gTTS{label}")
             return filename
 
