@@ -682,6 +682,17 @@ def create(
                     )
                     audio_file = None
                 else:
+                    if config.get("settings", {}).get("tts", {}).get("babel_fish", False):
+                        if llm_client:
+                            lang_detection_prompt = f"Detect a language of the '{speech_text}' and output the language id in ISO 639‑1 format"
+                            lang = query_llm(
+                                llm_client, llm_provider_name, lang_detection_prompt, console, llm_model
+                            )
+                            console.print(f"  - Detected '{lang}' (ISO 639‑1) language on the slide #{slide_num}")
+                            config["providers"]["tts"]["lang"] = lang
+                        else:
+                            err_console.print("TTS babel fish feature is not activated because LLM client is not available")
+
                     audio_file = tts_provider.synthesize(
                         speech_text, str(audio_path)
                     )
