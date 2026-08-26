@@ -355,16 +355,128 @@ def test_demo_mode_needs_no_token(base_config):
     assert client.get("/api/jobs/whatever").status_code == 404
 
 
-def test_demo_slide_cap(base_config, mocker):
+def test_demo_slide_cap_trims_to_five(base_config, mocker, monkeypatch):
+    """A big deck is no longer rejected: the demo trims it to the first 5."""
+    seen: dict[str, int] = {}
+
+    def fake_run_job(job, deck_path, job_yaml, voice_path, photo_path,
+                     mode="video", notes=None):
+        assert job.workdir is not None
+        out = job.workdir / "output.mp4"
+        out.write_bytes(b"V")
+        job.status = "done"
+        job.output_path = out
+        seen["slides"] = len(serve._parse_deck_slides(deck_path))
+
+    mocker.patch.object(serve, "_run_job", side_effect=fake_run_job)
+    monkeypatch.setattr(
+        serve.ThreadPoolExecutor, "submit", lambda self, fn, *a, **k: fn(*a, **k)
+    )
     client = TestClient(serve.create_app(config=base_config, demo=True))
-    mocker.patch.object(serve, "_run_job")
     big_deck = "".join(f"# Slide {i}\n- point\n" for i in range(10))
     r = client.post("/api/jobs", files={"deck": ("deck.md", big_deck.encode())})
-    assert r.status_code == 400
-    assert "5 slides" in r.json()["detail"]
-    # a small deck is accepted
+    assert r.status_code == 200
+    body = r.json()
+    assert body["notice"]
+    assert "first 5" in body["notice"]
+    assert "desktop app" in body["notice"]
+    assert seen["slides"] == serve.DEMO_MAX_SLIDES
+
+    # A small deck is accepted untouched, with no notice.
     ok = client.post("/api/jobs", files={"deck": ("deck.md", b"# One\n- a\n")})
     assert ok.status_code == 200
+    assert ok.json()["notice"] is None
+
+
+def test_demo_pptx_cap_trims_to_five(base_config, mocker, monkeypatch):
+    """An oversized .pptx is trimmed to DEMO_MAX_SLIDES slides in place."""
+    from pptx import Presentation
+
+    def fake_run_job(job, deck_path, job_yaml, voice_path, photo_path,
+                     mode="video", notes=None):
+        assert job.workdir is not None
+        out = job.workdir / "output.mp4"
+        out.write_bytes(b"V")
+        job.status = "done"
+        job.output_path = out
+
+    mocker.patch.object(serve, "_run_job", side_effect=fake_run_job)
+    monkeypatch.setattr(
+        serve.ThreadPoolExecutor, "submit", lambda self, fn, *a, **k: fn(*a, **k)
+    )
+    prs = Presentation()
+    for i in range(8):
+        slide = prs.slides.add_slide(prs.slide_layouts[1])
+        slide.shapes.title.text = f"Slide {i}"  # type: ignore[union-attr]
+    buf = BytesIO()
+    prs.save(buf)
+
+    client = TestClient(serve.create_app(config=base_config, demo=True))
+    r = client.post(
+        "/api/jobs",
+        files={"deck": ("deck.pptx", buf.getvalue(),
+                        "application/vnd.openxmlformats-officedocument."
+                        "presentationml.presentation")},
+    )
+    assert r.status_code == 200, r.text
+    assert "first 5" in r.json()["notice"]
+    # The deck handed to the render has exactly DEMO_MAX_SLIDES slides.
+    jobs = [j for j in serve._JOBS.values() if j.workdir]
+    assert jobs
+    workdir = jobs[-1].workdir
+    assert workdir is not None
+    pptx_files = list(workdir.glob("*.pptx"))
+    assert pptx_files
+    assert serve._count_slides(pptx_files[0]) == serve.DEMO_MAX_SLIDES
+
+
+def test_truncate_markdown_deck_heading_style():
+    from slide_stream.parser import parse_markdown
+
+    md = "".join(f"# S{i}\n\n- point {i}\n\n" for i in range(8))
+    out = serve._truncate_markdown_deck(md, 3)
+    assert len(parse_markdown(out)) == 3
+    assert "# S0" in out and "# S2" in out and "# S3" not in out
+
+
+def test_truncate_markdown_deck_separator_style():
+    from slide_stream.parser import parse_markdown
+
+    blocks = [f"# S{i}\npoint {i}" for i in range(6)]
+    md = "\n---\n".join(blocks) + "\n"
+    out = serve._truncate_markdown_deck(md, 2)
+    slides = parse_markdown(out)
+    assert len(slides) == 2
+    assert slides[0]["title"] == "S0" and slides[1]["title"] == "S1"
+
+
+def test_truncate_markdown_deck_keeps_front_matter():
+    from slide_stream.parser import parse_markdown
+
+    md = "---\ntitle: Deck\ntheme: dark\n---\n# A\n\n# B\n\n# C\n"
+    out = serve._truncate_markdown_deck(md, 2)
+    assert out.startswith("---\ntitle: Deck")
+    assert len(parse_markdown(out)) == 2
+
+
+def test_truncate_markdown_deck_matches_parser_on_fences():
+    """Boundary rules intentionally mirror parse_markdown — a '#' line inside
+    an unclosed-looking fence counts (and cuts) the same way in both, so a
+    trimmed deck never parses to more slides than were kept."""
+    from slide_stream.parser import parse_markdown
+
+    md = "# A\n```text\n# fake\n```\n\n# B\n\n# C\n"
+    out = serve._truncate_markdown_deck(md, 3)
+    assert "# B" in out and "# C" not in out
+    assert len(parse_markdown(out)) <= 3
+
+
+def test_truncate_markdown_deck_short_deck_unchanged():
+    from slide_stream.parser import parse_markdown
+
+    md = "# A\n\n# B\n"
+    out = serve._truncate_markdown_deck(md, 5)
+    assert len(parse_markdown(out)) == 2
 
 
 def test_demo_rate_limit(base_config, mocker):
