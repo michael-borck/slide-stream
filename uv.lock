@@ -2195,7 +2195,7 @@ wheels = [
 
 [[package]]
 name = "slide-stream"
-version = "2.14.1"
+version = "2.15.0"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
