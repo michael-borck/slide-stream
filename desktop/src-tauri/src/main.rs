@@ -173,7 +173,7 @@ fn bootstrap(app: tauri::AppHandle, state: State<'_, Srv>) {
                 "tool",
                 "run",
                 "--from",
-                "slide-stream[all]>=2.14",
+                "slide-stream[all]>=2.15",
                 "slide-stream",
                 "serve",
                 "--host",
