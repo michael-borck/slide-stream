@@ -40,7 +40,15 @@ providers:
     fallback: text
 
   avatar:
-    provider: none            # demo off; set sadtalker/d-id + a photo per job
+    # wan-s2v is the character-capable lip-sync engine: no face detector, so
+    # it animates the built-in mascots AND human head shots from narration
+    # audio. Requires a self-hosted ComfyUI server with the Wan2.2-S2V models
+    # (see docs/wan-s2v-api.md). Without a usable engine, an animated
+    # presenter degrades to a still image — the web UI never falls back to
+    # the puppet mouth-flap.
+    provider: wan-s2v
+    # base_url: https://comfyui.example.org
+    # api_key: "${COMFYUI_TOKEN}"   # only if the ComfyUI server needs auth
 
 settings:
   strict: false

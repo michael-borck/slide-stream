@@ -11,6 +11,7 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from .narration import notes_narration_ready
 from .providers.base import ImageProvider
 
 
@@ -87,7 +88,15 @@ def enrich_deck(
 
         existing_notes = str(slide.get("notes", "")).strip()
         if notes_mode == "fill":
-            notes = existing_notes or _generate_notes(slide, llm or {})
+            # "Keep existing notes" means keep narration-ready prose. Imported
+            # decks are full of placeholders ("Click to add notes") and
+            # imperative speaker cues ("Discuss the migration plan") — those
+            # are instructions, not spoken text, so the AI writes real notes.
+            notes = (
+                existing_notes
+                if notes_narration_ready(existing_notes)
+                else _generate_notes(slide, llm or {})
+            )
         elif notes_mode == "all":
             notes = _generate_notes(slide, llm or {})
         else:

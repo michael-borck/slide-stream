@@ -12,10 +12,60 @@ from slide_stream.llm import query_llm_with_image
 from slide_stream.narration import (
     build_narration_prompt,
     narration_source,
+    notes_narration_ready,
     strip_stage_directions,
     target_words,
 )
 from slide_stream.powerpoint import parse_powerpoint
+
+# --- Narration readiness of existing speaker notes -----------------------------
+
+
+def test_placeholder_notes_are_not_narration_ready():
+    assert not notes_narration_ready("")
+    assert not notes_narration_ready("   ")
+    assert not notes_narration_ready("Click to add notes")
+    assert not notes_narration_ready("Add speaker notes here")
+    assert not notes_narration_ready("Lorem ipsum dolor sit amet")
+    assert not notes_narration_ready("TBD")
+    assert not notes_narration_ready("TODO")
+    assert not notes_narration_ready("Speaker notes:")
+    assert not notes_narration_ready("...")
+
+
+def test_imperative_cue_notes_are_not_narration_ready():
+    assert not notes_narration_ready("Discuss the migration plan")
+    assert not notes_narration_ready("Explain why this matters to the audience.")
+    assert not notes_narration_ready("Mention the deadline before moving on")
+    assert not notes_narration_ready("Show the architecture diagram")
+    assert not notes_narration_ready("Go through the results slide by slide")
+    assert not notes_narration_ready("Point out the cost savings")
+    assert not notes_narration_ready("Talk about the team's work here")
+
+
+def test_real_prose_notes_are_narration_ready():
+    assert notes_narration_ready(
+        "Photosynthesis converts light energy into chemical energy, feeding "
+        "nearly every ecosystem on the planet."
+    )
+    assert notes_narration_ready("Welcome everyone; today we cover the plan.")
+    # Nouns that look like cue verbs stay trusted: article distinguishes them.
+    assert notes_narration_ready("Present value of the cash flows is $1.2m.")
+    assert notes_narration_ready("Show times vary by location.")
+    # Long notes are trusted even when the first line reads imperative.
+    long_notes = (
+        "Review the numbers as they land. The quarterly figures show a "
+        "steady climb across every region, driven by the migration project "
+        "and the new pricing tier announced in May."
+    )
+    assert notes_narration_ready(long_notes)
+
+
+def test_narration_source_skips_placeholder_notes():
+    slide = {"notes": "Discuss the plan", "content": ["Actual content"]}
+    assert narration_source(slide) == "content"
+    good = {"notes": "Spoken prose that elaborates on the slide content.", "content": ["x"]}
+    assert narration_source(good) == "notes"
 
 # --- Stage-direction stripping ------------------------------------------------
 
@@ -51,9 +101,20 @@ def test_clean_narration_strips_directions_from_notes():
     """The default (no-LLM) narration builder must not voice bracketed cues."""
     from slide_stream.cli import _clean_narration
 
-    spoken = _clean_narration("My Title", ["a bullet"], "Explain the chart [pause] slowly.")
+    spoken = _clean_narration(
+        "My Title", ["a bullet"], "Welcome to the session [pause] everyone."
+    )
     assert "[pause]" not in spoken
-    assert "Explain the chart slowly." in spoken
+    assert "Welcome to the session everyone." in spoken
+
+
+def test_clean_narration_skips_placeholder_and_cue_notes():
+    """Placeholders and one-line speaker instructions are never voiced."""
+    from slide_stream.cli import _clean_narration
+
+    assert _clean_narration("My Title", [], "Click to add notes") == "My Title"
+    assert _clean_narration("My Title", [], "Discuss the migration plan") == "My Title"
+    assert _clean_narration("My Title", [], "TODO") == "My Title"
 
 # --- Source selection ---------------------------------------------------------
 

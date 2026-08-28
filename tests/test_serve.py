@@ -1,7 +1,7 @@
 """Tests for the web UI (slide-stream serve)."""
 
 import copy
-import subprocess
+import io
 import time
 from io import BytesIO
 from pathlib import Path
@@ -235,7 +235,8 @@ def test_job_config_no_presenter_means_no_head(base_config, tmp_path):
 
 
 def test_job_config_mascot_animate_toggle(base_config, tmp_path):
-    """Mascot: animate -> puppet mouth-flap; off -> static."""
+    """Mascot: without a usable animation engine, animate falls back to a
+    static mascot — the web UI never produces the puppet mouth-flap."""
     import yaml
 
     workdir = tmp_path / "job"
@@ -243,7 +244,7 @@ def test_job_config_mascot_animate_toggle(base_config, tmp_path):
     on = yaml.safe_load(serve._build_job_config(
         base_config, workdir, {"avatar": True, "avatar_name": "teddy"}, None, None
     ).read_text())
-    assert on["providers"]["avatar"]["provider"] == "puppet"
+    assert on["providers"]["avatar"]["provider"] == "static"
     assert on["providers"]["avatar"]["source"] == "teddy"
     off = yaml.safe_load(serve._build_job_config(
         base_config, workdir, {"avatar": False, "avatar_name": "teddy"}, None, None
@@ -276,9 +277,10 @@ def test_job_config_mascot_animates_via_wan_s2v_when_configured(base_config, tmp
     assert off["providers"]["avatar"]["provider"] == "static"
 
 
-def test_job_config_mascot_falls_back_to_puppet_for_human_only_engine(base_config, tmp_path):
-    """A human-only engine (sadtalker) can't animate a mascot, so it still
-    falls back to the puppet mouth-flap rather than a doomed render."""
+def test_job_config_mascot_falls_back_to_static_for_human_only_engine(base_config, tmp_path):
+    """A human-only engine (sadtalker) can't animate a mascot, so an
+    animated mascot degrades to a still image rather than the puppet
+    mouth-flap (or a doomed SadTalker render)."""
     import yaml
 
     base_config["providers"]["avatar"] = {
@@ -289,7 +291,7 @@ def test_job_config_mascot_falls_back_to_puppet_for_human_only_engine(base_confi
     cfg = yaml.safe_load(serve._build_job_config(
         base_config, workdir, {"avatar": True, "avatar_name": "teddy"}, None, None
     ).read_text())
-    assert cfg["providers"]["avatar"]["provider"] == "puppet"
+    assert cfg["providers"]["avatar"]["provider"] == "static"
 
 
 def test_job_config_video_always_animates(base_config, tmp_path):
@@ -779,11 +781,20 @@ def test_render_artifacts_wiped_after_job(base_config, tmp_path, monkeypatch):
                                        {"avatar": True}, voice, None)
     (workdir / "tmp").mkdir()
 
-    def fake_run(cmd, **kwargs):
-        Path(cmd[cmd.index("create") + 2]).write_bytes(b"MP4")
-        return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+    class FakePopen:
+        def __init__(self, cmd, **kwargs):
+            self.cmd = cmd
+            self.returncode = 0
+            self.stdout = io.StringIO("rendered ok\n")
+            Path(cmd[cmd.index("create") + 2]).write_bytes(b"MP4")
 
-    monkeypatch.setattr(serve.subprocess, "run", fake_run)
+        def wait(self, timeout=None):
+            return 0
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(serve.subprocess, "Popen", FakePopen)
     job = serve.Job(id="j1", workdir=workdir, created_at=time.time())
     serve._run_job(job, deck, job_yaml, voice, None)
 
@@ -817,6 +828,100 @@ def test_settings_template_mentions_voicebox():
     assert "voicebox" in serve.SETTINGS_TEMPLATE
     for key in ("base_url", "profile_id", "voice_sample", "engine"):
         assert key in serve.SETTINGS_TEMPLATE
+
+
+# --- live progress: streamed logs, heartbeat, demo-safe progress ---------------
+
+
+def test_stream_process_updates_log_and_heartbeat(base_config, tmp_path, monkeypatch):
+    """Output arrives line-by-line while the process runs, refreshing
+    job.log and job.updated_at — the render looks alive from the outside."""
+    workdir = tmp_path / "job"
+    workdir.mkdir()
+    deck = workdir / "deck.md"
+    deck.write_text("# One\n- a\n")
+    output = workdir / "output.mp4"
+    output.write_bytes(b"MP4")
+
+    class FakePopen:
+        def __init__(self, cmd, **kwargs):
+            self.returncode = 0
+            self.stdout = io.StringIO(
+                "Slide 1/2: One\n  - Generated audio with gTTS\nSlide 2/2: Two\n"
+            )
+
+        def wait(self, timeout=None):
+            return 0
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(serve.subprocess, "Popen", FakePopen)
+    job = serve.Job(id="j1", workdir=workdir, created_at=time.time())
+    code = serve._stream_process(["create"], job, timeout=60)
+
+    assert code == 0
+    assert "Slide 2/2" in job.log
+    assert job.updated_at > 0
+    progress = serve._job_progress(job)
+    assert progress is not None
+    assert progress["slide"] == 2
+    assert progress["slides"] == 2
+    assert progress["stage"] == "generating voice"
+
+
+def test_job_progress_stitching_stage():
+    job = serve.Job(id="j", created_at=time.time())
+    job.log = "Slide 1/3: A\nSlide 2/3: B\nSlide 3/3: C\n2. Combining Video Fragments...\n"
+    progress = serve._job_progress(job)
+    assert progress == {
+        "slide": 3, "slides": 3, "stage": "stitching the final video",
+    }
+
+
+def test_job_progress_heartbeat_line():
+    """A long GPU render prints heartbeats; the stage reads 'rendering the
+    presenter' even mid-slide."""
+    job = serve.Job(id="j", created_at=time.time())
+    job.log = "Slide 4/10: Deep dive\n  - wan-s2v talking head: rendering… 190s elapsed\n"
+    progress = serve._job_progress(job)
+    assert progress is not None
+    assert progress["slide"] == 4
+    assert progress["stage"] == "rendering the presenter"
+
+
+def test_job_progress_none_for_empty_or_unrecognised():
+    job = serve.Job(id="j", created_at=time.time())
+    assert serve._job_progress(job) is None
+    job.log = "hello world\nnothing useful here\n"
+    assert serve._job_progress(job) is None
+
+
+def test_status_exposes_progress_and_idle_but_not_raw_log_in_demo(base_config):
+    """Demo clients get derived progress + heartbeat, never raw log text."""
+    serve._JOBS["j1"] = serve.Job(
+        id="j1", status="running", log="Slide 1/5: A\n",
+        created_at=time.time() - 30, updated_at=time.time() - 4,
+        download_token="dltok",
+    )
+    client = TestClient(serve.create_app(config=base_config, demo=True))
+    s = client.get("/api/jobs/j1").json()
+    assert s["progress"] == {"slide": 1, "slides": 5}
+    assert s["idle"] == 4
+    assert s["log"] == ""  # raw text still withheld on the open demo
+    assert "token" not in s
+
+
+def test_status_idle_uses_created_at_before_output(base_config):
+    """No output yet -> the heartbeat counts from job creation."""
+    serve._JOBS["j1"] = serve.Job(
+        id="j1", status="running", log="",
+        created_at=time.time() - 12,
+    )
+    client = TestClient(serve.create_app(config=base_config, token=None))
+    s = client.get("/api/jobs/j1").json()
+    assert s["idle"] == 12
+    assert "progress" not in s  # nothing recognisable printed yet
 
 
 # --- Project workflow (draft -> edit -> enrich -> render) ---------------------
@@ -1014,20 +1119,22 @@ def test_run_project_enrich_populates_project_images(tmp_path, monkeypatch):
     jy = job_dir / "job.yaml"
     jy.write_text("{}")
 
-    def fake_run(cmd, **kw):
-        images = job_dir / "enriched" / "images"
-        images.mkdir(parents=True)
-        (images / "slide_1.png").write_bytes(b"PNG")
-        (job_dir / "enriched.zip").write_bytes(b"ZIP")
+    class FakePopen:
+        def __init__(self, cmd, **kwargs):
+            self.returncode = 0
+            self.stdout = io.StringIO("enriched\n")
+            images = job_dir / "enriched" / "images"
+            images.mkdir(parents=True)
+            (images / "slide_1.png").write_bytes(b"PNG")
+            (job_dir / "enriched.zip").write_bytes(b"ZIP")
 
-        class R:
-            returncode = 0
-            stdout = ""
-            stderr = ""
+        def wait(self, timeout=None):
+            return 0
 
-        return R()
+        def kill(self):
+            pass
 
-    monkeypatch.setattr(serve.subprocess, "run", fake_run)
+    monkeypatch.setattr(serve.subprocess, "Popen", FakePopen)
     serve._run_project_enrich(job, proj, deck, jy, None)
     assert job.status == "done"
     assert (proj_dir / "images" / "slide_1.png").read_bytes() == b"PNG"

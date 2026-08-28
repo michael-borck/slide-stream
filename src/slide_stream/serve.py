@@ -18,6 +18,7 @@ Design notes:
 
 import copy
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -48,6 +49,9 @@ class Job:
     workdir: Path | None = None
     output_path: Path | None = None
     created_at: float = field(default_factory=lambda: 0.0)
+    # When log output last arrived (heartbeat for long renders: a GPU job can
+    # legitimately go quiet for minutes, and the UI says "still working").
+    updated_at: float = field(default_factory=lambda: 0.0)
     # Per-job download secret: knowing the job UUID alone must not be enough
     # to fetch the video, and the long-lived instance token never goes in a URL.
     download_token: str = ""
@@ -435,13 +439,19 @@ def _build_job_config(base: dict[str, Any], workdir: Path, options: dict[str, An
     # Presenter: a built-in mascot wins over an uploaded file. The 'animate'
     # toggle then picks the engine per source:
     #   mascot  + animate -> the server's detector-free engine (wan-s2v/d-id)
-    #                        for real lip-sync if configured, else the no-GPU
-    #                        puppet mouth-flap; animate off -> static mascot
+    #                        for real AI lip-sync if configured, else static;
+    #                        the web UI never falls back to the puppet
+    #                        mouth-flap — an animated presenter must be a real
+    #                        character model (wan-s2v animates mascots AND
+    #                        humans); animate off -> static mascot
     #   photo   + animate -> server's engine (wan-s2v/sadtalker/d-id/comfyui);
     #                        else static photo (a still of themselves)
     #   video             -> always the video engine (a clip is inherently
     #                        animated; wav2lip/comfyui)
     #   nothing           -> no head
+    # (The puppet provider stays available to CLI/YAML users via
+    # providers.avatar.provider: puppet — it is only the web fallback that is
+    # gone.)
     av = cfg["providers"]["avatar"]
     animate = options.get("avatar", True)
     engine = _server_animation_engine(base)
@@ -454,7 +464,7 @@ def _build_job_config(base: dict[str, Any], workdir: Path, options: dict[str, An
             if engine == "d-id":
                 av["source_image"] = name
         else:
-            av["provider"] = "puppet" if animate else "static"
+            av["provider"] = "static"
     elif photo_path is not None:
         from .providers.avatar import _source_kind
 
@@ -474,6 +484,77 @@ def _build_job_config(base: dict[str, Any], workdir: Path, options: dict[str, An
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(yaml.safe_dump(cfg))
     return job_yaml
+
+
+def _stream_process(command: list[str], job: Job, timeout: float) -> int:
+    """Run a subprocess, streaming its output into ``job.log`` as it arrives.
+
+    ``subprocess.run(capture_output=True)`` buffers everything until exit,
+    which makes a multi-minute GPU render look dead. A reader thread pumps
+    lines into the bounded log and refreshes ``updated_at`` (the heartbeat
+    the status endpoint reports as "last output Ns ago").
+    """
+    proc = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+    )
+    started = time.monotonic()
+
+    def _pump() -> None:
+        stream = proc.stdout
+        if stream is None:  # pragma: no cover - PIPE is always set above
+            return
+        for line in stream:
+            with _LOCK:
+                job.log = (job.log + line)[-16000:]
+                job.updated_at = time.time()
+
+    reader = threading.Thread(target=_pump, daemon=True)
+    reader.start()
+    try:
+        return proc.wait(timeout=max(1.0, timeout - (time.monotonic() - started)))
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        raise
+    finally:
+        reader.join(timeout=5)
+
+
+# Demo-safe progress derived from the render log. Raw log lines never reach
+# the open demo (paths/exception text); these whitelisted, derived labels do.
+_SLIDE_LINE_RE = re.compile(r"Slide (\d+)/(\d+)")
+_STAGE_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("combining", "stitching the final video"),
+    ("talking head", "rendering the presenter"),
+    ("rendering…", "rendering the presenter"),
+    ("avatar", "rendering the presenter"),
+    ("audio", "generating voice"),
+    ("narration", "writing narration"),
+    ("image", "generating slide image"),
+)
+
+
+def _job_progress(job: Job) -> dict[str, Any] | None:
+    """{'slide': n, 'slides': total, 'stage': label} parsed from job.log, or
+    None when nothing recognisable has been printed yet."""
+    log = job.log
+    if not log:
+        return None
+    out: dict[str, Any] = {}
+    last = None
+    for m in _SLIDE_LINE_RE.finditer(log):
+        last = m
+    if last:
+        out["slide"], out["slides"] = int(last.group(1)), int(last.group(2))
+    for line in reversed(log.splitlines()[-60:]):
+        low = line.lower()
+        for needle, label in _STAGE_PATTERNS:
+            if needle in low:
+                out["stage"] = label
+                break
+        if "stage" in out:
+            break
+    return out or None
 
 
 def _run_job(job: Job, deck_path: Path, job_yaml: Path,
@@ -505,18 +586,15 @@ def _run_job(job: Job, deck_path: Path, job_yaml: Path,
         job.media_type = media_type
         job.download_name = download_name
     try:
-        proc = subprocess.run(
-            command, capture_output=True, text=True, timeout=3600,
-        )
-        log = (proc.stdout or "") + (proc.stderr or "")
+        returncode = _stream_process(command, job, 3600)
         with _LOCK:
-            job.log = log[-8000:]
-            if proc.returncode == 0 and output.exists():
+            if returncode == 0 and output.exists():
                 job.status = "done"
                 job.output_path = output
             else:
                 job.status = "error"
-                job.error = f"{'enrich' if mode == 'pptx' else 'render'} exited {proc.returncode}"
+                job.error = (f"{'enrich' if mode == 'pptx' else 'render'} "
+                             f"exited {returncode}")
     except subprocess.TimeoutExpired:
         with _LOCK:
             job.status = "error"
@@ -553,10 +631,8 @@ def _run_project_enrich(job: Job, project: Project, deck_path: Path,
         job.media_type = "application/zip"
         job.download_name = "slidestream-deck.zip"
     try:
-        proc = subprocess.run(command, capture_output=True, text=True, timeout=3600)
-        with _LOCK:
-            job.log = ((proc.stdout or "") + (proc.stderr or ""))[-8000:]
-        if proc.returncode == 0 and output.exists():
+        returncode = _stream_process(command, job, 3600)
+        if returncode == 0 and output.exists():
             src_images = out_dir / "images"
             if src_images.is_dir():
                 proj_images = project.workdir / "images"
@@ -570,7 +646,7 @@ def _run_project_enrich(job: Job, project: Project, deck_path: Path,
         else:
             with _LOCK:
                 job.status = "error"
-                job.error = f"enrich exited {proc.returncode}"
+                job.error = f"enrich exited {returncode}"
     except subprocess.TimeoutExpired:
         with _LOCK:
             job.status = "error"
@@ -1054,6 +1130,13 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
             raise HTTPException(status_code=404, detail="Unknown job")
         out: dict[str, Any] = {"job_id": job.id, "status": job.status,
                                "error": job.error}
+        if job.status in ("queued", "running"):
+            # Demo-safe derived progress (slide x/y + whitelisted stage label)
+            # and a heartbeat: seconds since the render last printed anything.
+            progress = _job_progress(job)
+            if progress:
+                out["progress"] = progress
+            out["idle"] = max(0, int(time.time() - (job.updated_at or job.created_at)))
         if demo_mode:
             # The open demo gets only the coarse status the UI shows anyway:
             # raw render logs can leak paths and exception text, and the
@@ -1496,6 +1579,10 @@ details summary:hover{color:var(--ink)}
 .dz.has{border-style:solid;color:var(--ink)}
 .dz:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .elapsed{color:var(--muted);font-size:.85rem;font-weight:400;margin-left:.35rem}
+#progWrap{margin:.5rem 0 .2rem}
+#progTrack{height:8px;border-radius:99px;background:var(--line);overflow:hidden}
+#progBar{height:100%;width:0;border-radius:99px;background:var(--accent);transition:width .6s}
+#progLabel{margin:.3rem 0 0}
 #deckEditor{min-height:300px;font-family:ui-monospace,Menlo,monospace;font-size:.8rem;line-height:1.5;resize:vertical}
 .sc{font-size:.85rem;color:var(--muted);margin-top:.5rem}
 .navbtns{display:flex;gap:.6rem;margin-top:1.4rem}
@@ -1691,6 +1778,10 @@ footer a:hover{color:var(--accent)}
  <button id="check" class="ghost">Check deck first</button>
  <button id="go">Create video</button>
  <p id="status"></p><p id="notice" class="muted"></p>
+ <div id="progWrap" style="display:none">
+  <div id="progTrack"><div id="progBar"></div></div>
+  <p class="muted" id="progLabel"></p>
+ </div>
  <div id="report"></div><div id="thumbs" class="thumbs"></div><div id="log"></div>
  <div class="navbtns"><button class="ghost" data-goto="configure">← Back</button></div>
 </div>
@@ -1969,7 +2060,7 @@ $("go").onclick=async()=>{
  const m=outMode(),deckOut=m==="deck";
  $("go").disabled=true; // no double submits while a job is in flight
  $("status").textContent="Uploading…";$("log").textContent="";$("report").classList.remove("on");
- $("notice").textContent="";
+ $("notice").textContent="";hideProg();
  try{
   const fd=await renderOptions(new FormData());
   // "Slides as they are" must stay image-free regardless of the server's
@@ -2019,20 +2110,43 @@ function renderProgress(){if(!t0)return;
 function startProgress(){t0=Date.now();renderProgress();
  if(tick)clearInterval(tick);tick=setInterval(renderProgress,1000)}
 function stopProgress(){if(tick){clearInterval(tick);tick=null}}
+function hideProg(){$("progWrap").style.display="none";
+ $("progBar").style.width="0";$("progLabel").textContent=""}
 async function poll(id,tok,kind){
  let j;
  try{const r=await fetch("/api/jobs/"+id,{headers:auth()});j=await r.json()}
  catch(e){ // transient network hiccup: keep polling rather than dying
   setTimeout(()=>poll(id,tok,kind),4000);return}
  $("log").textContent=j.log||"";$("log").classList.toggle("on",!!j.log);
- if(j.status==="done"){stopProgress();t0=0;$("go").disabled=false;
+ if(j.status==="done"){stopProgress();t0=0;$("go").disabled=false;hideProg();
   const lbl=kind==="pptx"?"download deck (.zip)":"download video";
   $("status").innerHTML='<span class="badge">done</span> <a href="/api/jobs/'+id+
    '/result?t='+encodeURIComponent(tok||j.token||"")+'" download>⬇ '+lbl+"</a>"+
    (demo?' <span class="elapsed">this link works once</span>':"");
   if(kind==="pptx"&&!demo&&projectId)showThumbs();return}
- if(j.status==="error"){stopProgress();t0=0;$("go").disabled=false;
+ if(j.status==="error"){stopProgress();t0=0;$("go").disabled=false;hideProg();
   $("status").textContent="Failed: "+(j.error||"see log");return}
+ // Still working. Prefer real progress from the render log (slide x/y, stage,
+ // "last update Ns ago"); fall back to elapsed-time heuristics before the
+ // first slide line appears.
+ const sec=t0?(Date.now()-t0)/1000:0;
+ const p=j.progress;
+ if(p&&(p.slide||p.stage)){
+  $("progWrap").style.display="block";
+  if(p.slide&&p.slides)
+   $("progBar").style.width=
+    Math.min(100,Math.round(100*(p.slide-0.5)/p.slides))+"%";
+  const lbl=[];
+  if(p.slide)lbl.push("slide "+p.slide+" of "+(p.slides||p.slide));
+  if(p.stage)lbl.push(p.stage);
+  if(typeof j.idle==="number")lbl.push(j.idle<15?"working…":"last update "+j.idle+"s ago");
+  $("progLabel").textContent=lbl.join(" · ");
+  $("status").innerHTML='<span class="badge">'+j.status+"</span>"+
+   ' <span class="elapsed">'+fmtDur(sec)+"</span>";
+ }else{
+  $("status").innerHTML='<span class="badge">'+j.status+"</span>"+
+   ' <span class="elapsed">'+fmtDur(sec)+" — "+stageFor(sec)+"</span>";
+ }
  setTimeout(()=>poll(id,tok,kind),2500)}
 // After an enrich, show the images it added to the project.
 async function showThumbs(){

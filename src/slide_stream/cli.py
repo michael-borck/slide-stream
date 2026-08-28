@@ -34,6 +34,7 @@ from .media import concatenate_with_transition, create_video_fragment
 from .narration import (
     build_narration_prompt,
     narration_source,
+    notes_narration_ready,
     parse_script_file,
     strip_stage_directions,
     target_words,
@@ -108,7 +109,10 @@ def _clean_narration(title: str, content: list[Any], notes: str = "") -> str:
         text = str(item).strip()
         if text:
             parts.append(text)
-    if notes.strip() and notes.strip() != "Click to add notes":
+    # Only narration-ready notes are voiced: placeholders ("Click to add
+    # notes") and imperative speaker cues ("Discuss the migration plan")
+    # would be read aloud verbatim here — treat them as absent instead.
+    if notes_narration_ready(notes):
         # Notes go straight to speech here (no LLM), so drop any unspoken stage
         # directions first — otherwise "[pause]" etc. would be read aloud.
         spoken_notes = strip_stage_directions(notes.strip())
@@ -549,6 +553,12 @@ def create(
                 progress.update(
                     process_task,
                     description=f"[yellow]Processing Slide {slide_num}/{len(slides)}: '{slide['title']}'[/yellow]",
+                )
+                # A plain, parseable per-slide line: the transient progress bar
+                # never reaches piped output, but the web UI's job log (and the
+                # status endpoint's progress parser) reads exactly this text.
+                progress.console.print(
+                    f"Slide {slide_num}/{len(slides)}: {slide['title']}"
                 )
 
                 # raw_text is the structured prompt fed to the LLM only.

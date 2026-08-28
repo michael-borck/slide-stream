@@ -74,13 +74,73 @@ def parse_script_file(path: str | Path) -> list[str]:
 
 def narration_source(slide: dict[str, Any]) -> str:
     """Return which source narration should be built from for this slide."""
-    if str(slide.get("notes", "")).strip():
+    if notes_narration_ready(str(slide.get("notes", ""))):
         return "notes"
     if slide.get("content"):
         return "content"
     if slide.get("images"):
         return "image"
     return "title-only"
+
+
+# --- Narration readiness of existing speaker notes ----------------------------
+# Imported decks often carry notes that are placeholders ("Click to add
+# notes"), fillers ("TODO", "Lorem ipsum", "..."), or imperative speaker cues
+# ("Discuss the migration plan", "Mention the deadline") — instructions for
+# the presenter, not prose for the audience. Voicing those verbatim reads
+# scaffolding back at the listener, so both the narration builder and the
+# AI-notes "fill" mode treat non-ready notes as absent.
+
+_PLACEHOLDER_NOTES_RE = re.compile(
+    r"click to (add|edit)|add (your )?(speaker )?notes|type your notes"
+    r"|\blorem ipsum\b"
+    r"|^\s*(speaker\s*notes?)\s*[:：-]?\s*$"
+    r"|^\s*(tbd|tba|todo|n/?a|xxx|none)\s*[.!…]?\s*$"
+    r"|^\s*[-.…—]{2,}\s*$",
+    re.IGNORECASE,
+)
+
+# Imperative cue openings ("Discuss the plan", "Explain why…"). Verbs that
+# read as nouns in real prose ("Present value", "Show times") are only cues
+# when followed by an article/possessive/question word.
+_CUE_NOTES_RE = re.compile(
+    r"^(talk about|go through|walk (them|the audience)? ?through|point out"
+    r"|summarize|summarise|emphasize|emphasise|note to self"
+    r"|don'?t forget|make (sure|it clear)"
+    r"|ask (the audience|them)|remind (them|the audience|yourself)"
+    r"|tell (them|the audience)"
+    r"|(discuss|explain|describe|outline|introduce|highlight|mention|cover"
+    r"|show|present|review|expand on|elaborate on|add|insert|include)\s+"
+    r"(the|a|an|your|this|these|those|them|how|why|what|where|each|all)\b)",
+    re.IGNORECASE,
+)
+
+# Cues are a single instruction ("Discuss the migration plan"); multi-sentence
+# notes are trusted as real prose even when the first line reads imperative.
+_SENTENCE_SPLIT_RE = re.compile(r"[.!?]+(?:\s|$)")
+
+
+def _sentence_count(text: str) -> int:
+    return len([s for s in _SENTENCE_SPLIT_RE.split(text) if s.strip()])
+
+
+def notes_narration_ready(notes: str) -> bool:
+    """True if existing speaker notes read as narration-ready prose.
+
+    Conservative on purpose: anything empty, placeholder-shaped, filler, or a
+    one-sentence imperative cue is treated as "no notes", so the narration
+    falls back to the slide content and the AI-notes fill mode writes real
+    spoken prose instead of reading the presenter's instructions aloud.
+    """
+    text = (notes or "").strip()
+    if not text:
+        return False
+    if _PLACEHOLDER_NOTES_RE.search(text):
+        return False
+    first_line = text.splitlines()[0].strip()
+    if _CUE_NOTES_RE.match(first_line) and _sentence_count(text) <= 1:
+        return False
+    return True
 
 
 def target_words(target_seconds: float | None, wpm: float = DEFAULT_WPM) -> int | None:

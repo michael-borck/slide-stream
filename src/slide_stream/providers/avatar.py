@@ -428,6 +428,8 @@ class DIDAvatarProvider(AvatarProvider):
             # 2. Poll until the render is done.
             deadline = time.monotonic() + timeout
             result_url: str | None = None
+            started = time.monotonic()
+            last_heartbeat = started
             while time.monotonic() < deadline:
                 status_resp = requests.get(
                     f"{self.BASE_URL}/talks/{talk_id}", headers=headers, timeout=30
@@ -440,6 +442,12 @@ class DIDAvatarProvider(AvatarProvider):
                     break
                 if status == "error":
                     raise ValueError(f"D-ID render failed: {data.get('error', data)}")
+                now = time.monotonic()
+                if now - last_heartbeat >= 45:
+                    console.print(
+                        f"  - D-ID talking head: rendering… {now - started:.0f}s elapsed"
+                    )
+                    last_heartbeat = now
                 time.sleep(poll_interval)
 
             if not result_url:
@@ -630,6 +638,11 @@ class _ComfyUIAvatar(AvatarProvider):
         subfolder = ""
         succeeded = False
         outputs: dict[str, Any] = {}
+        # Heavy engines (wan-s2v especially) can run for many minutes with no
+        # terminal output; a periodic heartbeat keeps piped logs (the web UI's
+        # job log / "last update Ns ago") moving so the render looks alive.
+        started = time.monotonic()
+        last_heartbeat = started
         while time.monotonic() < deadline:
             hist = requests.get(
                 f"{base_url}/history/{prompt_id}", headers=headers, timeout=30
@@ -648,6 +661,13 @@ class _ComfyUIAvatar(AvatarProvider):
                     break
                 if status_str == "error":
                     raise ValueError(f"ComfyUI workflow error: {entry.get('status')}")
+            now = time.monotonic()
+            if now - last_heartbeat >= 45:
+                console.print(
+                    f"  - {self.name} talking head: rendering… "
+                    f"{now - started:.0f}s elapsed"
+                )
+                last_heartbeat = now
             time.sleep(poll_interval)
 
         if not video_path:
