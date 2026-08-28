@@ -71,7 +71,7 @@ def test_demo_flag_exposed(base_config):
 
 def test_create_job_rejects_bad_deck_type(base_config):
     client = TestClient(serve.create_app(config=base_config, token=None))
-    r = client.post("/api/jobs", files={"deck": ("notes.txt", b"hi", "text/plain")})
+    r = client.post("/api/jobs", files={"deck": ("notes.docx", b"hi", "text/plain")})
     assert r.status_code == 400
 
 
@@ -376,6 +376,106 @@ def test_demo_mode_needs_no_token(base_config):
     }
     # protected endpoint reachable without a token
     assert client.get("/api/jobs/whatever").status_code == 404
+
+
+# --- teaser: text formats, voice picker, avatar art ----------------------------
+
+
+def test_demo_accepts_txt_with_slides(base_config, mocker, monkeypatch):
+    """A plain .txt structured with '# ' headings is parsed as a deck."""
+    seen: dict[str, str] = {}
+
+    def fake_run_job(job, deck_path, job_yaml, voice_path, photo_path,
+                     mode="video", notes=None):
+        assert job.workdir is not None
+        out = job.workdir / "output.mp4"
+        out.write_bytes(b"V")
+        job.status = "done"
+        job.output_path = out
+        seen["deck_name"] = deck_path.name
+
+    mocker.patch.object(serve, "_run_job", side_effect=fake_run_job)
+    monkeypatch.setattr(
+        serve.ThreadPoolExecutor, "submit", lambda self, fn, *a, **k: fn(*a, **k)
+    )
+    client = TestClient(serve.create_app(config=base_config, demo=True))
+    r = client.post("/api/jobs", files={
+        "deck": ("notes.txt", b"# First slide\n- a\n\n# Second\n- b\n", "text/plain"),
+    })
+    assert r.status_code == 200, r.text
+    assert seen["deck_name"] == "deck.md"  # stored under the canonical name
+
+
+def test_demo_rejects_text_without_slide_structure(base_config, mocker):
+    client = TestClient(serve.create_app(config=base_config, demo=True))
+    r = client.post("/api/jobs", files={
+        "deck": ("notes.txt", b"just some prose,\nno headings at all\n", "text/plain"),
+    })
+    assert r.status_code == 400
+    assert "No slides found" in r.json()["detail"]
+    assert "'# '" in r.json()["detail"]
+
+
+def test_demo_accepts_qmd(base_config, mocker, monkeypatch):
+    """A Quarto (.qmd) file with front matter parses; front matter is dropped."""
+    seen: dict[str, int] = {}
+
+    def fake_run_job(job, deck_path, job_yaml, voice_path, photo_path,
+                     mode="video", notes=None):
+        assert job.workdir is not None
+        out = job.workdir / "output.mp4"
+        out.write_bytes(b"V")
+        job.status = "done"
+        job.output_path = out
+        seen["slides"] = len(serve._parse_deck_slides(deck_path))
+
+    mocker.patch.object(serve, "_run_job", side_effect=fake_run_job)
+    monkeypatch.setattr(
+        serve.ThreadPoolExecutor, "submit", lambda self, fn, *a, **k: fn(*a, **k)
+    )
+    client = TestClient(serve.create_app(config=base_config, demo=True))
+    qmd = b"---\ntitle: Deck\n---\n\n# One\n\n- a\n\n# Two\n\n- b\n"
+    r = client.post("/api/jobs", files={"deck": ("deck.qmd", qmd, "text/markdown")})
+    assert r.status_code == 200, r.text
+    assert seen["slides"] == 2
+
+
+def test_voice_name_maps_to_configured_stock_voice(base_config, tmp_path):
+    """A teaser voice choice overrides stored voice keys and resolves the
+    display name back to the configured file ('Emily' -> 'Emily.wav')."""
+    base = copy.deepcopy(base_config)
+    base["providers"]["tts"].update({
+        "provider": "voicebox",
+        "profile_id": "stored-id",
+        "voice": "old-stock.wav",
+        "reference_text": "stale",
+        "voice_choices": ["Emily.wav", "James.wav"],
+    })
+    workdir = tmp_path / "job"
+    workdir.mkdir()
+    cfg = yaml.safe_load(serve._build_job_config(
+        base, workdir, {"avatar": True, "voice_name": "Emily"}, None, None
+    ).read_text())
+    tts = cfg["providers"]["tts"]
+    assert tts["voice"] == "Emily.wav"
+    assert "profile_id" not in tts and "reference_text" not in tts
+
+
+def test_api_config_exposes_voices(base_config):
+    base_config["providers"]["tts"]["voice_choices"] = ["Emily.wav", "James.wav"]
+    client = TestClient(serve.create_app(config=base_config, demo=True))
+    assert client.get("/api/config").json()["voices"] == ["Emily", "James"]
+
+
+def test_avatar_image_endpoint(base_config):
+    from slide_stream.avatars import avatar_names
+
+    client = TestClient(serve.create_app(config=base_config, demo=True))
+    name = avatar_names()[0]
+    ok = client.get(f"/api/avatars/{name}")
+    assert ok.status_code == 200
+    assert ok.headers["content-type"].startswith("image/")
+    assert client.get("/api/avatars/not-a-mascot").status_code == 404
 
 
 def test_demo_drops_voice_and_photo_uploads(base_config, mocker, monkeypatch):

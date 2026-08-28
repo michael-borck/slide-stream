@@ -436,6 +436,25 @@ def _build_job_config(base: dict[str, Any], workdir: Path, options: dict[str, An
             tts.pop(key, None)
         tts["voice_sample"] = str(voice_path)
 
+    # A teaser voice choice ("Emily" from providers.tts.voice_choices) picks a
+    # STOCK server voice: override any stored voice keys, same as an uploaded
+    # sample would. The stem maps back to the configured filename ("Emily" ->
+    # "Emily.wav") so operators list plain display names in voice_choices.
+    if options.get("voice_name"):
+        tts = cfg["providers"]["tts"]
+        wanted = str(options["voice_name"])
+        choice = next(
+            (
+                str(c)
+                for c in (tts.get("voice_choices") or [])
+                if Path(str(c)).stem == wanted
+            ),
+            wanted,
+        )
+        for key in ("profile_id", "voice", "reference_text"):
+            tts.pop(key, None)
+        tts["voice"] = choice
+
     # Presenter: a built-in mascot wins over an uploaded file. The 'animate'
     # toggle then picks the engine per source:
     #   mascot  + animate -> the server's detector-free engine (wan-s2v/d-id)
@@ -855,11 +874,15 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
     def api_config() -> dict[str, Any]:
         # Public so the UI can bootstrap: token/demo, and the choices this
         # server actually supports (built-in avatars; accents only if the
-        # configured TTS provider offers them — currently gTTS).
+        # configured TTS provider offers them — currently gTTS; stock voice
+        # names from providers.tts.voice_choices for the teaser's picker).
         from .avatars import avatar_names
         from .providers.tts import GTTS_ACCENTS
 
-        tts_provider = base_config.get("providers", {}).get("tts", {}).get("provider")
+        tts_config = base_config.get("providers", {}).get("tts", {})
+        voices = [
+            Path(str(v)).stem for v in (tts_config.get("voice_choices") or [])
+        ]
         return {
             "auth_required": bool(auth_token) and not demo_mode,
             "demo": demo_mode,
@@ -870,10 +893,25 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
                 else None
             ),
             "avatars": avatar_names(),
-            "accents": list(GTTS_ACCENTS) if tts_provider == "gtts" else [],
+            "voices": voices,
+            "accents": list(GTTS_ACCENTS) if tts_config.get("provider") == "gtts" else [],
             # The UI offers a PowerPoint output; AI presenter notes need an LLM.
             "llm": base_config.get("providers", {}).get("llm", {}).get("provider", "none") != "none",
         }
+
+    @app.get("/api/avatars/{name}")
+    def avatar_image(name: str):
+        # Bundled mascot art for the teaser's thumbnail picker. Public: the
+        # images ship with the package and carry nothing sensitive, and an
+        # <img> tag cannot send the instance token.
+        from .avatars import avatar_names, resolve_avatar
+
+        if name not in avatar_names():
+            raise HTTPException(status_code=404, detail="Unknown avatar")
+        path = resolve_avatar(name)
+        if not path or not Path(path).is_file():
+            raise HTTPException(status_code=404, detail="No image")
+        return FileResponse(path)
 
     settings_path = Path.home() / ".slidestream.yaml"
 
@@ -948,14 +986,18 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
         reuse_avatar: str | None = Form(default=None),
         transition: str | None = Form(default=None),
         accent: str | None = Form(default=None),
+        voice_name: str | None = Form(default=None),
         output: str | None = Form(default=None),
         notes: str | None = Form(default=None),
         _: None = Depends(require_token),
     ) -> JSONResponse:
         _reap_expired_jobs()
         suffix = Path(deck.filename or "deck.md").suffix.lower()
-        if suffix not in (".md", ".pptx"):
-            raise HTTPException(status_code=400, detail="Deck must be .md or .pptx")
+        if suffix not in (".md", ".pptx", ".txt", ".qmd"):
+            raise HTTPException(
+                status_code=400,
+                detail="Deck must be .md, .pptx, .txt or .qmd",
+            )
         mode = "pptx" if (output or "video").lower() == "pptx" else "video"
         notes_mode = (notes or "").lower() if notes else None
         if notes_mode not in (None, "fill", "all"):
@@ -979,7 +1021,11 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
         workdir.mkdir(parents=True)
         demo_notice: str | None = None
         try:
-            deck_path = workdir / f"deck{suffix}"
+            # Text formats are parsed as markdown downstream, so they are
+            # stored under the canonical .md name whatever they uploaded as.
+            deck_path = workdir / (
+                "deck.pptx" if suffix == ".pptx" else "deck.md"
+            )
             await save_upload(deck, deck_path, MAX_DECK_BYTES, "Deck")
 
             if demo_mode:
@@ -988,6 +1034,13 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
                     # Fail closed: an unparseable deck must not dodge the cap.
                     raise HTTPException(
                         status_code=400, detail="Could not parse the deck"
+                    )
+                if n == 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="No slides found. Start each slide with a "
+                        "'# ' heading (or separate them with '---' lines), "
+                        "then upload again.",
                     )
                 if n > DEMO_MAX_SLIDES:
                     # Rather than reject bigger decks, render their first
@@ -1040,6 +1093,7 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
                 if reuse_avatar is not None else None,
                 "transition_seconds": transition,
                 "accent": accent,
+                "voice_name": voice_name,
             }
             # Desktop mode re-reads ~/.slidestream.yaml per job so Settings
             # edits apply without restarting the app.
@@ -1073,14 +1127,18 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
         avatar: str | None = Form(default=None),
         avatar_name: str | None = Form(default=None),
         accent: str | None = Form(default=None),
+        voice_name: str | None = Form(default=None),
         output: str | None = Form(default=None),
         _: None = Depends(require_token),
     ) -> JSONResponse:
         """Offline preflight (the 'doctor'): assess the deck + resolved config
         and return warnings + estimates as JSON, without rendering anything."""
         suffix = Path(deck.filename or "deck.md").suffix.lower()
-        if suffix not in (".md", ".pptx"):
-            raise HTTPException(status_code=400, detail="Deck must be .md or .pptx")
+        if suffix not in (".md", ".pptx", ".txt", ".qmd"):
+            raise HTTPException(
+                status_code=400,
+                detail="Deck must be .md, .pptx, .txt or .qmd",
+            )
 
         workdir = jobs_root / ("check_" + uuid.uuid4().hex)
         workdir.mkdir(parents=True)
@@ -1102,6 +1160,7 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
                 "avatar": (avatar or "true").lower() != "false",
                 "avatar_name": avatar_name,
                 "accent": accent,
+                "voice_name": voice_name,
             }
             job_base = load_config() if local_mode else base_config
             job_yaml = _build_job_config(job_base, workdir, options, voice_path, photo_path)
@@ -1584,6 +1643,14 @@ details summary:hover{color:var(--ink)}
 .mode strong{font-size:.95rem;display:block}
 .mode small{color:var(--muted)}
 .mode:has(input:checked){border-color:var(--accent);background:var(--accent-soft)}
+.picker{display:flex;gap:.6rem;flex-wrap:wrap;margin:.2rem 0 .3rem}
+.pick{flex:1;min-width:88px;border:1px solid var(--line);border-radius:10px;padding:.5rem .4rem;
+ margin:0;font-weight:400;display:flex;flex-direction:column;align-items:center;gap:.3rem;
+ cursor:pointer;text-align:center;font-size:.85rem}
+.pick:hover{border-color:var(--accent)}
+.pick img{width:64px;height:64px;object-fit:cover;border-radius:50%}
+.pick input{accent-color:var(--accent)}
+.pick:has(input:checked){border-color:var(--accent);background:var(--accent-soft)}
 .err{display:none;margin:.2rem 0 .6rem;border:1px solid rgba(220,38,38,.45);
  background:rgba(220,38,38,.07);color:#dc2626;border-radius:9px;padding:.55rem .8rem;font-size:.88rem}
 .dz{display:flex;align-items:center;justify-content:center;gap:.5rem;text-align:center;
@@ -1663,7 +1730,7 @@ footer a:hover{color:var(--accent)}
  <a href="https://slidestream.eduserver.au">learn more</a>
 </div>
 
-<div class="steps" id="steps">
+<div class="steps demo-hide" id="steps">
  <button data-step="deck" class="active"><span class="n">1</span>Deck</button>
  <button data-step="configure" disabled><span class="n">2</span>Configure</button>
  <button data-step="render" disabled><span class="n">3</span>Render</button>
@@ -1689,8 +1756,8 @@ footer a:hover{color:var(--accent)}
  <div class="opt">
   <h3>📄 Use an existing deck</h3>
   <p class="muted">Already have a deck? Upload it, review or tweak it below, then configure the video.</p>
-  <label for="deckFile">Deck file <span class="req">.md or .pptx</span></label>
-  <input id="deckFile" type="file" accept=".md,.pptx">
+  <label for="deckFile">Deck file <span class="req">.md, .pptx, .txt or .qmd</span></label>
+  <input id="deckFile" type="file" accept=".md,.pptx,.txt,.qmd">
   <button id="deckGo" class="ghost">Use this deck</button>
  </div>
  <div id="deckEditWrap" style="display:none">
@@ -1702,7 +1769,8 @@ footer a:hover{color:var(--accent)}
  <div id="deckPptxNote" style="display:none">
   <p>🖼️ <strong>PowerPoint deck loaded.</strong> Slides are read straight from your file — editing is disabled. To change the content, edit the deck in PowerPoint and re-upload.</p>
  </div>
- <div class="navbtns">
+ <div id="teaserConfig" style="display:none"></div>
+ <div class="navbtns" id="navDeck">
   <button id="deckNext" disabled>Save &amp; continue →</button>
  </div>
 </div>
@@ -1710,7 +1778,7 @@ footer a:hover{color:var(--accent)}
 <!-- STEP 3: CONFIGURE -->
 <div class="step" id="step-configure">
  <label>Make</label>
- <div class="modes">
+ <div class="modes" id="modesDiv">
   <label class="mode"><input type="radio" name="outmode" value="video_plain" checked>
    <span><strong>🎬 Narrated video — slides as they are</strong>
    <small>No AI images; your deck, narrated.</small></span></label>
@@ -1721,7 +1789,7 @@ footer a:hover{color:var(--accent)}
    <span><strong>📄 Enhanced slides only (.pptx)</strong>
    <small>Images + optional AI speaker notes added to your deck. No narration.</small></span></label>
  </div>
- <div id="imgWrap">
+ <div id="imgWrap" class="demo-hide">
   <label for="imageProvider">Slide images</label>
   <select id="imageProvider">
    <option value="">Use my configured provider</option>
@@ -1758,9 +1826,12 @@ footer a:hover{color:var(--accent)}
    <label for="voice">Your voice <span style="font-weight:400;color:var(--muted)">(a 10–30s sample clones it for this render only — mp3, wav, m4a, or even a video; we extract the audio)</span></label>
    <input id="voice" type="file" accept="audio/*,video/*">
   </div>
-  <label for="avatarName">Mascot presenter</label>
-  <select id="avatarName"><option value="">None</option></select>
+  <div id="mascotSelectWrap" class="demo-hide">
+   <label for="avatarName">Mascot presenter</label>
+   <select id="avatarName"><option value="">None</option></select>
+  </div>
   <p class="muted">A friendly character presents in the corner<span class="demo-hide"> — or upload a photo or short video of yourself below (desktop app)</span>.</p>
+  <div id="teaserPickers" style="display:none"></div>
   <div id="avatarSlidesWrap" class="demo-hide">
    <label for="avatarSlides">Show presenter on</label>
    <select id="avatarSlides">
@@ -1795,7 +1866,7 @@ footer a:hover{color:var(--accent)}
 <!-- STEP 4: RENDER -->
 <div class="step" id="step-render">
  <p class="muted" id="renderHint">Preview the plan, then render. The video uses the images your provider generates.</p>
- <button id="check" class="ghost">Check deck first</button>
+ <button id="check" class="ghost demo-hide">Check deck first</button>
  <button id="go">Create video</button>
  <p id="status"></p><p id="notice" class="muted"></p>
  <div id="progWrap" style="display:none">
@@ -1905,6 +1976,31 @@ fetch("/api/config").then(r=>r.json()).then(c=>{
    $("extrasSummary").textContent="Presenter";
    if(cfg.avatars&&cfg.avatars.length&&!$("avatarName").value)$("avatarName").value=cfg.avatars[0];
    $("notes").value="all";
+   // One-page teaser: outcome cards, presenter picker and Generate all sit
+   // under the upload — no stepper, no preflight, no provider dropdown.
+   $("teaserConfig").style.display="";
+   $("teaserConfig").append($("modesDiv"),$("extras"),$("navDeck"));
+   $("deckNext").textContent="Generate ⚡";
+   const pickers=$("teaserPickers");pickers.style.display="";
+   if(cfg.avatars&&cfg.avatars.length){
+    const mLab=document.createElement("label");mLab.textContent="Pick your presenter";
+    const grid=document.createElement("div");grid.className="picker";
+    cfg.avatars.forEach((a,i)=>{const lab=document.createElement("label");lab.className="pick";
+     lab.innerHTML='<input type="radio" name="teaserAvatar" value="'+a+'"'+(i===0?" checked":"")+
+      '><img src="/api/avatars/'+encodeURIComponent(a)+'" alt=""><span>'+a+"</span>";
+     lab.querySelector("input").onchange=()=>{$("avatarName").value=a};
+     grid.appendChild(lab)});
+    pickers.append(mLab,grid);
+   }
+   if((cfg.voices||[]).length){
+    const vLab=document.createElement("label");vLab.textContent="Pick a voice";
+    const grid=document.createElement("div");grid.className="picker";
+    cfg.voices.forEach((v,i)=>{const lab=document.createElement("label");lab.className="pick";
+     lab.innerHTML='<input type="radio" name="teaserVoice" value="'+v+'"'+(i===0?" checked":"")+
+      '><span>🎙️ '+v+"</span>";
+     grid.appendChild(lab)});
+    pickers.append(vLab,grid);
+   }
   }
   loadSettings();updateMode();
  }).catch(()=>{});
@@ -2047,15 +2143,20 @@ $("deckGo").onclick=async()=>{
    revealEditor({pptx:true,slideCount});
   }else{
    deck.markdown=await f.text();
+   if(!countSlides(deck.markdown)){
+    deck=null;
+    showErr("deck","No slides found — start each slide with a '# ' heading (or separate slides with '---' lines), then upload again.");
+    return}
    revealEditor({markdown:deck.markdown});
   }
  }catch(e){showErr("deck","Upload failed: "+e.message)}
  finally{$("deckGo").disabled=false}
 };
 
-// Save edits and continue to Configure (pptx: nothing to save).
+// Save edits and continue (desktop) — or jump straight to Generate (teaser).
 $("deckNext").onclick=async()=>{
  if(!deck){showErr("deck","Upload a deck — or draft one from a document — first.");return}
+ if(demo){reach("render");go("render");$("go").click();return}
  if(deck.isPptx){reach("configure");go("configure");return}
  const md=$("deckEditor").value;
  if(!countSlides(md)){$("deckCount").textContent="Add at least one '# ' heading first.";return}
@@ -2078,9 +2179,12 @@ async function renderOptions(fd){
  // Narration/presenter options only apply to video renders, not .pptx export.
  if(outMode()==="deck")return fd;
  if(demo){
-  // Teaser paths carry no PII: stock server voice, mascot presenter only.
+  // Teaser paths carry no PII: stock server voice (picked by name), mascot
+  // presenter only.
   fd.append("avatar","true");
   if($("avatarName").value)fd.append("avatar_name",$("avatarName").value);
+  const voice=document.querySelector('input[name="teaserVoice"]:checked');
+  if(voice)fd.append("voice_name",voice.value);
   return fd;
  }
  const voice=await fileOrSaved($("voice"),"voice",savedVoice);
