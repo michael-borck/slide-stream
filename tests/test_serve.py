@@ -309,6 +309,27 @@ def test_job_config_video_always_animates(base_config, tmp_path):
     assert cfg["providers"]["avatar"]["source_video"] == str(clip)
 
 
+def test_job_config_video_routes_away_from_wan_s2v(base_config, tmp_path):
+    """With the server engine wan-s2v (a still-image model), an uploaded
+    video presenter routes through the auto provider (video -> Wav2Lip)."""
+    import yaml
+
+    base_config["providers"]["avatar"] = {
+        "provider": "wan-s2v", "base_url": "https://comfy.example.org",
+    }
+    workdir = tmp_path / "job"
+    workdir.mkdir()
+    clip = workdir / "me.mp4"
+    clip.write_bytes(b"v")
+    cfg = yaml.safe_load(serve._build_job_config(
+        base_config, workdir, {"avatar": True}, None, clip
+    ).read_text())
+    av = cfg["providers"]["avatar"]
+    assert av["provider"] == "comfyui"
+    assert av["source_video"] == str(clip)
+    assert av["base_url"] == "https://comfy.example.org"  # same server kept
+
+
 def test_download_uses_per_job_token(base_config, tmp_path):
     """A browser download link (no header) authenticates via a per-job ?t=."""
     client = TestClient(serve.create_app(config=base_config, token="secret"))

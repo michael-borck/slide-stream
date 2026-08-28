@@ -471,6 +471,11 @@ def _build_job_config(base: dict[str, Any], workdir: Path, options: dict[str, An
         av["source"] = str(photo_path)
         if _source_kind(str(photo_path)) == "video":
             av["source_video"] = str(photo_path)
+            # A video clip needs the video engine (wan-s2v consumes a still
+            # image only), so route it through the auto provider on the same
+            # ComfyUI server: photo -> SadTalker, video -> Wav2Lip.
+            if engine == "wan-s2v":
+                av["provider"] = "comfyui"
         elif animate:
             av["source_image"] = str(photo_path)
         else:
