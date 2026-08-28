@@ -434,7 +434,7 @@ providers:
   #
   # No-GPU options (work on any mascot or your own image):
   #   provider: static             # a still image held in the corner
-  #   source: owl                  # a built-in name (teddy/panda/koala/robot/
+  #   source: owl                  # a built-in name (teddy/panda/robot/
   #                                # wizard/owl), or an image path
   # ...or a crude cartoon mouth-flap driven by the audio loudness:
   #   provider: puppet

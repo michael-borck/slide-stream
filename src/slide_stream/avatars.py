@@ -20,7 +20,6 @@ from pathlib import Path
 BUILTIN_AVATARS: dict[str, tuple[str, str]] = {
     "teddy": ("teddy.jpg", "Teddy bear"),
     "panda": ("panda.jpg", "Panda"),
-    "koala": ("koala.jpg", "Koala"),
     "robot": ("robot.jpg", "Friendly robot"),
     "wizard": ("wizard.jpg", "Wizard"),
     "owl": ("owl.jpg", "Owl professor"),
@@ -34,7 +33,6 @@ BUILTIN_AVATARS: dict[str, tuple[str, str]] = {
 MOUTH_BOXES: dict[str, tuple[float, float, float, float]] = {
     "teddy": (0.50, 0.63, 0.12, 0.06),
     "panda": (0.50, 0.60, 0.11, 0.06),
-    "koala": (0.50, 0.60, 0.11, 0.06),
     "robot": (0.50, 0.62, 0.14, 0.06),
     "wizard": (0.50, 0.60, 0.10, 0.05),
     "owl": (0.50, 0.55, 0.10, 0.06),
@@ -49,7 +47,6 @@ DEFAULT_MOUTH_BOX = (0.50, 0.60, 0.12, 0.06)
 AVATAR_PROMPTS: dict[str, str] = {
     "teddy": "a plush teddy bear talking, muzzle opening and closing to form words, warm soft lighting",
     "panda": "a panda talking, mouth opening and closing to form words, gentle lighting",
-    "koala": "a koala talking, mouth opening and closing to form words, soft lighting",
     "robot": "a friendly robot talking, jaw and mouth panel moving to form words, clean studio lighting",
     "wizard": "a wizard talking, mouth moving to form words beneath the beard, warm cinematic lighting",
     "owl": "an owl professor talking, beak opening and closing to articulate words, warm lighting",

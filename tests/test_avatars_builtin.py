@@ -33,7 +33,7 @@ def test_resolve_avatar_passthrough_and_case():
 
 
 def test_expected_characters_present():
-    for name in ("teddy", "panda", "koala", "robot", "wizard", "owl"):
+    for name in ("teddy", "panda", "robot", "wizard", "owl"):
         assert name in BUILTIN_AVATARS
 
 

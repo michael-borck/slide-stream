@@ -581,6 +581,22 @@ def _job_progress(job: Job) -> dict[str, Any] | None:
     return out or None
 
 
+def _job_warnings(job: Job) -> list[str]:
+    """Demo-safe warnings derived from the log — no raw text. Today: the
+    talking-head engine failed, so some slides render without their presenter
+    (slide + narration are unaffected)."""
+    log = job.log
+    if not log:
+        return []
+    if "avatar error" in log or "avatar generation failed" in log:
+        return [
+            "The presenter could not be animated on some slides (the "
+            "animation engine failed or timed out) — those slides render "
+            "with narration only."
+        ]
+    return []
+
+
 def _run_job(job: Job, deck_path: Path, job_yaml: Path,
              voice_path: Path | None, photo_path: Path | None,
              mode: str = "video", notes: str | None = None) -> None:
@@ -1204,6 +1220,9 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
             raise HTTPException(status_code=404, detail="Unknown job")
         out: dict[str, Any] = {"job_id": job.id, "status": job.status,
                                "error": job.error}
+        warnings = _job_warnings(job)
+        if warnings:
+            out["warnings"] = warnings
         if job.status in ("queued", "running"):
             # Demo-safe derived progress (slide x/y + whitelisted stage label)
             # and a heartbeat: seconds since the render last printed anything.
@@ -1753,13 +1772,12 @@ footer a:hover{color:var(--accent)}
   <input id="draftSlides" type="number" min="1" placeholder="e.g. 10">
   <button id="draftGo">Generate deck</button>
  </div>
- <div class="opt">
-  <h3>📄 Use an existing deck</h3>
-  <p class="muted">Already have a deck? Upload it, review or tweak it below, then configure the video.</p>
-  <label for="deckFile">Deck file <span class="req">.md, .pptx, .txt or .qmd</span></label>
-  <input id="deckFile" type="file" accept=".md,.pptx,.txt,.qmd">
-  <button id="deckGo" class="ghost">Use this deck</button>
- </div>
+  <div class="opt">
+   <h3>📄 Use an existing deck</h3>
+   <p class="muted">Already have a deck? Upload it, review or tweak it below, then configure the video.</p>
+   <label for="deckFile">Deck file <span class="req">.md, .pptx, .txt or .qmd</span></label>
+   <input id="deckFile" type="file" accept=".md,.pptx,.txt,.qmd">
+  </div>
  <div id="deckEditWrap" style="display:none">
   <label for="deckEditor">Review your deck <span style="font-weight:400;color:var(--muted)">(Markdown — one '# ' heading per slide; narration and images are built from this)</span></label>
   <textarea id="deckEditor" spellcheck="false"></textarea>
@@ -1831,7 +1849,9 @@ footer a:hover{color:var(--accent)}
    <select id="avatarName"><option value="">None</option></select>
   </div>
   <p class="muted">A friendly character presents in the corner<span class="demo-hide"> — or upload a photo or short video of yourself below (desktop app)</span>.</p>
-  <div id="teaserPickers" style="display:none"></div>
+  <details id="teaserPickers" style="display:none" open>
+   <summary>Presenter &amp; voice</summary>
+  </details>
   <div id="avatarSlidesWrap" class="demo-hide">
    <label for="avatarSlides">Show presenter on</label>
    <select id="avatarSlides">
@@ -2000,8 +2020,7 @@ fetch("/api/config").then(r=>r.json()).then(c=>{
       '><span>🎙️ '+v+"</span>";
      grid.appendChild(lab)});
     pickers.append(vLab,grid);
-   }
-  }
+   }  }
   loadSettings();updateMode();
  }).catch(()=>{});
 
@@ -2051,7 +2070,9 @@ function outMode(){const el=document.querySelector('input[name="outmode"]:checke
  return el?el.value:"video_plain"}
 function updateMode(){const m=outMode(),deck=m==="deck",rich=m==="video_rich";
  $("imgWrap").style.display=(deck||rich)?"":"none";
-  if(deck){ // only the image provider + notes apply to a .pptx export
+ // Teaser grouping: mascot + voice belong to the narration path only.
+ if(demo)$("teaserPickers").style.display=rich?"":"none";
+ if(deck){ // only the image provider + notes apply to a .pptx export
    $("deckOnlyNote").style.display="";
    $("notesWrap").style.display=demo?"none":"";
    $("videoOnly").style.display="none";
@@ -2122,11 +2143,11 @@ $("draftGo").onclick=async()=>{
  finally{$("draftGo").disabled=false;$("draftGo").textContent="Generate deck"}
 };
 
-$("deckGo").onclick=async()=>{
+// Loading starts as soon as a file is picked — no extra button.
+$("deckFile").onchange=async()=>{
  const f=$("deckFile").files[0];
- if(!f){showErr("deck","Pick a deck file first (or drop one onto the box above).");return}
+ if(!f)return;
  const isPptx=/\\.pptx$/i.test(f.name);
- $("deckGo").disabled=true;
  try{
   let slideCount=null;
   if(!demo){
@@ -2150,7 +2171,6 @@ $("deckGo").onclick=async()=>{
    revealEditor({markdown:deck.markdown});
   }
  }catch(e){showErr("deck","Upload failed: "+e.message)}
- finally{$("deckGo").disabled=false}
 };
 
 // Save edits and continue (desktop) — or jump straight to Generate (teaser).
@@ -2288,6 +2308,8 @@ async function poll(id,tok,kind){
   setTimeout(()=>poll(id,tok,kind),4000);return}
  $("log").textContent=j.log||"";$("log").classList.toggle("on",!!j.log);
  if(j.status==="done"){stopProgress();t0=0;$("go").disabled=false;hideProg();
+  if(j.warnings&&j.warnings.length){
+   $("notice").textContent="⚠️ "+j.warnings.join(" ");$("notice").style.display="block"}
   const lbl=kind==="pptx"?"download deck (.zip)":"download video";
   $("status").innerHTML='<span class="badge">done</span> <a href="/api/jobs/'+id+
    '/result?t='+encodeURIComponent(tok||j.token||"")+'" download>⬇ '+lbl+"</a>"+
