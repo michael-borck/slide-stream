@@ -237,7 +237,10 @@ def create(
             "--reuse-avatar/--no-reuse-avatar",
             help=(
                 "Render the avatar clip once and reuse it on every avatar slide "
-                "(one GPU render for the whole deck; lip-sync is approximate)."
+                "(one GPU render for the whole deck; lip-sync is approximate). "
+                "Power-user escape hatch — the web UI deliberately exposes only "
+                "per-slide renders, which keep lip-sync in phase as fragments "
+                "are stitched with --transition."
             ),
         ),
     ] = None,

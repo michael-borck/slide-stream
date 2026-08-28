@@ -401,9 +401,16 @@ def _build_job_config(base: dict[str, Any], workdir: Path, options: dict[str, An
         cfg["providers"]["images"]["provider"] = options["image_provider"]
     if options.get("accent"):
         cfg["providers"]["tts"]["accent"] = options["accent"]
-    # Presenter placement / reuse and slide transitions (from the wizard).
+    # Presenter placement / slide transitions (from the wizard).
     if options.get("avatar_slides"):
         cfg["settings"].setdefault("avatar", {})["slides"] = options["avatar_slides"]
+    # Whole-deck presenter reuse (settings.avatar.reuse_clip): one talking-head
+    # render looped over every slide instead of one per slide. The web UI no
+    # longer offers it — a slide deck is a sequence of discrete units, and the
+    # per-slide pipeline (fragment per slide, stitched with transition_seconds)
+    # keeps lip-sync in phase with each slide's narration. Still honoured here
+    # for YAML configs (settings.avatar.reuse_clip), the CLI (--reuse-avatar),
+    # and API clients that post reuse_avatar=true.
     if options.get("reuse_avatar") is not None:
         cfg["settings"].setdefault("avatar", {})["reuse_clip"] = bool(
             options["reuse_avatar"]
@@ -1661,10 +1668,8 @@ footer a:hover{color:var(--accent)}
    <option value="every:3">Every 3rd slide</option>
    <option value="none">No slides</option>
   </select>
-  <p class="muted">Narration always plays; the talking head appears only on these slides — handy when a slide's corner is busy, or to spare a slow GPU.</p>
-  <div class="row"><input id="reuseAvatar" type="checkbox"><label for="reuseAvatar">Render the presenter once and reuse it</label></div>
-  <p class="muted">One render for the whole deck instead of one per slide (much faster; lip-sync becomes approximate).</p>
-  <label for="photo">Your photo or short video <span style="font-weight:400;color:var(--muted)">(front-facing)</span></label>
+   <p class="muted">Narration always plays; the talking head appears only on these slides — handy when a slide's corner is busy, or to spare a slow GPU.</p>
+   <label for="photo">Your photo or short video <span style="font-weight:400;color:var(--muted)">(front-facing)</span></label>
   <input id="photo" type="file" accept="image/*,video/*">
   <p class="muted" id="remembered"></p>
   <div class="row"><input id="avatar" type="checkbox" checked><label for="avatar">Animate the presenter</label></div>
@@ -1931,7 +1936,6 @@ async function renderOptions(fd){
  fd.append("avatar",$("avatar").checked?"true":"false");
  if($("avatarName").value)fd.append("avatar_name",$("avatarName").value);
  if($("avatarSlides").value)fd.append("avatar_slides",$("avatarSlides").value);
- if($("reuseAvatar").checked)fd.append("reuse_avatar","true");
  if($("accent").value)fd.append("accent",$("accent").value);
  if($("secs").value)fd.append("narration_seconds",$("secs").value);
  if($("transition").value)fd.append("transition",$("transition").value);
