@@ -45,12 +45,15 @@ jobs:
       - name: Wait for the version on PyPI
         run: |
           V="${{ steps.ver.outputs.version }}"
-          for i in $(seq 1 18); do
-            if curl -fsS "https://pypi.org/pypi/slide-stream/$V/json" > /dev/null; then
-              echo "PyPI has $V"; exit 0
+          # Poll the SIMPLE index — the endpoint pip actually reads. The JSON
+          # API and /simple/ are cached separately by the CDN, and pip inside
+          # buildx hits a runner POP that can lag the JSON API by minutes.
+          for i in $(seq 1 40); do
+            if curl -fsS "https://pypi.org/simple/slide-stream/" | grep -q "slide_stream-$V"; then
+              echo "PyPI simple index has $V"; exit 0
             fi
-            echo "PyPI does not have $V yet (attempt $i/18); waiting 10s..."
-            sleep 10
+            echo "PyPI does not have $V yet (attempt $i/40); waiting 15s..."
+            sleep 15
           done
           echo "::error::slide-stream $V never appeared on PyPI — publish first (twine), then re-run."
           exit 1
