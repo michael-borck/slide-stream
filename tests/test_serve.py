@@ -378,6 +378,41 @@ def test_demo_mode_needs_no_token(base_config):
     assert client.get("/api/jobs/whatever").status_code == 404
 
 
+def test_demo_drops_voice_and_photo_uploads(base_config, mocker, monkeypatch):
+    """The teaser accepts no biometrics: voice/photo uploads are never
+    written to disk or passed to the render, even from API clients."""
+    seen: dict[str, object] = {}
+
+    def fake_run_job(job, deck_path, job_yaml, voice_path, photo_path,
+                     mode="video", notes=None):
+        assert job.workdir is not None
+        out = job.workdir / "output.mp4"
+        out.write_bytes(b"V")
+        job.status = "done"
+        job.output_path = out
+        seen["voice"] = voice_path
+        seen["photo"] = photo_path
+
+    mocker.patch.object(serve, "_run_job", side_effect=fake_run_job)
+    monkeypatch.setattr(
+        serve.ThreadPoolExecutor, "submit", lambda self, fn, *a, **k: fn(*a, **k)
+    )
+    client = TestClient(serve.create_app(config=base_config, demo=True))
+    r = client.post("/api/jobs", files={
+        "deck": ("deck.md", b"# One\n- a\n"),
+        "voice": ("me.wav", b"AUDIO", "audio/wav"),
+        "photo": ("me.png", _tiny_png(), "image/png"),
+    })
+    assert r.status_code == 200
+    assert seen["voice"] is None
+    assert seen["photo"] is None
+    # Nothing biometric ever landed in the job workdir.
+    workdir = serve._JOBS[r.json()["job_id"]].workdir
+    assert workdir is not None
+    assert not list(workdir.glob("voice*"))
+    assert not list(workdir.glob("photo*"))
+
+
 def test_demo_slide_cap_trims_to_five(base_config, mocker, monkeypatch):
     """A big deck is no longer rejected: the demo trims it to the first 5."""
     seen: dict[str, int] = {}
