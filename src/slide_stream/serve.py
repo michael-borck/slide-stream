@@ -1810,6 +1810,10 @@ details summary:hover{color:var(--ink)}
 .dz.has{border-style:solid;color:var(--ink)}
 .dz:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .elapsed{color:var(--muted);font-size:.85rem;font-weight:400;margin-left:.35rem}
+.spinner{display:inline-block;width:13px;height:13px;border:2px solid var(--accent);
+ border-right-color:transparent;border-radius:50%;animation:ssspin .8s linear infinite;
+ vertical-align:-2px;margin-right:.45rem}
+@keyframes ssspin{to{transform:rotate(360deg)}}
 #progWrap{margin:.5rem 0 .2rem}
 #progTrack{height:8px;border-radius:99px;background:var(--line);overflow:hidden}
 #progBar{height:100%;width:0;border-radius:99px;background:var(--accent);transition:width .6s}
@@ -2326,8 +2330,8 @@ $("draftGo").onclick=async()=>{
 // the Generate button, which stays disabled until the draft exists.
 function draftBegin(){
  $("draftStatus").style.display="";
- $("draftStatus").textContent=
-  "⏳ Drafting your deck — this usually takes 5–20 seconds…";
+ $("draftStatus").innerHTML=
+  '<span class="spinner"></span>Drafting your deck — thinking models can take up to a minute…';
  $("deckNext").disabled=true;
  $("deckNext").textContent="Waiting for the draft…";
 }
