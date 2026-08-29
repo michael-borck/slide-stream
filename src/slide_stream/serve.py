@@ -1876,9 +1876,18 @@ footer a:hover{color:var(--accent)}
 <!-- STEP 1: DECK (source + review/edit in one) -->
 <div class="step on" id="step-deck">
  <p class="err" id="err-deck" role="alert"></p>
+ <div class="modes" id="inputPicker" style="display:none">
+  <label class="mode"><input type="radio" name="inmode" value="idea" id="inmodeIdea">
+   <span><strong>✍️ Start from an idea</strong>
+   <small>Type a topic — AI drafts the slides</small></span></label>
+  <label class="mode" id="inmodeDoc"><input type="radio" name="inmode" value="doc">
+   <span><strong>📝 Draft from a document</strong>
+   <small>A PDF, Word doc or PPT becomes the slides</small></span></label>
+  <label class="mode"><input type="radio" name="inmode" value="upload">
+   <span><strong>📄 Use an existing deck</strong>
+   <small>.md, .pptx, .txt or .qmd — review and tweak below</small></span></label>
+ </div>
  <div class="opt" id="ideaOpt" style="display:none">
-  <h3>✍️ Start from an idea</h3>
-  <p class="muted">Type a topic or a few sentences — AI drafts the slides for you to review below.</p>
   <label for="ideaText">Your topic <span style="font-weight:400;color:var(--muted)">(an idea, a title, a rough outline)</span></label>
   <textarea id="ideaText" rows="3" placeholder="e.g. Why sleep matters for learning — for first-year students"></textarea>
   <div id="ideaSlidesWrap" class="demo-hide">
@@ -1889,8 +1898,6 @@ footer a:hover{color:var(--accent)}
   <p class="muted">AI-generated — review the facts before presenting.</p>
  </div>
  <div class="opt" id="draftOpt" style="display:none">
-  <h3>📝 Draft from a document</h3>
-  <p class="muted">Upload a PDF, Word doc, PowerPoint, or text file — AI turns it into a slide deck you can edit below.</p>
   <label for="draftFile">Document <span style="font-weight:400;color:var(--muted)">(.pdf, .docx, .pptx, .txt, .md)</span></label>
   <input id="draftFile" type="file" accept=".pdf,.docx,.pptx,.txt,.md">
   <label for="draftSlides">Number of slides <span style="font-weight:400;color:var(--muted)">(blank = let the AI decide)</span></label>
@@ -1898,12 +1905,10 @@ footer a:hover{color:var(--accent)}
   <button id="draftGo">Generate deck</button>
   <p class="muted">AI-generated — review the facts before presenting.</p>
  </div>
-  <div class="opt">
-   <h3>📄 Use an existing deck</h3>
-   <p class="muted">Already have a deck? Upload it, review or tweak it below, then configure the video.</p>
-   <label for="deckFile">Deck file <span class="req">.md, .pptx, .txt or .qmd</span></label>
-   <input id="deckFile" type="file" accept=".md,.pptx,.txt,.qmd">
-  </div>
+ <div class="opt" id="deckOpt" style="display:none">
+  <label for="deckFile">Deck file <span class="req">.md, .pptx, .txt or .qmd</span></label>
+  <input id="deckFile" type="file" accept=".md,.pptx,.txt,.qmd">
+ </div>
  <div id="deckEditWrap" style="display:none">
   <label for="deckEditor">Review your deck <span style="font-weight:400;color:var(--muted)">(Markdown — one '# ' heading per slide; narration and images are built from this)</span></label>
   <textarea id="deckEditor" spellcheck="false"></textarea>
@@ -2105,11 +2110,9 @@ fetch("/api/config").then(r=>r.json()).then(c=>{
     "Hosted demo: first "+c.limits.max_slides+" slides per video, "+
     c.limits.jobs_per_hour+" videos per hour, nothing stored.";}
  if(c.local)$("gear").style.display="inline-block";
-  // Draft needs an LLM and the (non-demo) project workflow.
-  canDraft=!demo&&!!c.llm;
-  if(canDraft)$("draftOpt").style.display="block";
-  // Idea → deck works anywhere an LLM is configured (teaser included).
-  if(c.llm)$("ideaOpt").style.display="block";
+ // Draft needs an LLM and the (non-demo) project workflow.
+ canDraft=!demo&&!!c.llm;
+ setupInputModes();
   (c.avatars||[]).forEach(a=>{const o=document.createElement("option");o.value=a;o.textContent=a;$("avatarName").appendChild(o)});
   if((c.accents||[]).length){$("accentRow").style.display="block";$("accent").style.display="block";
    c.accents.forEach(a=>{const o=document.createElement("option");o.value=a;o.textContent=a;$("accent").appendChild(o)})}
@@ -2152,7 +2155,7 @@ fetch("/api/config").then(r=>r.json()).then(c=>{
     pickers.append(vLab,grid);
    }  }
   loadSettings();updateMode();
- }).catch(()=>{});
+ }).catch(()=>{setInputMode("upload");}); // config failed: still let people upload
 
 // --- Step navigation --------------------------------------------------------
 const ORDER=["deck","configure","render"];
@@ -2232,6 +2235,29 @@ async function ensureProject(){
 }
 
 // --- Deck step: load a deck, review it, continue -----------------------------
+// --- Deck input modes (exclusive: idea / document / file) ---------------------
+// One chooser, one visible input set — an idea never "modifies" an upload.
+function setInputMode(m){
+ $("ideaOpt").style.display=m==="idea"?"":"none";
+ $("draftOpt").style.display=m==="doc"?"":"none";
+ $("deckOpt").style.display=m==="upload"?"":"none";
+}
+function setupInputModes(){
+ const picker=$("inputPicker");
+ const hasLLM=!!cfg.llm, canDoc=canDraft; // doc drafting needs the project workflow
+ $("inmodeDoc").style.display=canDoc?"":"none";
+ document.getElementById("inmodeIdea").closest(".mode").style.display=hasLLM?"":"none";
+ if(!hasLLM&&!canDoc){ // only one path exists: skip the chooser entirely
+  picker.style.display="none";setInputMode("upload");return}
+ picker.style.display="";
+ const def=hasLLM?"idea":(canDoc?"doc":"upload");
+ const el=document.querySelector('input[name="inmode"][value="'+def+'"]');
+ if(el)el.checked=true;
+ setInputMode(def);
+}
+document.querySelectorAll('input[name="inmode"]').forEach(r=>{
+ r.onchange=()=>setInputMode(r.value)});
+
 function revealEditor({pptx=false,markdown="",slideCount=null}={}){
  const ed=$("deckEditor");
  if(pptx){
