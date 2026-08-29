@@ -1742,11 +1742,13 @@ footer a:hover{color:var(--accent)}
 </div></div>
 
 <div id="demo" class="banner">
- <strong>Hosted demo</strong> — <span id="limits">limited</span>, nothing stored.
- Want unlimited renders, drafting from documents, your own AI providers and full privacy?
+ <strong>Want more?</strong> The free <strong>desktop app</strong> unlocks
+ <strong>your own cloned voice</strong>, <strong>your own headshot or video as the presenter</strong>,
+ unlimited slides, drafting from documents, your own AI providers — with full privacy.
  <a id="dlBanner" href="https://github.com/michael-borck/slide-stream/releases/latest">⬇ Get the desktop app</a> &middot;
  <code>pip install slide-stream</code> &middot;
  <a href="https://slidestream.eduserver.au">learn more</a>
+ <span class="muted" id="limits" style="display:block"></span>
 </div>
 
 <div class="steps demo-hide" id="steps">
@@ -1974,9 +1976,10 @@ function dropzone(id,hint){const inp=$(id);if(!inp)return;
 fetch("/api/config").then(r=>r.json()).then(c=>{
  cfg=c;demo=!!c.demo;
  if(c.auth_required)$("tokrow").style.display="block";
- if(c.demo){$("demo").style.display="block";
-  if(c.limits)$("limits").textContent=
-   "renders the first "+c.limits.max_slides+" slides per video, "+c.limits.jobs_per_hour+" videos per hour";}
+  if(c.demo){$("demo").style.display="block";
+   if(c.limits)$("limits").textContent=
+    "Hosted demo: first "+c.limits.max_slides+" slides per video, "+
+    c.limits.jobs_per_hour+" videos per hour, nothing stored.";}
  if(c.local)$("gear").style.display="inline-block";
  // Draft needs an LLM and the (non-demo) project workflow.
  canDraft=!demo&&!!c.llm;
@@ -1988,20 +1991,21 @@ fetch("/api/config").then(r=>r.json()).then(c=>{
    document.querySelectorAll(".demo-hide").forEach(e=>e.style.display="none");
    const radio=v=>document.querySelector('input[name="outmode"][value="'+v+'"]');
    radio("video_plain").closest(".mode").style.display="none";
-   radio("video_rich").checked=true;
-   radio("video_rich").closest(".mode").querySelector("span").innerHTML=
-    "<strong>🎬 Talking-mascot video</strong><small>Pick a character below — it narrates your slides, with AI images.</small>";
+   // Enhance first, mascot second — clicking the mascot card reveals the
+   // presenter accordion right below it.
+   radio("deck").checked=true;
+   const modes=$("modesDiv");
+   modes.append(radio("deck").closest(".mode"), radio("video_rich").closest(".mode"));
    radio("deck").closest(".mode").querySelector("span").innerHTML=
-    "<strong>🖼️ Enhanced slides (.pptx)</strong><small>AI images + freshly written speaker notes. No narration.</small>";
-   $("extrasSummary").textContent="Presenter";
-   if(cfg.avatars&&cfg.avatars.length&&!$("avatarName").value)$("avatarName").value=cfg.avatars[0];
-   $("notes").value="all";
-   // One-page teaser: outcome cards, presenter picker and Generate all sit
-   // under the upload — no stepper, no preflight, no provider dropdown.
+    "<strong>🖼️ Enhance the slides (.pptx)</strong><small>AI images + freshly written speaker notes. No narration.</small>";
+   radio("video_rich").closest(".mode").querySelector("span").innerHTML=
+    "<strong>🎬 Talking-mascot video</strong><small>Narrated by a character you pick below, with AI images.</small>";
    $("teaserConfig").style.display="";
-   $("teaserConfig").append($("modesDiv"),$("extras"),$("navDeck"));
+   $("teaserConfig").append($("modesDiv"),$("teaserPickers"),$("navDeck"));
+   $("extras").style.display="none"; // the old presenter wrapper is redundant here
    $("deckNext").textContent="Generate ⚡";
-   const pickers=$("teaserPickers");pickers.style.display="";
+   if(cfg.avatars&&cfg.avatars.length)$("avatarName").value=cfg.avatars[0];
+   const pickers=$("teaserPickers");
    if(cfg.avatars&&cfg.avatars.length){
     const mLab=document.createElement("label");mLab.textContent="Pick your presenter";
     const grid=document.createElement("div");grid.className="picker";
