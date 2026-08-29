@@ -1,5 +1,5 @@
 """Slide Stream - AI-powered tool for creating video presentations from Markdown."""
 
-__version__ = "2.15.6"
+__version__ = "2.15.7"
 __author__ = "Michael Borck"
 __email__ = "michael.borck@curtin.edu.au"
