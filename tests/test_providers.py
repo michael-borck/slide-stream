@@ -1674,3 +1674,46 @@ def test_swarmui_headers_tolerate_bearer_prefix():
     assert plain._headers() == {"Authorization": "Bearer abc123"}
     empty = SwarmUIImageProvider({"providers": {"images": {}}})
     assert empty._headers() == {}
+
+
+def test_swarmui_payload_blocks_text_and_supports_style(config, tmp_path, mocker):
+    """Prompts forbid baked-in text; negativeprompt reinforces it; the
+    optional style switch swaps the directive."""
+    from slide_stream.providers.images import SwarmUIImageProvider
+
+    config["providers"]["images"] = {
+        "provider": "swarmui",
+        "base_url": "https://image.example.org",
+        "model": "juggernautXL_v9",
+    }
+    session_resp = mocker.MagicMock()
+    session_resp.json.return_value = {"session_id": "s"}
+    gen_resp = mocker.MagicMock()
+    gen_resp.json.return_value = {"images": ["View/local/0.png"]}
+    img_resp = mocker.MagicMock(content=b"\x89PNG")
+    mocker.patch(
+        "slide_stream.providers.images.requests.post",
+        side_effect=[session_resp, gen_resp],
+    )
+    mocker.patch("slide_stream.providers.images.requests.get", return_value=img_resp)
+
+    out = tmp_path / "img.png"
+    post = mocker.patch(
+        "slide_stream.providers.images.requests.post",
+        side_effect=[session_resp, gen_resp, session_resp, gen_resp],
+    )
+    mocker.patch("slide_stream.providers.images.requests.get", return_value=img_resp)
+
+    provider = SwarmUIImageProvider(config)
+    provider.generate_image("a red bicycle", str(out))
+    body = post.call_args_list[1][1]["json"]
+    assert "No text, words, letters" in body["prompt"]
+    assert "text" in body["negativeprompt"]
+    assert "cartoon" not in body["prompt"].lower()
+
+    # Cartoon style swaps the directive.
+    config["providers"]["images"]["style"] = "cartoon"
+    provider = SwarmUIImageProvider(config)
+    provider.generate_image("a red bicycle", str(out))
+    body = post.call_args_list[-1][1]["json"]
+    assert "cartoon" in body["prompt"].lower()

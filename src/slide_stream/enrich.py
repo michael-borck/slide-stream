@@ -182,25 +182,42 @@ def _build_prompts(missing: list[dict[str, Any]]) -> str:
 
 
 def _write_pptx(slides: list[dict[str, Any]], images_dir: Path, out_path: Path) -> None:
-    """Build a PowerPoint deck with one image slide per entry."""
+    """Build a PowerPoint deck that stays EDITABLE: the educator's title and
+    bullet points are real text; the generated image sits beside them as a
+    complement. Speaker notes (from --notes) ride along as usual."""
     from pptx import Presentation
-    from pptx.util import Emu, Inches
+    from pptx.util import Inches, Pt
 
     prs = Presentation()
-    # Default deck is 10" x 7.5"; fall back to that if the stubs report None.
-    width = Emu(prs.slide_width) if prs.slide_width else Inches(10)
     blank = prs.slide_layouts[6]
-    content_width = Emu(width - Inches(1))
-    image_width = Emu(width - Inches(2))
     for slide in slides:
         s = prs.slides.add_slide(blank)
-        # Title textbox across the top.
-        title_box = s.shapes.add_textbox(Inches(0.5), Inches(0.3), content_width, Inches(1))
-        title_box.text_frame.text = slide["title"] or f"Slide {slide['index']}"
-        # Image centered below the title, scaled to fit.
+        # Title across the top — real, editable text.
+        title_box = s.shapes.add_textbox(Inches(0.5), Inches(0.3), Inches(9), Inches(0.9))
+        tf = title_box.text_frame
+        tf.word_wrap = True
+        tf.text = slide["title"] or f"Slide {slide['index']}"
+        tf.paragraphs[0].runs[0].font.size = Pt(30)
+
+        # The educator's bullet points — the core of the slide — as editable
+        # text on the left.
+        bullets_box = s.shapes.add_textbox(Inches(0.5), Inches(1.5), Inches(4.6), Inches(5.4))
+        btf = bullets_box.text_frame
+        btf.word_wrap = True
+        content = [str(c).strip() for c in slide.get("content", []) if str(c).strip()]
+        for j, bullet in enumerate(content):
+            para = btf.paragraphs[0] if j == 0 else btf.add_paragraph()
+            para.text = f"• {bullet}"
+            para.font.size = Pt(18)
+            if j:
+                para.space_before = Pt(8)
+
+        # Generated image on the right as a complement; width fixed, height
+        # keeps the source aspect ratio.
         img = images_dir / slide["image"]
         if img.is_file():
-            s.shapes.add_picture(str(img), Inches(1), Inches(1.5), width=image_width)
+            s.shapes.add_picture(str(img), Inches(5.4), Inches(1.9), width=Inches(4.1))
+
         # Presenter notes (added by --notes). create reads these back as the
         # narration source, so an enriched .pptx round-trips into a video.
         note = str(slide.get("notes", "")).strip()

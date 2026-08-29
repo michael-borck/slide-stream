@@ -8,7 +8,7 @@ from typer.testing import CliRunner
 
 from slide_stream.cli import app
 from slide_stream.config_loader import DEFAULT_CONFIG
-from slide_stream.enrich import enrich_deck
+from slide_stream.enrich import _write_pptx, enrich_deck
 from slide_stream.providers.factory import ProviderFactory
 from slide_stream.providers.images import LocalImageProvider
 from slide_stream.scan import apply_renames, slugify
@@ -314,3 +314,42 @@ def test_scan_cli_dry_run_no_key_fails_cleanly(tmp_path, monkeypatch):
 
     result = runner.invoke(app, ["scan", str(tmp_path), "--provider", "claude"])
     assert result.exit_code == 1
+
+
+def test_write_pptx_keeps_slides_editable(tmp_path):
+    """Titles and bullets are real text (educators must be able to edit);
+    the generated image rides along as a complement; notes round-trip."""
+    import io
+
+    from pptx import Presentation
+
+
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+    buf = io.BytesIO()
+    Image.new("RGB", (1024, 576), "red").save(buf, format="PNG")
+    (images_dir / "slide_1.png").write_bytes(buf.getvalue())
+
+    slides = [{
+        "index": 1,
+        "title": "Photosynthesis",
+        "content": ["Light reactions in the thylakoid", "Calvin cycle in the stroma"],
+        "image": "slide_1.png",
+        "matched": True,
+        "notes": "Speak about chlorophyll.",
+    }]
+    out = tmp_path / "deck.pptx"
+    _write_pptx(slides, images_dir, out)
+
+    prs = Presentation(str(out))
+    s = prs.slides[0]
+    texts = [
+        sh.text_frame.text  # type: ignore[attr-defined,union-attr]
+        for sh in s.shapes
+        if sh.has_text_frame
+    ]
+    assert any("Photosynthesis" in t for t in texts)
+    assert any("• Light reactions in the thylakoid" in t for t in texts)
+    assert any(sh.shape_type == 13 for sh in s.shapes)  # PICTURE
+    notes_tf = s.notes_slide.notes_text_frame
+    assert notes_tf is not None and notes_tf.text == "Speak about chlorophyll."

@@ -265,10 +265,20 @@ class SwarmUIImageProvider(ImageProvider):
             session_id = session.json()["session_id"]
 
             # 2. Generate. Default to a 16:9 size the video pipeline can scale.
+            # Images are slide artwork: the educator's text is added as real,
+            # editable text elsewhere, so the model must not bake any in.
+            # Style: 'photo' (default) or 'cartoon' via providers.images.style.
+            style = str(settings.get("style") or "photo").lower()
+            style_directive = (
+                "Flat cartoon illustration: bold clean outlines, vibrant "
+                "colors, simple storybook style."
+                if style == "cartoon"
+                else "A professional, clean image suitable for a business "
+                "presentation."
+            )
             prompt = (
-                f"A professional, clean image for a presentation slide about: "
-                f"{query}. High quality, suitable for business presentation, "
-                f"no text overlay."
+                f"{style_directive} No text, words, letters, or numbers in "
+                f"the image. Topic: {query}."
             )
             payload: dict[str, Any] = {
                 "session_id": session_id,
@@ -277,6 +287,10 @@ class SwarmUIImageProvider(ImageProvider):
                 "steps": int(settings.get("steps") or 20),
                 "width": int(settings.get("width") or 1024),
                 "height": int(settings.get("height") or 576),
+                "negativeprompt": (
+                    "text, words, letters, numbers, captions, labels, "
+                    "watermark, signature, typography, logo"
+                ),
             }
             if settings.get("model"):
                 payload["model"] = settings["model"]
