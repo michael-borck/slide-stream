@@ -1799,6 +1799,7 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
 INDEX_HTML = """<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>SlideStream — slides in, narrated video out</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%AC%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,500;0,600;1,500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -2241,6 +2242,10 @@ fetch("/api/config").then(r=>r.json()).then(c=>{
    $("teaserConfig").append($("modesDiv"),$("teaserPickers"),$("navDeck"));
    $("extras").style.display="none"; // the old presenter wrapper is redundant here
    $("deckNext").textContent="Generate ⚡";
+   // The old configure page is a leftover in the teaser — the render step's
+   // Back returns to the deck page instead.
+   const back=document.querySelector('#step-render [data-goto="configure"]');
+   if(back){back.dataset.goto="deck";back.textContent="← Edit deck / start over"}
    if(cfg.avatars&&cfg.avatars.length)$("avatarName").value=cfg.avatars[0];
    const pickers=$("teaserPickers");
    if(cfg.avatars&&cfg.avatars.length){
@@ -2415,7 +2420,7 @@ $("draftGo").onclick=async()=>{
 function draftBegin(){
  $("draftStatus").style.display="";
  $("draftStatus").innerHTML=
-  '<span class="spinner"></span>Drafting your deck — thinking models can take up to a minute…';
+  '<span class="spinner"></span>Drafting your deck — this can take a little while…';
  $("deckNext").disabled=true;
  $("deckNext").textContent="Waiting for the draft…";
 }
@@ -2547,7 +2552,14 @@ $("check").onclick=async()=>{
  finally{$("check").disabled=false}};
 
 // --- Render / export (one submit, three output modes) ------------------------
+function startOver(){ // back to step 1, deck kept, last job's panel cleared
+ finishedJob=false;$("status").textContent="";$("notice").textContent="";
+ hideProg();$("log").textContent="";$("logWrap").style.display="none";
+ $("report").classList.remove("on");$("thumbs").innerHTML="";
+ reach("deck");go("deck");updateMode()}
+
 $("go").onclick=async()=>{
+ if(finishedJob){startOver();return}
  const m=outMode(),deckOut=m==="deck";
  $("go").disabled=true; // no double submits while a job is in flight
  $("status").textContent="Uploading…";$("log").textContent="";$("report").classList.remove("on");
@@ -2588,6 +2600,8 @@ $("go").onclick=async()=>{
 // Renders take minutes (an AI image + narration per slide), so show that
 // time is passing and roughly where the job tends to be. The hints are
 // heuristics — the server only reports a coarse status.
+let finishedJob=false; // done-state: the primary button becomes "Start over"
+
 const STAGES=[[0,"waiting for a worker slot…"],
  [8,"generating slides & narration…"],
  [45,"still working — AI images and talking heads take a while…"],
@@ -2616,12 +2630,16 @@ async function poll(id,tok,kind){
  $("log").textContent=j.log||"";
  $("trace").innerHTML=hasTrace?j.trace.map(t=>"<div>"+esc(t)+"</div>").join(""):"";
  if(j.status==="done"){stopProgress();t0=0;$("go").disabled=false;hideProg();
+  finishedJob=true;$("go").textContent="↻ Start over";
   if(j.warnings&&j.warnings.length){
    $("notice").textContent="⚠️ "+j.warnings.join(" ");$("notice").style.display="block"}
   const lbl=kind==="pptx"?"download deck (.zip)":"download video";
   $("status").innerHTML='<span class="badge">done</span> <a href="/api/jobs/'+id+
    '/result?t='+encodeURIComponent(tok||j.token||"")+'" download>⬇ '+lbl+"</a>"+
    (demo?' <span class="elapsed">this link works once</span>':"");
+  if(demo){const a=$("status").querySelector("a");
+   if(a)a.onclick=()=>{$("status").innerHTML=
+    '<span class="badge">done</span> <span class="elapsed">downloaded — the job is wiped (demo)</span>'}}
   if(kind==="pptx"&&!demo&&projectId)showThumbs();return}
  if(j.status==="error"){stopProgress();t0=0;$("go").disabled=false;hideProg();
   $("status").textContent="Failed: "+(j.error||"see log");return}
