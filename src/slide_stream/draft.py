@@ -116,6 +116,29 @@ def build_draft_prompt(source_text: str, slides: int | None) -> str:
     )
 
 
+def build_topic_prompt(topic: str, slides: int | None) -> str:
+    """Build the LLM prompt that turns a short idea/topic into a deck."""
+    count = f"Create exactly {slides} slides." if slides else "Create about 5 slides."
+    return (
+        "You are creating a presentation outline from a topic or short "
+        f"description. {count}\n\n"
+        "Output ONLY Markdown in exactly this format, and nothing else:\n\n"
+        "# First slide title\n\n- A concise point\n- Another point\n\n"
+        "# Second slide title\n\n- A concise point\n\n"
+        "Rules:\n"
+        "- Every slide starts with a single '# ' heading (its title).\n"
+        "- 2–5 short bullet points per slide; no sub-headings, no images, no "
+        "speaker notes.\n"
+        "- Bullets are spoken narration, not table-of-contents entries: state "
+        "the idea, don't say 'Introduction' or 'Overview'.\n"
+        "- Build a logical arc — hook, substance, takeaway.\n"
+        "- No preamble, no commentary, and do NOT wrap the output in code "
+        "fences.\n\n"
+        "TOPIC:\n\n"
+        f"{topic.strip()}"
+    )
+
+
 def clean_llm_markdown(text: str) -> str:
     """Strip a ```/```markdown code fence the model may wrap the deck in."""
     stripped = text.strip()

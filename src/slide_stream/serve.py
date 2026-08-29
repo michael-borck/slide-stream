@@ -743,6 +743,54 @@ def _do_draft(source_path: Path, slides: int | None, provider: str,
     return deck_markdown.rstrip() + "\n"
 
 
+def _do_topic_draft(topic: str, slides: int | None, provider: str,
+                    model: str | None, base_url: str | None) -> str:
+    """Draft a deck from a typed idea/topic (blocking: offload to a
+    threadpool). Raises DraftError / ValueError with a user-facing message."""
+    import io
+
+    from rich.console import Console
+
+    from .draft import (
+        DraftError,
+        build_topic_prompt,
+        clean_llm_markdown,
+        validate_deck_markdown,
+    )
+    from .llm import get_llm_client, query_llm
+
+    client = get_llm_client(provider, base_url=base_url)
+    quiet_console = Console(file=io.StringIO())
+    result = query_llm(
+        client, provider, build_topic_prompt(topic, slides),
+        quiet_console, model,
+    )
+    if not result:
+        raise DraftError("The LLM returned no content. Try again.")
+    deck_markdown = clean_llm_markdown(result)
+    validate_deck_markdown(deck_markdown)
+    return deck_markdown.rstrip() + "\n"
+
+
+# Drafting from a topic is cheap relative to a render, but it is still an LLM
+# call on an open endpoint — give it its own per-IP budget.
+DEMO_DRAFTS_PER_HOUR = 10
+_DEMO_DRAFT_HITS: dict[str, list[float]] = {}
+
+
+def _demo_draft_rate_ok(ip: str, now: float | None = None) -> bool:
+    """True if this IP may start another topic draft (and record the hit)."""
+    t = now if now is not None else time.time()
+    with _LOCK:
+        hits = [h for h in _DEMO_DRAFT_HITS.get(ip, []) if t - h < 3600]
+        if len(hits) >= DEMO_DRAFTS_PER_HOUR:
+            _DEMO_DRAFT_HITS[ip] = hits
+            return False
+        hits.append(t)
+        _DEMO_DRAFT_HITS[ip] = hits
+        return True
+
+
 SETTINGS_TEMPLATE = """\
 # SlideStream settings (~/.slidestream.yaml)
 # Uncomment and edit what you use. Keys can reference environment variables
@@ -1211,6 +1259,69 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
             })
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
+
+    @app.post("/api/draft-deck")
+    async def draft_deck_from_topic(
+        request: Request,
+        _: None = Depends(require_token),
+    ) -> JSONResponse:
+        """Draft a deck from a typed idea/topic. Stateless (no project): the
+        caller decides what to do with the Markdown — the teaser posts it
+        straight back as a job deck."""
+        body = await request.json()
+        topic = str(body.get("topic", "")).strip()
+        if len(topic) < 3:
+            raise HTTPException(
+                status_code=400, detail="Give the topic a few more words."
+            )
+        if len(topic) > 2000:
+            raise HTTPException(
+                status_code=400, detail="Topic is too long (2000 characters max)."
+            )
+        slides: int | None = None
+        raw_slides = body.get("slides")
+        if raw_slides not in (None, ""):
+            try:
+                slides = int(raw_slides)
+            except (TypeError, ValueError):
+                raise HTTPException(
+                    status_code=400, detail="slides must be a number"
+                )
+            if not 1 <= slides <= 20:
+                raise HTTPException(
+                    status_code=400, detail="slides must be between 1 and 20"
+                )
+        if demo_mode:
+            slides = min(slides or DEMO_MAX_SLIDES, DEMO_MAX_SLIDES)
+            if not _demo_draft_rate_ok(client_ip(request)):
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Demo limit: {DEMO_DRAFTS_PER_HOUR} drafts per "
+                    "hour. Install locally for unlimited drafting: "
+                    "pip install slide-stream",
+                )
+        job_base = load_config() if local_mode else base_config
+        llm = job_base.get("providers", {}).get("llm", {})
+        provider = llm.get("provider", "none")
+        if provider == "none":
+            raise HTTPException(
+                status_code=400,
+                detail="Drafting needs an LLM provider configured in Settings "
+                "(e.g. claude, openai, gemini).",
+            )
+
+        from starlette.concurrency import run_in_threadpool
+
+        from .draft import DraftError
+
+        try:
+            markdown = await run_in_threadpool(
+                _do_topic_draft, topic, slides, provider, llm.get("model"),
+                llm.get("base_url"),
+            )
+        except (DraftError, ValueError, ImportError) as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return JSONResponse({"markdown": markdown, "slides": slides})
 
     @app.get("/api/jobs/{job_id}")
     def job_status(job_id: str, _: None = Depends(require_token)) -> dict[str, Any]:
@@ -1765,14 +1876,27 @@ footer a:hover{color:var(--accent)}
 <!-- STEP 1: DECK (source + review/edit in one) -->
 <div class="step on" id="step-deck">
  <p class="err" id="err-deck" role="alert"></p>
+ <div class="opt" id="ideaOpt" style="display:none">
+  <h3>✍️ Start from an idea</h3>
+  <p class="muted">Type a topic or a few sentences — AI drafts the slides for you to review below.</p>
+  <label for="ideaText">Your topic <span style="font-weight:400;color:var(--muted)">(an idea, a title, a rough outline)</span></label>
+  <textarea id="ideaText" rows="3" placeholder="e.g. Why sleep matters for learning — for first-year students"></textarea>
+  <div id="ideaSlidesWrap" class="demo-hide">
+   <label for="ideaSlides">Number of slides <span style="font-weight:400;color:var(--muted)">(blank = let the AI decide)</span></label>
+   <input id="ideaSlides" type="number" min="1" max="20" placeholder="e.g. 8">
+  </div>
+  <button id="ideaGo">Draft the deck</button>
+  <p class="muted">AI-generated — review the facts before presenting.</p>
+ </div>
  <div class="opt" id="draftOpt" style="display:none">
-  <h3>✍️ Draft from a document</h3>
+  <h3>📝 Draft from a document</h3>
   <p class="muted">Upload a PDF, Word doc, PowerPoint, or text file — AI turns it into a slide deck you can edit below.</p>
   <label for="draftFile">Document <span style="font-weight:400;color:var(--muted)">(.pdf, .docx, .pptx, .txt, .md)</span></label>
   <input id="draftFile" type="file" accept=".pdf,.docx,.pptx,.txt,.md">
   <label for="draftSlides">Number of slides <span style="font-weight:400;color:var(--muted)">(blank = let the AI decide)</span></label>
   <input id="draftSlides" type="number" min="1" placeholder="e.g. 10">
   <button id="draftGo">Generate deck</button>
+  <p class="muted">AI-generated — review the facts before presenting.</p>
  </div>
   <div class="opt">
    <h3>📄 Use an existing deck</h3>
@@ -1981,9 +2105,11 @@ fetch("/api/config").then(r=>r.json()).then(c=>{
     "Hosted demo: first "+c.limits.max_slides+" slides per video, "+
     c.limits.jobs_per_hour+" videos per hour, nothing stored.";}
  if(c.local)$("gear").style.display="inline-block";
- // Draft needs an LLM and the (non-demo) project workflow.
- canDraft=!demo&&!!c.llm;
+  // Draft needs an LLM and the (non-demo) project workflow.
+  canDraft=!demo&&!!c.llm;
   if(canDraft)$("draftOpt").style.display="block";
+  // Idea → deck works anywhere an LLM is configured (teaser included).
+  if(c.llm)$("ideaOpt").style.display="block";
   (c.avatars||[]).forEach(a=>{const o=document.createElement("option");o.value=a;o.textContent=a;$("avatarName").appendChild(o)});
   if((c.accents||[]).length){$("accentRow").style.display="block";$("accent").style.display="block";
    c.accents.forEach(a=>{const o=document.createElement("option");o.value=a;o.textContent=a;$("accent").appendChild(o)})}
@@ -2145,6 +2271,27 @@ $("draftGo").onclick=async()=>{
   revealEditor({markdown:j.markdown});
  }catch(e){showErr("deck","Draft failed: "+e.message)}
  finally{$("draftGo").disabled=false;$("draftGo").textContent="Generate deck"}
+};
+
+$("ideaGo").onclick=async()=>{
+ const topic=$("ideaText").value.trim();
+ if(topic.length<3){showErr("deck","Type a topic or a few sentences first.");return}
+ $("ideaGo").disabled=true;$("ideaGo").textContent="Drafting…";
+ try{
+  const body={topic:topic};
+  const n=demo?5:parseInt($("ideaSlides").value,10);
+  if(n)body.slides=n;
+  const r=await fetch("/api/draft-deck",{
+   method:"POST",
+   headers:Object.assign({"Content-Type":"application/json"},auth()),
+   body:JSON.stringify(body)});
+  if(!r.ok){const j=await r.json().catch(()=>({}));
+   showErr("deck","Draft failed: "+(j.detail||"error"));return}
+  const j=await r.json();
+  deck={name:"deck.md",file:null,markdown:j.markdown,isPptx:false};
+  revealEditor({markdown:j.markdown});
+ }catch(e){showErr("deck","Draft failed: "+e.message)}
+ finally{$("ideaGo").disabled=false;$("ideaGo").textContent="Draft the deck"}
 };
 
 // Loading starts as soon as a file is picked — no extra button.

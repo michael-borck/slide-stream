@@ -360,8 +360,10 @@ def test_download_uses_per_job_token(base_config, tmp_path):
 @pytest.fixture(autouse=True)
 def _clear_demo_hits():
     serve._DEMO_HITS.clear()
+    serve._DEMO_DRAFT_HITS.clear()
     yield
     serve._DEMO_HITS.clear()
+    serve._DEMO_DRAFT_HITS.clear()
 
 
 def test_demo_mode_needs_no_token(base_config):
@@ -379,6 +381,73 @@ def test_demo_mode_needs_no_token(base_config):
 
 
 # --- teaser: text formats, voice picker, avatar art ----------------------------
+
+
+def test_build_topic_prompt_contains_topic_and_count():
+    from slide_stream.draft import build_topic_prompt
+
+    prompt = build_topic_prompt("Why sleep matters", 5)
+    assert "Why sleep matters" in prompt
+    assert "exactly 5 slides" in prompt
+    assert "'# ' heading" in prompt  # output contract for the parser
+
+
+def test_topic_draft_endpoint(base_config, monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_draft(topic, slides, provider, model, base_url):
+        captured.update(topic=topic, slides=slides)
+        return "# A\n\n- x\n\n# B\n\n- y\n"
+
+    monkeypatch.setattr(serve, "_do_topic_draft", fake_draft)
+    client = TestClient(serve.create_app(config=_llm_config(), token=None))
+    r = client.post(
+        "/api/draft-deck",
+        json={"topic": "Why sleep matters for learning", "slides": 2},
+    )
+    assert r.status_code == 200, r.text
+    assert "# A" in r.json()["markdown"]
+    assert captured["topic"] == "Why sleep matters for learning"
+    assert captured["slides"] == 2
+
+
+def test_topic_draft_demo_caps_slides_and_defaults_to_five(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_draft(topic, slides, provider, model, base_url):
+        captured["slides"] = slides
+        return "# A\n\n- x\n"
+
+    monkeypatch.setattr(serve, "_do_topic_draft", fake_draft)
+    client = TestClient(serve.create_app(config=_llm_config(), demo=True))
+    r = client.post("/api/draft-deck", json={"topic": "dogs", "slides": 9})
+    assert r.status_code == 200
+    assert r.json()["slides"] == serve.DEMO_MAX_SLIDES
+    assert captured["slides"] == serve.DEMO_MAX_SLIDES
+
+
+def test_topic_draft_requires_topic(base_config):
+    client = TestClient(serve.create_app(config=_llm_config(), token=None))
+    assert client.post("/api/draft-deck", json={"topic": "  "}).status_code == 400
+
+
+def test_topic_draft_requires_llm():
+    client = TestClient(serve.create_app(config=copy.deepcopy(DEFAULT_CONFIG), token=None))
+    r = client.post("/api/draft-deck", json={"topic": "dogs at the park"})
+    assert r.status_code == 400
+    assert "LLM" in r.json()["detail"]
+
+
+def test_topic_draft_demo_rate_limited(monkeypatch):
+    monkeypatch.setattr(
+        serve, "_do_topic_draft", lambda *a, **k: "# A\n\n- x\n"
+    )
+    client = TestClient(serve.create_app(config=_llm_config(), demo=True))
+    for _ in range(serve.DEMO_DRAFTS_PER_HOUR):
+        assert client.post("/api/draft-deck", json={"topic": "cats"}).status_code == 200
+    over = client.post("/api/draft-deck", json={"topic": "cats"})
+    assert over.status_code == 429
+    assert "drafts per hour" in over.json()["detail"]
 
 
 def test_demo_accepts_txt_with_slides(base_config, mocker, monkeypatch):
