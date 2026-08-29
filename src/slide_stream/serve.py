@@ -36,6 +36,7 @@ from urllib.parse import urlsplit
 
 import yaml
 
+from . import __version__
 from .config_loader import load_config
 from .parser import _H1_RE, _YAML_KEY_RE, _use_separator_style
 
@@ -1026,6 +1027,7 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
             Path(str(v)).stem for v in (tts_config.get("voice_choices") or [])
         ]
         return {
+            "version": __version__,
             "auth_required": bool(auth_token) and not demo_mode,
             "demo": demo_mode,
             "local": local_mode,
@@ -2134,6 +2136,7 @@ footer a:hover{color:var(--accent)}
  <a href="https://github.com/michael-borck/slide-stream/blob/main/docs/USER_GUIDE.md">Docs</a>
  <a href="https://pypi.org/project/slide-stream/">pip install slide-stream</a>
  <a href="https://github.com/michael-borck/slide-stream">GitHub</a>
+ <span class="muted" id="appVersion"></span>
 </footer>
 </div>
 <script>
@@ -2204,6 +2207,7 @@ function dropzone(id,hint){const inp=$(id);if(!inp)return;
 
 fetch("/api/config").then(r=>r.json()).then(c=>{
  cfg=c;demo=!!c.demo;
+ if(c.version)$("appVersion").textContent="SlideStream v"+c.version;
  if(c.auth_required)$("tokrow").style.display="block";
   if(c.demo){$("demo").style.display="block";
    if(c.limits)$("limits").textContent=

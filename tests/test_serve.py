@@ -64,7 +64,9 @@ def test_no_token_means_open(base_config):
 
 def test_demo_flag_exposed(base_config):
     client = TestClient(serve.create_app(config=base_config, token=None, demo=True))
-    assert client.get("/api/config").json()["demo"] is True
+    cfg = client.get("/api/config").json()
+    assert cfg["demo"] is True
+    assert cfg["version"] == serve.__version__
     off = TestClient(serve.create_app(config=base_config, token=None, demo=False))
     assert off.get("/api/config").json()["demo"] is False
 
