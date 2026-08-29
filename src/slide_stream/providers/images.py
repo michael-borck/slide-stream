@@ -235,7 +235,13 @@ class SwarmUIImageProvider(ImageProvider):
         return base_url.rstrip("/") if base_url else None
 
     def _headers(self) -> dict[str, str]:
-        api_key = self._settings().get("api_key") or os.getenv("SWARMUI_TOKEN")
+        api_key = (
+            self._settings().get("api_key") or os.getenv("SWARMUI_TOKEN") or ""
+        ).strip()
+        # Tolerate a value that already carries the scheme ("Bearer xyz") —
+        # a classic .env footgun that otherwise produces "Bearer Bearer …".
+        if api_key.lower().startswith("bearer "):
+            api_key = api_key[7:].strip()
         return {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
     def is_available(self) -> bool:
