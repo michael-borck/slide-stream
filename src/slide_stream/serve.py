@@ -1909,6 +1909,7 @@ footer a:hover{color:var(--accent)}
   <label for="deckFile">Deck file <span class="req">.md, .pptx, .txt or .qmd</span></label>
   <input id="deckFile" type="file" accept=".md,.pptx,.txt,.qmd">
  </div>
+ <p class="sc" id="draftStatus" style="display:none"></p>
  <div id="deckEditWrap" style="display:none">
   <label for="deckEditor">Review your deck <span style="font-weight:400;color:var(--muted)">(Markdown — one '# ' heading per slide; narration and images are built from this)</span></label>
   <textarea id="deckEditor" spellcheck="false"></textarea>
@@ -2285,24 +2286,43 @@ $("draftGo").onclick=async()=>{
  const f=$("draftFile").files[0];
  if(!f){showErr("deck","Pick a document first (or drop one onto the box above).");return}
  $("draftGo").disabled=true;$("draftGo").textContent="Drafting…";
+ draftBegin();
  try{
   await ensureProject();
   const fd=new FormData();fd.append("source",f);
   if($("draftSlides").value)fd.append("slides",$("draftSlides").value);
   const r=await fetch("/api/projects/"+projectId+"/draft",{method:"POST",headers:pauth(),body:fd});
   if(!r.ok){const j=await r.json().catch(()=>({}));
-   showErr("deck","Draft failed: "+(j.detail||r.statusText||"error"));return}
+   draftEnd(false);showErr("deck","Draft failed: "+(j.detail||r.statusText||"error"));return}
   const j=await r.json();
   deck={name:"deck.md",file:null,markdown:j.markdown,isPptx:false};
+  draftEnd(true);
   revealEditor({markdown:j.markdown});
- }catch(e){showErr("deck","Draft failed: "+e.message)}
+ }catch(e){draftEnd(false);showErr("deck","Draft failed: "+e.message)}
  finally{$("draftGo").disabled=false;$("draftGo").textContent="Generate deck"}
 };
+
+// AI drafting: the request is async (LLM runs server-side, typically 5–20s),
+// so surface an obvious waiting state where the deck will land — including on
+// the Generate button, which stays disabled until the draft exists.
+function draftBegin(){
+ $("draftStatus").style.display="";
+ $("draftStatus").textContent=
+  "⏳ Drafting your deck — this usually takes 5–20 seconds…";
+ $("deckNext").disabled=true;
+ $("deckNext").textContent="Waiting for the draft…";
+}
+function draftEnd(ok){
+ $("draftStatus").style.display="none";
+ $("deckNext").disabled=!ok;
+ $("deckNext").textContent=demo?"Generate ⚡":"Save & continue →";
+}
 
 $("ideaGo").onclick=async()=>{
  const topic=$("ideaText").value.trim();
  if(topic.length<3){showErr("deck","Type a topic or a few sentences first.");return}
  $("ideaGo").disabled=true;$("ideaGo").textContent="Drafting…";
+ draftBegin();
  try{
   const body={topic:topic};
   const n=demo?5:parseInt($("ideaSlides").value,10);
@@ -2312,11 +2332,12 @@ $("ideaGo").onclick=async()=>{
    headers:Object.assign({"Content-Type":"application/json"},auth()),
    body:JSON.stringify(body)});
   if(!r.ok){const j=await r.json().catch(()=>({}));
-   showErr("deck","Draft failed: "+(j.detail||"error"));return}
+   draftEnd(false);showErr("deck","Draft failed: "+(j.detail||"error"));return}
   const j=await r.json();
   deck={name:"deck.md",file:null,markdown:j.markdown,isPptx:false};
+  draftEnd(true);
   revealEditor({markdown:j.markdown});
- }catch(e){showErr("deck","Draft failed: "+e.message)}
+ }catch(e){draftEnd(false);showErr("deck","Draft failed: "+e.message)}
  finally{$("ideaGo").disabled=false;$("ideaGo").textContent="Draft the deck"}
 };
 
