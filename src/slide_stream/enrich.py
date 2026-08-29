@@ -11,6 +11,8 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from rich.console import Console
+
 from .narration import notes_narration_ready
 from .providers.base import ImageProvider
 
@@ -81,8 +83,14 @@ def enrich_deck(
     images_dir = output_dir / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
 
+    console = Console()
+    total = len(slides)
     enriched: list[dict[str, Any]] = []
     for i, slide in enumerate(slides, 1):
+        title = str(slide.get("title", "")).strip()
+        # Same parseable per-slide marker the create flow prints — the web
+        # UI's job trace and progress parser key off this exact text.
+        console.print(f"Slide {i}/{total}: {title}")
         img_path = images_dir / f"slide_{i}.png"
         image_provider.generate_image(_slide_query(slide), str(img_path), slide=slide)
         # The local provider reports whether it matched a real folder image;
@@ -90,20 +98,24 @@ def enrich_deck(
         matched = getattr(image_provider, "matched_last", True)
 
         existing_notes = str(slide.get("notes", "")).strip()
+        wrote_notes = False
         if notes_mode == "fill":
             # "Keep existing notes" means keep narration-ready prose. Imported
             # decks are full of placeholders ("Click to add notes") and
             # imperative speaker cues ("Discuss the migration plan") — those
             # are instructions, not spoken text, so the AI writes real notes.
-            notes = (
-                existing_notes
-                if notes_narration_ready(existing_notes)
-                else _generate_notes(slide, llm or {})
-            )
+            if notes_narration_ready(existing_notes):
+                notes = existing_notes
+            else:
+                notes = _generate_notes(slide, llm or {})
+                wrote_notes = True
         elif notes_mode == "all":
             notes = _generate_notes(slide, llm or {})
+            wrote_notes = True
         else:
             notes = ""
+        if wrote_notes:
+            console.print("  - Wrote AI speaker notes")
 
         enriched.append(
             {

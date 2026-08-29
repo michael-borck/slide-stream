@@ -1555,3 +1555,20 @@ def test_project_render_passes_placement_and_transition(monkeypatch):
     assert cfg["settings"]["avatar"]["slides"] == "first"
     assert cfg["settings"]["avatar"]["reuse_clip"] is True
     assert cfg["settings"]["video"]["transition_seconds"] == 0.5
+
+
+def test_job_trace_handles_enrich_flow():
+    """The enrich flow prints the same slide markers plus a notes event."""
+    job = serve.Job(id="j", created_at=time.time())
+    job.log = (
+        "Slide 1/2: Coffee\n"
+        "  - Generated SwarmUI image: coffee beans\n"
+        "  - Wrote AI speaker notes\n"
+        "Slide 2/2: Tea\n"
+        "  - Generated SwarmUI image: tea leaves\n"
+    )
+    assert serve._job_trace(job) == [
+        "slide 1: image via Swarmui",
+        "slide 1: notes written",
+        "slide 2: image via Swarmui",
+    ]

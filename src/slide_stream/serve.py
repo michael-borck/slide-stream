@@ -554,6 +554,7 @@ _STAGE_PATTERNS: tuple[tuple[str, str], ...] = (
     ("rendering…", "rendering the presenter"),
     ("avatar", "rendering the presenter"),
     ("audio", "generating voice"),
+    ("speaker notes", "writing speaker notes"),
     ("narration", "writing narration"),
     ("image", "generating slide image"),
 )
@@ -639,6 +640,9 @@ def _job_trace(job: Job, limit: int = 40) -> list[str]:
         m = _TRACE_IMAGE_OK_RE.search(line)
         if m and slide:
             events.append(f"slide {slide}: image via {m.group(1).capitalize()}")
+            continue
+        if "wrote ai speaker notes" in low and slide:
+            events.append(f"slide {slide}: notes written")
             continue
         m = _TRACE_AUDIO_RE.search(line)
         if m and slide:
