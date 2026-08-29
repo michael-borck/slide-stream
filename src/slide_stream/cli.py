@@ -454,7 +454,11 @@ def create(
 
         if llm_provider_name != "none":
             try:
-                llm_client = get_llm_client(llm_provider_name, base_url=llm_base_url)
+                llm_client = get_llm_client(
+                    llm_provider_name,
+                    base_url=llm_base_url,
+                    api_key=config["providers"]["llm"].get("api_key"),
+                )
                 console.print(
                     f"✅ LLM Provider: [bold green]{llm_provider_name}[/bold green]"
                 )
@@ -638,7 +642,12 @@ def create(
                         )
                     else:
                         natural_speech = query_llm(
-                            llm_client, llm_provider_name, speech_prompt, console, llm_model
+                            llm_client,
+                            llm_provider_name,
+                            speech_prompt,
+                            console,
+                            llm_model,
+                            think=config["providers"]["llm"].get("think"),
                         )
 
                     if natural_speech:
@@ -660,7 +669,12 @@ def create(
                     if image_provider.name != "text":
                         search_prompt = f"Generate a concise, descriptive search query for finding a high-quality, relevant image for this topic. Output only the query. Topic:\n\n{raw_text}"
                         improved_query = query_llm(
-                            llm_client, llm_provider_name, search_prompt, console, llm_model
+                            llm_client,
+                            llm_provider_name,
+                            search_prompt,
+                            console,
+                            llm_model,
+                            think=config["providers"]["llm"].get("think"),
                         )
                         if improved_query:
                             search_query = improved_query.strip().replace('"', "")
@@ -1033,7 +1047,11 @@ def enrich(
             raise typer.Exit(code=1)
         narration_cfg = config["settings"].get("narration", {})
         try:
-            llm_client = get_llm_client(llm_provider, base_url=llm_cfg.get("base_url"))
+            llm_client = get_llm_client(
+            llm_provider,
+            base_url=llm_cfg.get("base_url"),
+            api_key=llm_cfg.get("api_key"),
+        )
         except (ImportError, ValueError) as e:
             err_console.print(f"Error initializing LLM: {e}")
             raise typer.Exit(code=1)
@@ -1041,6 +1059,7 @@ def enrich(
             "client": llm_client,
             "provider": llm_provider,
             "model": llm_cfg.get("model"),
+            "think": llm_cfg.get("think"),
             "target_seconds": narration_cfg.get("target_seconds"),
             "wpm": narration_cfg.get("wpm", 150),
         }
@@ -1276,6 +1295,7 @@ def draft(
         raise typer.Exit(code=1)
 
     try:
+        # Ollama bearer tokens come via OLLAMA_TOKEN (see get_llm_client)
         llm_client = get_llm_client(provider, base_url=base_url)
     except (ImportError, ValueError) as e:
         err_console.print(f"Error initializing LLM: {e}")

@@ -395,7 +395,8 @@ def test_build_topic_prompt_contains_topic_and_count():
 def test_topic_draft_endpoint(base_config, monkeypatch):
     captured: dict[str, object] = {}
 
-    def fake_draft(topic, slides, provider, model, base_url):
+    def fake_draft(topic, slides, provider, model, base_url,
+                   api_key=None, think=None):
         captured.update(topic=topic, slides=slides)
         return "# A\n\n- x\n\n# B\n\n- y\n"
 
@@ -414,7 +415,8 @@ def test_topic_draft_endpoint(base_config, monkeypatch):
 def test_topic_draft_demo_caps_slides_and_defaults_to_five(monkeypatch):
     captured: dict[str, object] = {}
 
-    def fake_draft(topic, slides, provider, model, base_url):
+    def fake_draft(topic, slides, provider, model, base_url,
+                   api_key=None, think=None):
         captured["slides"] = slides
         return "# A\n\n- x\n"
 

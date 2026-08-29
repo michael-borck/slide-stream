@@ -701,10 +701,12 @@ def _run_project_enrich(job: Job, project: Project, deck_path: Path,
 
 
 def _do_draft(source_path: Path, slides: int | None, provider: str,
-              model: str | None, base_url: str | None) -> str:
+              model: str | None, base_url: str | None,
+              api_key: str | None = None, think: bool | None = None) -> str:
     """Extract a document and draft deck Markdown from it (blocking: offload to
     a threadpool). Raises DraftError / ValueError with a user-facing message."""
     from .draft import (
+        DraftError,
         build_draft_prompt,
         clamp_source,
         clean_llm_markdown,
@@ -715,8 +717,6 @@ def _do_draft(source_path: Path, slides: int | None, provider: str,
 
     source_text = extract_source_text(source_path)
     if not source_text.strip():
-        from .draft import DraftError
-
         raise DraftError(
             "No extractable text was found in the document "
             "(a scanned/image-only PDF, perhaps?)."
@@ -727,24 +727,24 @@ def _do_draft(source_path: Path, slides: int | None, provider: str,
 
     from rich.console import Console
 
-    client = get_llm_client(provider, base_url=base_url)
-    # Swallow query_llm's progress prints — they'd land in the server log.
-    quiet_console = Console(file=io.StringIO())
+    client = get_llm_client(provider, base_url=base_url, api_key=api_key)
+    # Capture the LLM layer's progress/error prints so a failure can name the
+    # actual cause (e.g. a bad API key) in the 400 the UI shows.
+    quiet_console = Console(file=io.StringIO(), record=True)
     result = query_llm(
         client, provider, build_draft_prompt(source_text, slides),
-        quiet_console, model,
+        quiet_console, model, think=think,
     )
     if not result:
-        from .draft import DraftError
-
-        raise DraftError("The LLM returned no content. Try again.")
+        raise DraftError(_llm_failure_hint(quiet_console))
     deck_markdown = clean_llm_markdown(result)
     validate_deck_markdown(deck_markdown)  # raises DraftError if unusable
     return deck_markdown.rstrip() + "\n"
 
 
 def _do_topic_draft(topic: str, slides: int | None, provider: str,
-                    model: str | None, base_url: str | None) -> str:
+                    model: str | None, base_url: str | None,
+                    api_key: str | None = None, think: bool | None = None) -> str:
     """Draft a deck from a typed idea/topic (blocking: offload to a
     threadpool). Raises DraftError / ValueError with a user-facing message."""
     import io
@@ -759,17 +759,31 @@ def _do_topic_draft(topic: str, slides: int | None, provider: str,
     )
     from .llm import get_llm_client, query_llm
 
-    client = get_llm_client(provider, base_url=base_url)
-    quiet_console = Console(file=io.StringIO())
+    client = get_llm_client(provider, base_url=base_url, api_key=api_key)
+    quiet_console = Console(file=io.StringIO(), record=True)
     result = query_llm(
         client, provider, build_topic_prompt(topic, slides),
-        quiet_console, model,
+        quiet_console, model, think=think,
     )
     if not result:
-        raise DraftError("The LLM returned no content. Try again.")
+        raise DraftError(_llm_failure_hint(quiet_console))
     deck_markdown = clean_llm_markdown(result)
     validate_deck_markdown(deck_markdown)
     return deck_markdown.rstrip() + "\n"
+
+
+def _llm_failure_hint(console: Any) -> str:
+    """A user-facing reason for an empty LLM result, from the captured
+    console output (the LLM layer prints the provider's error there)."""
+    lines = [
+        ln.strip()
+        for ln in str(console.export_text()).splitlines()
+        if ln.strip()
+    ]
+    hint = lines[-1] if lines else ""
+    if hint:
+        return f"The LLM returned no content. Last message: {hint}"
+    return "The LLM returned no content. Try again."
 
 
 # Drafting from a topic is cheap relative to a render, but it is still an LLM
@@ -799,6 +813,11 @@ providers:
   llm:
     provider: gemini            # gemini | openai | claude | groq | ollama | none
     model: gemini-2.0-flash
+    # Ollama (incl. behind an authenticating proxy) or any OpenAI-compatible
+    # server:
+    # base_url: https://ollama.example.org
+    # api_key: "${OLLAMA_TOKEN}"   # sent as a Bearer token
+    # think: false                 # reasoning models: keep answers clean
   tts:
     provider: voicebox          # default; or gtts (free), kokoro (offline),
                                 # chatterbox, elevenlabs, openai
@@ -1317,7 +1336,7 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
         try:
             markdown = await run_in_threadpool(
                 _do_topic_draft, topic, slides, provider, llm.get("model"),
-                llm.get("base_url"),
+                llm.get("base_url"), llm.get("api_key"), llm.get("think"),
             )
         except (DraftError, ValueError, ImportError) as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -1514,7 +1533,7 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
         try:
             markdown = await run_in_threadpool(
                 _do_draft, src_path, n, provider, llm.get("model"),
-                llm.get("base_url"),
+                llm.get("base_url"), llm.get("api_key"), llm.get("think"),
             )
         except (DraftError, ValueError, ImportError) as e:
             raise HTTPException(status_code=400, detail=str(e))

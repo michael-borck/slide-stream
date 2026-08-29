@@ -44,7 +44,10 @@ def _generate_notes(slide: dict[str, Any], llm: dict[str, Any]) -> str:
     wpm = llm.get("wpm", 150)
     words = target_words(llm.get("target_seconds"), wpm)
     prompt = build_narration_prompt(slide, source, words, wpm)
-    text = query_llm(llm["client"], llm["provider"], prompt, Console(), llm.get("model"))
+    text = query_llm(
+        llm["client"], llm["provider"], prompt, Console(), llm.get("model"),
+        think=llm.get("think"),
+    )
     return (text or "").strip()
 
 

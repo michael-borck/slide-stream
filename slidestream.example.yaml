@@ -11,8 +11,11 @@ providers:
   llm:
     provider: openai        # none, openai, gemini, claude, groq, ollama, openai-compatible
     model: gpt-4o-mini     # optional: specific model (or --llm-model on the CLI)
+    # base_url: http://localhost:11434   # ollama / openai-compatible servers
+    # api_key: "${OLLAMA_TOKEN}"        # Bearer token for an authenticated proxy
+    # think: false                      # reasoning models: strip/disable thinking
     # API keys come from the environment: OPENAI_API_KEY, ANTHROPIC_API_KEY,
-    # GEMINI_API_KEY, GROQ_API_KEY. Narration uses speaker notes as the
+    # GEMINI_API_KEY, GROQ_API_KEY, OLLAMA_TOKEN. Narration uses speaker notes as the
     # primary source when present (cleaned up and fitted to the target
     # length); otherwise it writes presenter-style narration from the slide
     # content instead of reading the bullets aloud. Image-only slides are

@@ -2,6 +2,7 @@
 
 import base64
 import os
+import re
 from typing import Any
 
 from rich.console import Console
@@ -15,13 +16,30 @@ DEFAULT_CLAUDE_MODEL = "claude-haiku-4-5"
 # Providers whose clients can accept an image alongside the prompt.
 VISION_PROVIDERS = ("claude", "openai", "openai-compatible", "ollama", "gemini")
 
+# Reasoning models (Ollama qwen3/deepseek-r1, some Gemma templates) prepend a
+# "<think>…</think>" block to their answer. Narration and decks must never
+# voice it, so completions are stripped before they reach callers.
+_THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
 
-def get_llm_client(provider: str, base_url: str | None = None) -> Any:
+
+def _strip_think(text: str | None) -> str | None:
+    """Drop reasoning-model 'thinking' blocks from a completion."""
+    if not text:
+        return text
+    return _THINK_RE.sub("", text).lstrip() or text
+
+
+def get_llm_client(
+    provider: str, base_url: str | None = None, api_key: str | None = None
+) -> Any:
     """Get LLM client based on provider.
 
-    For ``openai-compatible``, ``base_url`` selects the backend (a local
-    server such as LocalAI/vLLM/llama.cpp, or any hosted OpenAI-compatible
-    API). Falls back to the ``OPENAI_BASE_URL`` env var when not given.
+    For ``openai-compatible`` and ``ollama``, ``base_url`` selects the backend
+    (a local server such as Ollama/LocalAI/vLLM/llama.cpp, or any hosted
+    OpenAI-compatible API) and ``api_key`` becomes the Bearer token — for an
+    Ollama sitting behind an authenticating reverse proxy. Falls back to
+    config env vars (``OLLAMA_BASE_URL``/``OLLAMA_TOKEN``/``OPENAI_BASE_URL``/
+    ``OPENAI_API_KEY``) when not given.
     """
     if provider == "gemini":
         try:
@@ -82,8 +100,15 @@ def get_llm_client(provider: str, base_url: str | None = None) -> Any:
         try:
             from openai import OpenAI
 
-            base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-            return OpenAI(base_url=f"{base_url}/v1", api_key="ollama")
+            resolved = (
+                base_url or os.getenv("OLLAMA_BASE_URL") or "http://localhost:11434"
+            ).rstrip("/")
+            if not resolved.endswith("/v1"):
+                resolved += "/v1"
+            # A bearer token is only needed when Ollama sits behind an
+            # authenticating proxy; stock Ollama ignores it.
+            key = api_key or os.getenv("OLLAMA_TOKEN") or "ollama"
+            return OpenAI(base_url=resolved, api_key=key)
         except ImportError:
             raise ImportError(
                 "OpenAI library not found. Please install with: pip install slide-stream[openai]"
@@ -101,8 +126,8 @@ def get_llm_client(provider: str, base_url: str | None = None) -> Any:
                 )
             # Local servers usually ignore the key; send a placeholder so the
             # client constructs cleanly.
-            api_key = os.getenv("OPENAI_API_KEY", "not-needed")
-            return OpenAI(base_url=resolved_base_url, api_key=api_key)
+            key = api_key or os.getenv("OPENAI_API_KEY", "not-needed")
+            return OpenAI(base_url=resolved_base_url, api_key=key)
         except ImportError:
             raise ImportError(
                 "OpenAI library not found. Please install with: pip install slide-stream[openai]"
@@ -118,8 +143,14 @@ def query_llm(
     prompt_text: str,
     rich_console: Console,
     model: str | None = None,
+    think: bool | None = None,
 ) -> str | None:
-    """Query LLM with given prompt."""
+    """Query LLM with given prompt.
+
+    ``think=False`` asks Ollama/OpenAI-compatible reasoning models not to
+    think (``extra_body={"think": False}``); thinking blocks are stripped from
+    every provider's answer regardless.
+    """
     rich_console.print("  - Querying LLM...")
 
     try:
@@ -133,7 +164,7 @@ def query_llm(
                 response = temp_client.generate_content(prompt_text)
             else:
                 response = client.generate_content(prompt_text)
-            return response.text
+            return _strip_think(response.text)
 
         elif provider in ["openai", "ollama", "openai-compatible"]:
             # Use provided model or fallback to environment variable or default
@@ -150,11 +181,18 @@ def query_llm(
             else:  # openai-compatible
                 selected_model = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
 
+            extra: dict[str, Any] = {}
+            if think is False and provider in ("ollama", "openai-compatible"):
+                # Ollama reasoning models accept this on the OpenAI-compatible
+                # endpoint; servers that ignore it are covered by _strip_think.
+                extra["extra_body"] = {"think": False}
+
             response = client.chat.completions.create(
                 model=selected_model,
                 messages=[{"role": "user", "content": prompt_text}],
+                **extra,
             )
-            return response.choices[0].message.content
+            return _strip_think(response.choices[0].message.content)
 
         elif provider == "claude":
             # Use provided model or fallback to environment variable or default
@@ -164,7 +202,7 @@ def query_llm(
                 max_tokens=1024,
                 messages=[{"role": "user", "content": prompt_text}],
             )
-            return response.content[0].text
+            return _strip_think(response.content[0].text)
 
         elif provider == "groq":
             # Use provided model or fallback to environment variable or default
@@ -175,7 +213,7 @@ def query_llm(
                 model=selected_model,
                 messages=[{"role": "user", "content": prompt_text}],
             )
-            return response.choices[0].message.content
+            return _strip_think(response.choices[0].message.content)
 
         return None
 
@@ -232,7 +270,7 @@ def query_llm_with_image(
                     }
                 ],
             )
-            return response.content[0].text
+            return _strip_think(response.content[0].text)
 
         elif provider in ["openai", "ollama", "openai-compatible"]:
             if model:
@@ -260,13 +298,13 @@ def query_llm_with_image(
                     }
                 ],
             )
-            return response.choices[0].message.content
+            return _strip_think(response.choices[0].message.content)
 
         elif provider == "gemini":
             response = client.generate_content(
                 [{"mime_type": media_type, "data": image_bytes}, prompt_text]
             )
-            return response.text
+            return _strip_think(response.text)
 
         return None
 
