@@ -584,17 +584,76 @@ def _job_progress(job: Job) -> dict[str, Any] | None:
 def _job_warnings(job: Job) -> list[str]:
     """Demo-safe warnings derived from the log — no raw text. Today: the
     talking-head engine failed, so some slides render without their presenter
-    (slide + narration are unaffected)."""
+    (slide + narration are unaffected); and image generation fell back to
+    text cards."""
     log = job.log
     if not log:
         return []
+    warnings: list[str] = []
     if "avatar error" in log or "avatar generation failed" in log:
-        return [
+        warnings.append(
             "The presenter could not be animated on some slides (the "
             "animation engine failed or timed out) — those slides render "
             "with narration only."
-        ]
-    return []
+        )
+    fallbacks = log.lower().count("using text fallback")
+    if fallbacks:
+        m = None
+        for m_ in _SLIDE_LINE_RE.finditer(log):
+            m = m_
+        total = f" of {m.group(2)}" if m else ""
+        warnings.append(
+            f"{fallbacks}{total} slides used a plain text card because "
+            "image generation failed — check the image provider."
+        )
+    return warnings
+
+
+_TRACE_IMAGE_OK_RE = re.compile(r"Generated ([\w-]+) image")
+_TRACE_AUDIO_RE = re.compile(r"Generated audio with ([^(\n]+)")
+_TRACE_HEAD_OK_RE = re.compile(r"Generated (\S+) talking head \(slide (\d+)\)")
+_TRACE_HEAD_ERR_RE = re.compile(r"(\S+) avatar error")
+
+
+def _job_trace(job: Job, limit: int = 40) -> list[str]:
+    """A demo-safe, step-by-step trace parsed from the render log: which
+    provider produced each slide's image/voice/presenter, and where anything
+    fell back. Only whitelisted, derived text — raw lines never leave the
+    server."""
+    log = job.log
+    if not log:
+        return []
+    events: list[str] = []
+    slide: int | None = None
+    for raw in log.splitlines():
+        line = raw.strip()
+        low = line.lower()
+        m = _SLIDE_LINE_RE.search(line)
+        if m and low.startswith("slide "):
+            slide = int(m.group(1))
+            continue
+        if "using text fallback" in low and slide:
+            events.append(f"slide {slide}: image failed — used a text card")
+            continue
+        m = _TRACE_IMAGE_OK_RE.search(line)
+        if m and slide:
+            events.append(f"slide {slide}: image via {m.group(1).capitalize()}")
+            continue
+        m = _TRACE_AUDIO_RE.search(line)
+        if m and slide:
+            events.append(f"slide {slide}: voice via {m.group(1).strip()}")
+            continue
+        m = _TRACE_HEAD_OK_RE.search(line)
+        if m:
+            events.append(f"slide {m.group(2)}: presenter animated ({m.group(1)})")
+            continue
+        m = _TRACE_HEAD_ERR_RE.search(line)
+        if m and slide:
+            events.append(f"slide {slide}: presenter failed ({m.group(1)})")
+            continue
+        if "combining video fragments" in low:
+            events.append("stitching slides together")
+    return events[-limit:]
 
 
 def _run_job(job: Job, deck_path: Path, job_yaml: Path,
@@ -1178,6 +1237,11 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
                 "accent": accent,
                 "voice_name": voice_name,
             }
+            if demo_mode and not avatar_slides:
+                # Teaser economics: a wan-s2v clip costs minutes of GPU per
+                # slide, so demo presenters appear on the opening and closing
+                # slides unless a client explicitly asks for more.
+                options["avatar_slides"] = "first,last"
             # Desktop mode re-reads ~/.slidestream.yaml per job so Settings
             # edits apply without restarting the app.
             job_base = load_config() if local_mode else base_config
@@ -1353,6 +1417,9 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
         warnings = _job_warnings(job)
         if warnings:
             out["warnings"] = warnings
+        trace = _job_trace(job)
+        if trace:
+            out["trace"] = trace
         if job.status in ("queued", "running"):
             # Demo-safe derived progress (slide x/y + whitelisted stage label)
             # and a heartbeat: seconds since the render last printed anything.
@@ -1826,10 +1893,14 @@ details summary:hover{color:var(--ink)}
 #status a{color:var(--accent);font-weight:600}
 .badge{display:inline-block;padding:.12rem .65rem;border-radius:99px;font-size:.8rem;
  background:var(--accent-soft);color:var(--accent);font-weight:600}
-#log{display:none;white-space:pre-wrap;background:var(--bg);border:1px solid var(--line);
- padding:.7rem .8rem;border-radius:9px;font-family:ui-monospace,Menlo,monospace;
- font-size:.75rem;max-height:220px;overflow:auto;color:var(--muted)}
-#log.on{display:block}
+#logWrap{margin-top:.8rem;border:1px solid var(--line);border-radius:9px;padding:.5rem .8rem .6rem;font-size:.85rem}
+#logWrap summary{cursor:pointer;color:var(--muted);font-weight:600;font-size:.85rem}
+#logWrap summary:hover{color:var(--accent)}
+#trace{margin-top:.5rem}
+#trace div{margin:.12rem 0;color:var(--ink)}
+#log{white-space:pre-wrap;background:var(--bg);border:1px solid var(--line);
+ padding:.6rem .7rem;border-radius:9px;font-family:ui-monospace,Menlo,monospace;
+ font-size:.72rem;max-height:220px;overflow:auto;color:var(--muted);margin-top:.5rem}
 #report{display:none;margin-top:1rem;border:1px solid var(--line);border-radius:9px;
  padding:.7rem 1rem .9rem;font-size:.88rem}
 #report.on{display:block}
@@ -2048,7 +2119,12 @@ footer a:hover{color:var(--accent)}
   <div id="progTrack"><div id="progBar"></div></div>
   <p class="muted" id="progLabel"></p>
  </div>
- <div id="report"></div><div id="thumbs" class="thumbs"></div><div id="log"></div>
+ <details id="logWrap" style="display:none">
+  <summary>Render log &amp; trace</summary>
+  <div id="trace"></div>
+  <div id="log"></div>
+ </details>
+ <div id="report"></div><div id="thumbs" class="thumbs"></div>
  <div class="navbtns"><button class="ghost" data-goto="configure">← Back</button></div>
 </div>
 </div>
@@ -2527,7 +2603,10 @@ async function poll(id,tok,kind){
  try{const r=await fetch("/api/jobs/"+id,{headers:auth()});j=await r.json()}
  catch(e){ // transient network hiccup: keep polling rather than dying
   setTimeout(()=>poll(id,tok,kind),4000);return}
- $("log").textContent=j.log||"";$("log").classList.toggle("on",!!j.log);
+ const hasTrace=j.trace&&j.trace.length;
+ $("logWrap").style.display=(j.log||hasTrace)?"block":"none";
+ $("log").textContent=j.log||"";
+ $("trace").innerHTML=hasTrace?j.trace.map(t=>"<div>"+esc(t)+"</div>").join(""):"";
  if(j.status==="done"){stopProgress();t0=0;$("go").disabled=false;hideProg();
   if(j.warnings&&j.warnings.length){
    $("notice").textContent="⚠️ "+j.warnings.join(" ");$("notice").style.display="block"}

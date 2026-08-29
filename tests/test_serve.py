@@ -549,6 +549,32 @@ def test_avatar_image_endpoint(base_config):
     assert client.get("/api/avatars/not-a-mascot").status_code == 404
 
 
+def test_demo_defaults_presenter_to_first_and_last(base_config, mocker):
+    """Teaser economics: without explicit placement, demo presenters appear
+    on the opening and closing slides only (wan-s2v is minutes per clip)."""
+    real = serve._build_job_config
+    captured: dict[str, object] = {}
+
+    def spy(base, workdir, options, *args, **kwargs):
+        captured["slides"] = options.get("avatar_slides")
+        return real(base, workdir, options, *args, **kwargs)
+
+    mocker.patch.object(serve, "_build_job_config", side_effect=spy)
+    mocker.patch.object(serve, "_run_job")
+    client = TestClient(serve.create_app(config=base_config, demo=True))
+    r = client.post("/api/jobs", files={"deck": ("deck.md", b"# One\n- a\n")},
+                    data={"avatar_name": "teddy"})
+    assert r.status_code == 200, r.text
+    assert captured["slides"] == "first,last"
+
+    # Explicit placement always wins.
+    captured.clear()
+    r = client.post("/api/jobs", files={"deck": ("deck.md", b"# One\n- a\n")},
+                    data={"avatar_name": "teddy", "avatar_slides": "first"})
+    assert r.status_code == 200
+    assert captured["slides"] == "first"
+
+
 def test_demo_drops_voice_and_photo_uploads(base_config, mocker, monkeypatch):
     """The teaser accepts no biometrics: voice/photo uploads are never
     written to disk or passed to the render, even from API clients."""
@@ -1149,6 +1175,69 @@ def test_status_idle_uses_created_at_before_output(base_config):
     s = client.get("/api/jobs/j1").json()
     assert s["idle"] == 12
     assert "progress" not in s  # nothing recognisable printed yet
+
+
+# --- demo-safe step trace -------------------------------------------------------
+
+
+def test_job_trace_parses_providers_and_fallbacks():
+    job = serve.Job(id="j", created_at=time.time())
+    job.log = (
+        "Found 2 slides.\n"
+        "Slide 1/2: Coffee\n"
+        "  - Generated SwarmUI image: coffee beans\n"
+        "  - Generated audio with voicebox\n"
+        "  - Generated wan-s2v talking head (slide 1)\n"
+        "Slide 2/2: Tea\n"
+        "  - SwarmUI error: timeout. Using text fallback.\n"
+        "  - Generated audio with voicebox\n"
+        "  - wan-s2v avatar error: GPU OOM\n"
+        "2. Combining Video Fragments...\n"
+    )
+    trace = serve._job_trace(job)
+    assert trace == [
+        "slide 1: image via Swarmui",
+        "slide 1: voice via voicebox",
+        "slide 1: presenter animated (wan-s2v)",
+        "slide 2: image failed — used a text card",
+        "slide 2: voice via voicebox",
+        "slide 2: presenter failed (wan-s2v)",
+        "stitching slides together",
+    ]
+
+
+def test_job_warnings_include_text_fallback_count():
+    job = serve.Job(id="j", created_at=time.time())
+    job.log = (
+        "Slide 1/3: A\n  - SwarmUI error: x. Using text fallback.\n"
+        "Slide 2/3: B\n  - SwarmUI error: y. Using text fallback.\n"
+        "Slide 3/3: C\n  - Generated Imagen image: z\n"
+    )
+    warnings = serve._job_warnings(job)
+    assert any("2 of 3 slides used a plain text card" in w for w in warnings)
+
+
+def test_status_exposes_trace_in_demo(base_config):
+    serve._JOBS["j1"] = serve.Job(
+        id="j1", status="running",
+        log="Slide 1/2: A\n  - Generated SwarmUI image: x\n",
+        created_at=time.time(), updated_at=time.time(),
+    )
+    client = TestClient(serve.create_app(config=base_config, demo=True))
+    s = client.get("/api/jobs/j1").json()
+    assert s["trace"] == ["slide 1: image via Swarmui"]
+    assert s["log"] == ""  # raw text still withheld
+
+
+def test_status_exposes_warnings_in_demo(base_config):
+    serve._JOBS["j1"] = serve.Job(
+        id="j1", status="done",
+        log="Slide 1/1: A\n  - SwarmUI error: down. Using text fallback.\n",
+        created_at=time.time(),
+    )
+    client = TestClient(serve.create_app(config=base_config, demo=True))
+    s = client.get("/api/jobs/j1").json()
+    assert any("text card" in w for w in s["warnings"])
 
 
 # --- Project workflow (draft -> edit -> enrich -> render) ---------------------
