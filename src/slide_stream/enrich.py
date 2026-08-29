@@ -8,6 +8,7 @@ directly (it enriches internally) for a one-pass video.
 """
 
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -86,47 +87,56 @@ def enrich_deck(
     console = Console()
     total = len(slides)
     enriched: list[dict[str, Any]] = []
-    for i, slide in enumerate(slides, 1):
-        title = str(slide.get("title", "")).strip()
-        # Same parseable per-slide marker the create flow prints — the web
-        # UI's job trace and progress parser key off this exact text.
-        console.print(f"Slide {i}/{total}: {title}")
-        img_path = images_dir / f"slide_{i}.png"
-        image_provider.generate_image(_slide_query(slide), str(img_path), slide=slide)
-        # The local provider reports whether it matched a real folder image;
-        # other providers always produce an image (or their own text fallback).
-        matched = getattr(image_provider, "matched_last", True)
+    # The image server and the notes LLM are separate backends, so within a
+    # slide they run CONCURRENTLY (wall time = max, not sum). Slides themselves
+    # stay sequential: one slide in flight keeps the log trace accurate.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        for i, slide in enumerate(slides, 1):
+            title = str(slide.get("title", "")).strip()
+            # Same parseable per-slide marker the create flow prints — the web
+            # UI's job trace and progress parser key off this exact text.
+            console.print(f"Slide {i}/{total}: {title}")
+            img_path = images_dir / f"slide_{i}.png"
 
-        existing_notes = str(slide.get("notes", "")).strip()
-        wrote_notes = False
-        if notes_mode == "fill":
-            # "Keep existing notes" means keep narration-ready prose. Imported
-            # decks are full of placeholders ("Click to add notes") and
-            # imperative speaker cues ("Discuss the migration plan") — those
-            # are instructions, not spoken text, so the AI writes real notes.
-            if notes_narration_ready(existing_notes):
-                notes = existing_notes
-            else:
-                notes = _generate_notes(slide, llm or {})
-                wrote_notes = True
-        elif notes_mode == "all":
-            notes = _generate_notes(slide, llm or {})
-            wrote_notes = True
-        else:
+            existing_notes = str(slide.get("notes", "")).strip()
+            keep_existing = (
+                notes_mode == "fill" and notes_narration_ready(existing_notes)
+            )
+            will_write = bool(notes_mode) and not keep_existing
+
+            image_future = pool.submit(
+                image_provider.generate_image,
+                _slide_query(slide), str(img_path), slide=slide,
+            )
+            notes_future = (
+                pool.submit(_generate_notes, slide, llm or {}) if will_write else None
+            )
+            image_future.result()
+            # The local provider reports whether it matched a real folder
+            # image; other providers always produce an image (or their own
+            # text fallback).
+            matched = getattr(image_provider, "matched_last", True)
+
+            wrote_notes = False
             notes = ""
-        if wrote_notes:
-            console.print("  - Wrote AI speaker notes")
+            if notes_future is not None:
+                notes = notes_future.result() or ""
+                wrote_notes = True
+            elif notes_mode == "fill":
+                notes = existing_notes
+            if wrote_notes:
+                console.print("  - Wrote AI speaker notes")
 
-        enriched.append(
-            {
-                "index": i,
-                "title": str(slide.get("title", "")).strip(),
-                "content": [str(c).strip() for c in slide.get("content", []) if str(c).strip()],
-                "image": img_path.name,
-                "matched": matched,
-                "notes": notes,
-            }
-        )
+            enriched.append(
+                {
+                    "index": i,
+                    "title": title,
+                    "content": [str(c).strip() for c in slide.get("content", []) if str(c).strip()],
+                    "image": img_path.name,
+                    "matched": matched,
+                    "notes": notes,
+                }
+            )
 
     md_path = output_dir / f"{input_stem}.md"
     md_path.write_text(_build_markdown(enriched), encoding="utf-8")
