@@ -1,6 +1,6 @@
 [package]
 name = "slidestream-desktop"
-version = "0.1.23"
+version = "0.1.24"
 description = "SlideStream Desktop — slides in, narrated video out"
 authors = ["Michael Borck"]
 edition = "2021"
