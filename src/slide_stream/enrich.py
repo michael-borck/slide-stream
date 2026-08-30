@@ -104,6 +104,7 @@ def enrich_deck(
             )
             will_write = bool(notes_mode) and not keep_existing
 
+            fb_before = getattr(image_provider, "fallback_count", 0)
             image_future = pool.submit(
                 image_provider.generate_image,
                 _slide_query(slide), str(img_path), slide=slide,
@@ -112,10 +113,21 @@ def enrich_deck(
                 pool.submit(_generate_notes, slide, llm or {}) if will_write else None
             )
             image_future.result()
+            # A provider fallback wrote a generic text card — worthless in an
+            # editable deck (it duplicates the bullet text as a picture), so
+            # the slide is left text-only instead and listed in prompts.md.
+            fell_back = (
+                getattr(image_provider, "fallback_count", fb_before) > fb_before
+            )
             # The local provider reports whether it matched a real folder
             # image; other providers always produce an image (or their own
             # text fallback).
-            matched = getattr(image_provider, "matched_last", True)
+            matched = (
+                getattr(image_provider, "matched_last", True) and not fell_back
+            )
+            if fell_back:
+                img_path.unlink(missing_ok=True)
+                console.print("  - Image generation failed — slide left text-only")
 
             wrote_notes = False
             notes = ""
@@ -163,7 +175,8 @@ def _build_markdown(slides: list[dict[str, Any]]) -> str:
     for slide in slides:
         lines = [f"# {slide['title']}" if slide["title"] else f"# Slide {slide['index']}"]
         lines.append("")
-        lines.append(f"![{slide['title']}](images/{slide['image']})")
+        if slide.get("matched", True):
+            lines.append(f"![{slide['title']}](images/{slide['image']})")
         if slide["content"]:
             lines.append("")
             for item in slide["content"]:

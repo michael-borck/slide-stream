@@ -458,8 +458,7 @@ def test_demo_accepts_txt_with_slides(base_config, mocker, monkeypatch):
     """A plain .txt structured with '# ' headings is parsed as a deck."""
     seen: dict[str, str] = {}
 
-    def fake_run_job(job, deck_path, job_yaml, voice_path, photo_path,
-                     mode="video", notes=None):
+    def fake_pipeline(job, deck_path, job_yaml, voice_path, photo_path):
         assert job.workdir is not None
         out = job.workdir / "output.mp4"
         out.write_bytes(b"V")
@@ -467,7 +466,7 @@ def test_demo_accepts_txt_with_slides(base_config, mocker, monkeypatch):
         job.output_path = out
         seen["deck_name"] = deck_path.name
 
-    mocker.patch.object(serve, "_run_job", side_effect=fake_run_job)
+    mocker.patch.object(serve, "_run_video_pipeline", side_effect=fake_pipeline)
     monkeypatch.setattr(
         serve.ThreadPoolExecutor, "submit", lambda self, fn, *a, **k: fn(*a, **k)
     )
@@ -493,8 +492,7 @@ def test_demo_accepts_qmd(base_config, mocker, monkeypatch):
     """A Quarto (.qmd) file with front matter parses; front matter is dropped."""
     seen: dict[str, int] = {}
 
-    def fake_run_job(job, deck_path, job_yaml, voice_path, photo_path,
-                     mode="video", notes=None):
+    def fake_pipeline(job, deck_path, job_yaml, voice_path, photo_path):
         assert job.workdir is not None
         out = job.workdir / "output.mp4"
         out.write_bytes(b"V")
@@ -502,7 +500,7 @@ def test_demo_accepts_qmd(base_config, mocker, monkeypatch):
         job.output_path = out
         seen["slides"] = len(serve._parse_deck_slides(deck_path))
 
-    mocker.patch.object(serve, "_run_job", side_effect=fake_run_job)
+    mocker.patch.object(serve, "_run_video_pipeline", side_effect=fake_pipeline)
     monkeypatch.setattr(
         serve.ThreadPoolExecutor, "submit", lambda self, fn, *a, **k: fn(*a, **k)
     )
@@ -582,8 +580,7 @@ def test_demo_drops_voice_and_photo_uploads(base_config, mocker, monkeypatch):
     written to disk or passed to the render, even from API clients."""
     seen: dict[str, object] = {}
 
-    def fake_run_job(job, deck_path, job_yaml, voice_path, photo_path,
-                     mode="video", notes=None):
+    def fake_pipeline(job, deck_path, job_yaml, voice_path, photo_path):
         assert job.workdir is not None
         out = job.workdir / "output.mp4"
         out.write_bytes(b"V")
@@ -592,7 +589,7 @@ def test_demo_drops_voice_and_photo_uploads(base_config, mocker, monkeypatch):
         seen["voice"] = voice_path
         seen["photo"] = photo_path
 
-    mocker.patch.object(serve, "_run_job", side_effect=fake_run_job)
+    mocker.patch.object(serve, "_run_video_pipeline", side_effect=fake_pipeline)
     monkeypatch.setattr(
         serve.ThreadPoolExecutor, "submit", lambda self, fn, *a, **k: fn(*a, **k)
     )
@@ -613,19 +610,18 @@ def test_demo_drops_voice_and_photo_uploads(base_config, mocker, monkeypatch):
 
 
 def test_demo_slide_cap_trims_to_five(base_config, mocker, monkeypatch):
-    """A big deck is no longer rejected: the demo trims it to the first 5."""
-    seen: dict[str, int] = {}
+    """A big deck is trimmed to the first 5 slides before rendering."""
+    captured: dict[str, object] = {}
 
-    def fake_run_job(job, deck_path, job_yaml, voice_path, photo_path,
-                     mode="video", notes=None):
+    def fake_pipeline(job, deck_path, job_yaml, voice_path, photo_path):
         assert job.workdir is not None
         out = job.workdir / "output.mp4"
         out.write_bytes(b"V")
         job.status = "done"
         job.output_path = out
-        seen["slides"] = len(serve._parse_deck_slides(deck_path))
+        captured["slides"] = len(serve._parse_deck_slides(deck_path))
 
-    mocker.patch.object(serve, "_run_job", side_effect=fake_run_job)
+    mocker.patch.object(serve, "_run_video_pipeline", side_effect=fake_pipeline)
     monkeypatch.setattr(
         serve.ThreadPoolExecutor, "submit", lambda self, fn, *a, **k: fn(*a, **k)
     )
@@ -634,10 +630,9 @@ def test_demo_slide_cap_trims_to_five(base_config, mocker, monkeypatch):
     r = client.post("/api/jobs", files={"deck": ("deck.md", big_deck.encode())})
     assert r.status_code == 200
     body = r.json()
-    assert body["notice"]
     assert "first 5" in body["notice"]
     assert "desktop app" in body["notice"]
-    assert seen["slides"] == serve.DEMO_MAX_SLIDES
+    assert captured["slides"] == serve.DEMO_MAX_SLIDES
 
     # A small deck is accepted untouched, with no notice.
     ok = client.post("/api/jobs", files={"deck": ("deck.md", b"# One\n- a\n")})
@@ -649,15 +644,7 @@ def test_demo_pptx_cap_trims_to_five(base_config, mocker, monkeypatch):
     """An oversized .pptx is trimmed to DEMO_MAX_SLIDES slides in place."""
     from pptx import Presentation
 
-    def fake_run_job(job, deck_path, job_yaml, voice_path, photo_path,
-                     mode="video", notes=None):
-        assert job.workdir is not None
-        out = job.workdir / "output.mp4"
-        out.write_bytes(b"V")
-        job.status = "done"
-        job.output_path = out
-
-    mocker.patch.object(serve, "_run_job", side_effect=fake_run_job)
+    mocker.patch.object(serve, "_run_job")
     monkeypatch.setattr(
         serve.ThreadPoolExecutor, "submit", lambda self, fn, *a, **k: fn(*a, **k)
     )
@@ -674,6 +661,7 @@ def test_demo_pptx_cap_trims_to_five(base_config, mocker, monkeypatch):
         files={"deck": ("deck.pptx", buf.getvalue(),
                         "application/vnd.openxmlformats-officedocument."
                         "presentationml.presentation")},
+        data={"output": "pptx"},
     )
     assert r.status_code == 200, r.text
     assert "first 5" in r.json()["notice"]

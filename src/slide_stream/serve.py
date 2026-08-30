@@ -608,6 +608,12 @@ def _job_warnings(job: Job) -> list[str]:
             f"{fallbacks}{total} slides used a plain text card because "
             "image generation failed — check the image provider."
         )
+    text_only = log.lower().count("left text-only")
+    if text_only:
+        warnings.append(
+            f"{text_only} slides had no image (generation failed) — they "
+            "remain text-only in the enhanced deck."
+        )
     return warnings
 
 
@@ -636,6 +642,9 @@ def _job_trace(job: Job, limit: int = 40) -> list[str]:
             continue
         if "using text fallback" in low and slide:
             events.append(f"slide {slide}: image failed — used a text card")
+            continue
+        if "left text-only" in low and slide:
+            events.append(f"slide {slide}: image failed — left text-only")
             continue
         m = _TRACE_IMAGE_OK_RE.search(line)
         if m and slide:
@@ -711,6 +720,57 @@ def _run_job(job: Job, deck_path: Path, job_yaml: Path,
         # Ephemeral: inputs and the key-bearing job config never persist past
         # the render. Only output.mp4 remains, until it is downloaded (demo)
         # or the TTL reaper removes the whole workdir.
+        for p in (voice_path, photo_path, deck_path, job_yaml):
+            if p is not None:
+                Path(p).unlink(missing_ok=True)
+        shutil.rmtree(job.workdir / "tmp", ignore_errors=True)
+
+
+def _run_video_pipeline(job: Job, deck_path: Path, job_yaml: Path,
+                        voice_path: Path | None, photo_path: Path | None) -> None:
+    """Demo mascot-video job: enrich FIRST (each slide's image generated once,
+    failures isolated per slide), then create the video FROM the enhanced
+    deck — which reuses those images instead of regenerating art mid-video."""
+    assert job.workdir is not None
+    with _LOCK:
+        job.status = "running"
+    try:
+        enhanced = job.workdir / "enhanced"
+        code = _stream_process(
+            [sys.executable, "-m", "slide_stream", "enrich",
+             str(deck_path), str(enhanced), "--config", str(job_yaml)],
+            job, 1800,
+        )
+        enriched_md = enhanced / f"{deck_path.stem}.md"
+        if code != 0 or not enriched_md.exists():
+            with _LOCK:
+                job.status = "error"
+                job.error = (
+                    f"enrich exited {code}" if code else "enrich produced no deck"
+                )
+            return
+        video = job.workdir / "output.mp4"
+        code = _stream_process(
+            [sys.executable, "-m", "slide_stream", "create",
+             str(enriched_md), str(video), "--config", str(job_yaml)],
+            job, 3600,
+        )
+        with _LOCK:
+            if code == 0 and video.exists():
+                job.status = "done"
+                job.output_path = video
+            else:
+                job.status = "error"
+                job.error = f"create exited {code}"
+    except subprocess.TimeoutExpired:
+        with _LOCK:
+            job.status = "error"
+            job.error = "render timed out"
+    except Exception as e:  # pragma: no cover - defensive
+        with _LOCK:
+            job.status = "error"
+            job.error = str(e)
+    finally:
         for p in (voice_path, photo_path, deck_path, job_yaml):
             if p is not None:
                 Path(p).unlink(missing_ok=True)
@@ -1264,8 +1324,15 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
                   download_token=secrets.token_urlsafe(24))
         with _LOCK:
             _JOBS[job_id] = job
-        executor.submit(_run_job, job, deck_path, job_yaml, voice_path,
-                        photo_path, mode, notes_mode)
+        if demo_mode and mode == "video":
+            # Teaser mascot videos run the robust two-pass: enrich first
+            # (images generated once, per-slide failures isolated), then
+            # create FROM the enhanced deck.
+            executor.submit(_run_video_pipeline, job, deck_path, job_yaml,
+                            voice_path, photo_path)
+        else:
+            executor.submit(_run_job, job, deck_path, job_yaml, voice_path,
+                            photo_path, mode, notes_mode)
         return JSONResponse({"job_id": job_id, "status": job.status,
                              "token": job.download_token,
                              "notice": demo_notice})

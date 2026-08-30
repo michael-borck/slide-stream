@@ -207,6 +207,7 @@ class LocalImageProvider(ImageProvider):
         return self._fallback_to_text(query, filename, slide=slide)
 
     def _fallback_to_text(self, query: str, filename: str, slide: dict[str, Any] | None = None) -> str:
+        self.fallback_count = getattr(self, "fallback_count", 0) + 1
         """Fall back to a text image, preserving slide content when known."""
         return TextImageProvider(self.config).generate_image(query, filename, slide=slide)
 
@@ -324,6 +325,7 @@ class SwarmUIImageProvider(ImageProvider):
             return self._fallback_to_text(query, filename, slide=slide)
 
     def _fallback_to_text(self, query: str, filename: str, slide: dict[str, Any] | None = None) -> str:
+        self.fallback_count = getattr(self, "fallback_count", 0) + 1
         """Fall back to a text image, unless strict mode disables fallbacks."""
         if is_strict(self.config):
             raise StrictModeError(
@@ -409,6 +411,7 @@ class GeminiImageProvider(ImageProvider):
             return self._fallback_to_text(query, filename, slide=slide)
 
     def _fallback_to_text(self, query: str, filename: str, slide: dict[str, Any] | None = None) -> str:
+        self.fallback_count = getattr(self, "fallback_count", 0) + 1
         """Fall back to a text image, unless strict mode disables fallbacks."""
         if is_strict(self.config):
             raise StrictModeError(
@@ -477,6 +480,7 @@ class DalleImageProvider(ImageProvider):
             return self._fallback_to_text(query, filename, slide=slide)
 
     def _fallback_to_text(self, query: str, filename: str, slide: dict[str, Any] | None = None) -> str:
+        self.fallback_count = getattr(self, "fallback_count", 0) + 1
         """Fall back to a text image, unless strict mode disables fallbacks."""
         if is_strict(self.config):
             raise StrictModeError(
@@ -548,6 +552,7 @@ class PexelsImageProvider(ImageProvider):
             return self._fallback_to_text(query, filename, slide=slide)
 
     def _fallback_to_text(self, query: str, filename: str, slide: dict[str, Any] | None = None) -> str:
+        self.fallback_count = getattr(self, "fallback_count", 0) + 1
         """Fall back to a text image, unless strict mode disables fallbacks."""
         if is_strict(self.config):
             raise StrictModeError(
@@ -621,6 +626,7 @@ class UnsplashImageProvider(ImageProvider):
             return self._fallback_to_text(query, filename, slide=slide)
 
     def _fallback_to_text(self, query: str, filename: str, slide: dict[str, Any] | None = None) -> str:
+        self.fallback_count = getattr(self, "fallback_count", 0) + 1
         """Fall back to a text image, unless strict mode disables fallbacks."""
         if is_strict(self.config):
             raise StrictModeError(
@@ -721,6 +727,7 @@ class OpenAICompatImageProvider(ImageProvider):
             return self._fallback_to_text(query, filename, slide=slide)
 
     def _fallback_to_text(self, query: str, filename: str, slide: dict[str, Any] | None = None) -> str:
+        self.fallback_count = getattr(self, "fallback_count", 0) + 1
         """Fall back to a text image, unless strict mode disables fallbacks."""
         if is_strict(self.config):
             raise StrictModeError(

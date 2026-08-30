@@ -106,8 +106,9 @@ def test_enrich_deck_writes_markdown_and_images(tmp_path):
     assert "- Axons" in md
     assert "\n---\n" in md  # slide separator
     assert (out / "images" / "slide_1.png").exists()
-    assert (out / "images" / "slide_2.png").exists()
-    # Slide 2 had no local match -> prompts.md lists it.
+    # Slide 2 had no local match -> no text-card PNG (it would duplicate the
+    # bullets as a picture); prompts.md lists it instead.
+    assert (out / "images" / "slide_2.png").exists() is False
     prompts = (out / "prompts.md").read_text()
     assert "Astrophysics" in prompts
 
@@ -353,3 +354,55 @@ def test_write_pptx_keeps_slides_editable(tmp_path):
     assert any(sh.shape_type == 13 for sh in s.shapes)  # PICTURE
     notes_tf = s.notes_slide.notes_text_frame
     assert notes_tf is not None and notes_tf.text == "Speak about chlorophyll."
+
+
+def test_enrich_skips_text_card_on_image_failure(tmp_path):
+    """When the image provider falls back, the slide stays text-only: no
+    generic text-card PNG is embedded in the pptx or markdown, and the slide
+    is listed in prompts.md for a retry."""
+    from slide_stream.providers.base import ImageProvider
+
+    class _FlakyProvider(ImageProvider):
+        calls = 0
+        fallback_count = 0
+
+        @property
+        def name(self) -> str:
+            return "flaky"
+
+        def is_available(self) -> bool:
+            return True
+
+        def generate_image(self, query, filename, slide=None):
+            self.calls += 1
+            if self.calls == 1:  # slide 1: provider fails -> text fallback
+                self.fallback_count += 1
+                Image.new("RGB", (64, 36), "blue").save(filename)
+                return filename
+            Image.new("RGB", (64, 36), "green").save(filename)  # slide 2: OK
+            return filename
+
+    slides = [
+        {"title": "Coffee", "content": ["Espresso"]},
+        {"title": "Tea", "content": ["Matcha"]},
+    ]
+    out = tmp_path / "out"
+    enrich_deck(slides, _FlakyProvider({}), out, "deck", also_pptx=True,
+                notes_mode=None)
+
+    md = (out / "deck.md").read_text()
+    assert "images/slide_1.png" not in md  # failed slide: no image line
+    assert "images/slide_2.png" in md      # success keeps its image
+    assert "# Coffee" in md and "- Espresso" in md  # text core survives
+    assert (out / "images" / "slide_1.png").exists() is False
+    assert "Coffee" in (out / "prompts.md").read_text()
+
+    from pptx import Presentation
+
+    prs = Presentation(str(out / "deck.pptx"))
+    slide1_pictures = [sh for sh in prs.slides[0].shapes
+                       if str(sh.shape_type).startswith("PICTURE")]
+    slide2_pictures = [sh for sh in prs.slides[1].shapes
+                       if str(sh.shape_type).startswith("PICTURE")]
+    assert slide1_pictures == []  # no text-card PNG in the editable deck
+    assert len(slide2_pictures) == 1
