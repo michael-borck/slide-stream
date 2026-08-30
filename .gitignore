@@ -92,3 +92,10 @@ slidestream.yaml
 
 # Claude cache
 .claude/
+# local secrets & per-machine provider config
+.env
+slidestream.yml
+slidestream.yaml
+# local diagnostics
+run.log
+mascot-test/

@@ -1663,11 +1663,12 @@ def test_openai_tts_uses_write_to_file(config, tmp_path, mocker):
     fake_response.stream_to_file.assert_not_called()
 
 
-def test_swarmui_headers_tolerate_bearer_prefix():
+def test_swarmui_headers_tolerate_bearer_prefix(monkeypatch):
     """A token pasted with its scheme ('Bearer xyz') must not produce
     'Bearer Bearer xyz' — strip the redundant prefix."""
     from slide_stream.providers.images import SwarmUIImageProvider
 
+    monkeypatch.delenv("SWARMUI_TOKEN", raising=False)
     prefixed = SwarmUIImageProvider({"providers": {"images": {"api_key": "Bearer abc123"}}})
     assert prefixed._headers() == {"Authorization": "Bearer abc123"}
     plain = SwarmUIImageProvider({"providers": {"images": {"api_key": "abc123"}}})

@@ -199,7 +199,8 @@ def test_cli_create_powerpoint(runner, sample_powerpoint, tmp_path, mocker, monk
         sample_powerpoint.unlink(missing_ok=True)
 
 
-def test_cli_unsupported_file_type(runner):
+def test_cli_unsupported_file_type(runner, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # ignore any local slidestream.yml/.env
     """Test CLI with unsupported file type."""
     with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
         f.write("Some text content")
@@ -216,7 +217,8 @@ def test_cli_unsupported_file_type(runner):
         Path(f.name).unlink(missing_ok=True)
 
 
-def test_cli_nonexistent_file(runner):
+def test_cli_nonexistent_file(runner, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     """Test CLI with non-existent input file."""
     result = runner.invoke(app, [
         "create", "nonexistent.md", "test_output.mp4"
