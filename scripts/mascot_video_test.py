@@ -41,6 +41,7 @@ CONFIG = """providers:
   images:
     provider: swarmui
     base_url: https://swarmui.locopuente.org
+    api_key: "${SWARMUI_TOKEN}"
     model: juggernautXL_v9
     fallback: text
   avatar:
