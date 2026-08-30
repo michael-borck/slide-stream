@@ -43,6 +43,7 @@ CONFIG = """providers:
     base_url: https://swarmui.locopuente.org
     api_key: "${SWARMUI_TOKEN}"
     model: juggernautXL_v9
+    timeout: 300            # first generation may load the model (cold start)
     fallback: text
   avatar:
     provider: wan-s2v
@@ -57,10 +58,10 @@ settings:
 """
 
 
-def run(label: str, cmd: list[str]) -> None:
+def run(label: str, cmd: list[str], env: dict[str, str]) -> None:
     print(f"\n=== {label} ===")
     print(" ".join(str(c) for c in cmd))
-    proc = subprocess.run([str(c) for c in cmd], text=True)
+    proc = subprocess.run([str(c) for c in cmd], text=True, env=env)
     if proc.returncode != 0:
         print(f"\n!! {label} FAILED (exit {proc.returncode}) — see output above")
         sys.exit(proc.returncode or 1)
@@ -81,6 +82,11 @@ def main() -> None:
 
     work = Path(args.workdir)
     work.mkdir(parents=True, exist_ok=True)
+    # Isolate the test from the user's global ~/.slidestream.yml (stale
+    # voice_sample/provider settings there silently override the test config).
+    child_home = work / "home"
+    child_home.mkdir(exist_ok=True)
+    child_env = dict(os.environ, HOME=str(child_home))
     deck = work / "test-deck.md"
     deck.write_text(DECK, encoding="utf-8")
     cfg = work / "config.yaml"
@@ -88,7 +94,7 @@ def main() -> None:
 
     out_dir = work / "enhanced"
     if not args.skip_enrich:
-        run("STAGE 1: enrich (SwarmUI images + Ollama speaker notes)", [
+        run("STAGE 1: enrich (SwarmUI images + Ollama speaker notes)", env=child_env, cmd=[
             sys.executable, "-m", "slide_stream", "enrich",
             deck, out_dir, "--config", cfg, "--pptx", "--notes", "all",
         ])
@@ -100,7 +106,7 @@ def main() -> None:
     print(f"Slide images : {sorted(p.name for p in (out_dir / 'images').glob('*'))}")
 
     video = work / "mascot-video.mp4"
-    run("STAGE 2: create (narrated video, teddy lip-syncing via wan-s2v)", [
+    run("STAGE 2: create (narrated video, teddy lip-syncing via wan-s2v)", env=child_env, cmd=[
         sys.executable, "-m", "slide_stream", "create",
         enriched_md, video, "--config", cfg,
     ])

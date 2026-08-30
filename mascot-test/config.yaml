@@ -1,0 +1,28 @@
+providers:
+  llm:
+    provider: ollama
+    base_url: https://ollama.locollm.org
+    api_key: "${OLLAMA_TOKEN}"
+    model: gemma4:12b
+    think: false
+  tts:
+    provider: voicebox
+    base_url: https://voicebox.locoensayo.org
+    api_key: "${CHATTERBOX_TOKEN}"
+    voice: Emily.wav
+  images:
+    provider: swarmui
+    base_url: https://swarmui.locopuente.org
+    api_key: "${SWARMUI_TOKEN}"
+    model: juggernautXL_v9
+    fallback: text
+  avatar:
+    provider: wan-s2v
+    base_url: https://comfyui.locopuente.org
+    api_key: "${COMFYUI_TOKEN}"
+    source: teddy          # bundled mascot — lip-syncs via wan-s2v
+    clip_seconds: 2        # short looping clip = faster test
+settings:
+  strict: false
+  narration:
+    target_seconds: 20

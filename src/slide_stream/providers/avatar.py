@@ -644,11 +644,22 @@ class _ComfyUIAvatar(AvatarProvider):
         started = time.monotonic()
         last_heartbeat = started
         while time.monotonic() < deadline:
-            hist = requests.get(
-                f"{base_url}/history/{prompt_id}", headers=headers, timeout=30
-            )
-            hist.raise_for_status()
-            data = hist.json()
+            try:
+                hist = requests.get(
+                    f"{base_url}/history/{prompt_id}", headers=headers, timeout=120
+                )
+                hist.raise_for_status()
+                data = hist.json()
+            except requests.RequestException as e:
+                # Right after a heavy render ComfyUI can go unresponsive for a
+                # while (queue churn, VRAM recovery). A slow or dropped
+                # history response is not fatal while the deadline holds —
+                # keep polling rather than abandoning the slide.
+                err_console.print(
+                    f"  - {self.name}: history poll failed ({e}); retrying"
+                )
+                time.sleep(poll_interval)
+                continue
             entry = data.get(prompt_id)
             if entry:
                 status_str = entry.get("status", {}).get("status_str")

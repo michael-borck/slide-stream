@@ -1,0 +1,82 @@
+╭───────────────────╮
+│ 🖼️  Enriching deck │
+╰───────────────────╯
+✅ Loaded configuration from: /Users/michael/.slidestream.yml
+✅ Loaded configuration from: mascot-test/config.yaml
+📄 Found 2 slides.
+✅ Image Provider: swarmui
+Slide 1/2: Coffee
+  - Querying LLM...
+  - SwarmUI error: HTTPSConnectionPool(host='swarmui.locopuente.org', port=443): Read timed out. (read timeout=180.0). Using text fallback.
+  - Generated text slide: Coffee
+  - Wrote AI speaker notes
+Slide 2/2: Tea
+  - Querying LLM...
+  - Generated SwarmUI image: Tea
+  - Wrote AI speaker notes
+╭─────────────────────────────────────────────────╮
+│ 🎉 Enriched deck written                        │
+│                                                 │
+│ Markdown: mascot-test/enhanced/test-deck.md     │
+│ PowerPoint: mascot-test/enhanced/test-deck.pptx │
+│ Images: mascot-test/enhanced/images             │
+╰─────────────────────────────────────────────────╯
+╭─────────────────────────────╮
+│ 🚀 Starting SlideStream! 🚀 │
+╰─────────────────────────────╯
+✅ Loaded configuration from: /Users/michael/.slidestream.yml
+✅ Loaded configuration from: mascot-test/config.yaml
+✅ Image Provider: swarmui
+✅ TTS Provider: voicebox
+✅ Avatar Provider: wan-s2v
+✅ LLM Provider: ollama
+
+1. Parsing Markdown...
+📄 Found 2 slides.
+Slide 1/2: Coffee
+  - Querying LLM...
+  - Querying LLM...
+  - Voicebox error: voice_sample not found: /Users/michael/voices/my_voice.wav. Using gTTS fallback.
+  - Generated audio with gTTS
+  - Uploaded avatar source to ComfyUI
+  - wan-s2v talking head: rendering… 46s elapsed
+  - wan-s2v talking head: rendering… 91s elapsed
+  - wan-s2v talking head: rendering… 137s elapsed
+  - wan-s2v talking head: rendering… 182s elapsed
+  - wan-s2v talking head: rendering… 228s elapsed
+  - wan-s2v talking head: rendering… 273s elapsed
+  - wan-s2v talking head: rendering… 319s elapsed
+  - Generated wan-s2v talking head (slide 1)
+Slide 2/2: Tea
+  - Querying LLM...
+  - Querying LLM...
+  - Voicebox error: voice_sample not found: /Users/michael/voices/my_voice.wav. Using gTTS fallback.
+  - Generated audio with gTTS
+  - wan-s2v avatar error: HTTPSConnectionPool(host='comfyui.locopuente.org', port=443): Read timed out. (read timeout=30)
+
+📊 Rendered 2/2 slides · 0 without audio · 0 LLM narration failure(s) · 1 slide(s) without avatar  (output is incomplete)
+⚠ 2 slide(s) fell back to the default gTTS voice due to provider errors.
+💡 Run slide-stream doctor test-deck.md to check your providers & setup.
+
+2. Combining Video Fragments...
+╭───────────────────────────────────────────╮
+│ 🎉 Video creation complete! 🎉            │
+│                                           │
+│ Output file: mascot-test/mascot-video.mp4 │
+╰───────────────────────────────────────────╯
+
+3. Cleaning up temporary files...
+✅ Cleanup complete.
+
+=== STAGE 1: enrich (SwarmUI images + Ollama speaker notes) ===
+/Volumes/Crucial X9/Projects/slide-stream/.venv/bin/python3 -m slide_stream enrich mascot-test/test-deck.md mascot-test/enhanced --config mascot-test/config.yaml --pptx --notes all
+
+Enhanced deck: mascot-test/enhanced/test-deck.md
+Slide images : ['._slide_1.png', '._slide_2.png', 'slide_1.png', 'slide_2.png']
+
+=== STAGE 2: create (narrated video, teddy lip-syncing via wan-s2v) ===
+/Volumes/Crucial X9/Projects/slide-stream/.venv/bin/python3 -m slide_stream create mascot-test/enhanced/test-deck.md mascot-test/mascot-video.mp4 --config mascot-test/config.yaml
+
+✅ Video written: mascot-test/mascot-video.mp4 (1.8 MB)
+Check: teddy talks bottom-left over the SwarmUI art, Emily's
+voice narrates, and the two slides crossfade.
