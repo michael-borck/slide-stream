@@ -1,6 +1,7 @@
 """Media handling functionality for Slide Stream."""
 
 import os
+import textwrap
 
 import numpy as np
 from moviepy import (
@@ -15,9 +16,75 @@ from moviepy.video.fx import Loop
 from PIL import Image, ImageDraw
 from rich.console import Console
 
+from .providers.images import load_font
+
 # Note: Configuration now comes from config parameter
 
 err_console = Console(stderr=True, style="bold red")
+
+
+def compose_slide_with_bullets(
+    image_path: str,
+    title: str,
+    bullets: list[str],
+    output_path: str,
+    config: dict,
+) -> str:
+    """Render a video slide with the educator's bullet points beside the
+    generated artwork.
+
+    Bullets are the core of the slide (mirroring the enhanced-deck layout):
+    the educator's text on the left, artwork on the right. Used when an image
+    provider (SwarmUI, DALL-E, Imagen, …) produced the slide art — such art
+    contains no text at all, so without this the video would show only
+    pictures while the narration speaks bullets nobody can see. The text
+    provider already draws bullets into its own cards and needs no composing.
+    """
+    from PIL import ImageDraw
+
+    video_settings = config["settings"]["video"]
+    image_settings = config["settings"].get("image", {})
+    width, height = video_settings["resolution"]
+    bg_color = image_settings.get("bg_color", "black")
+    font_color = image_settings.get("font_color", "white")
+
+    img = Image.new("RGB", (width, height), color=bg_color)
+    draw = ImageDraw.Draw(img)
+
+    title_size = int(height * 0.062)
+    body_size = int(height * 0.042)
+    title_font = load_font(title_size)
+    body_font = load_font(body_size)
+    margin = int(width * 0.055)
+    wrap_cols = 34
+
+    y = int(height * 0.075)
+    if title:
+        for line in textwrap.wrap(title, width=wrap_cols) or [title]:
+            draw.text((margin, y), line, font=title_font, fill=font_color)
+            y += int(title_size * 1.25)
+        y += int(height * 0.04)
+
+    for item in bullets:
+        for line in textwrap.wrap(f"• {item}", width=wrap_cols) or [f"• {item}"]:
+            if y > height * 0.84:  # keep clear of the presenter circle below
+                break
+            draw.text((margin, y), line, font=body_font, fill=font_color)
+            y += int(body_size * 1.45)
+        y += int(height * 0.022)
+
+    # Artwork on the right: scaled to fit its region, centered vertically.
+    art = Image.open(image_path).convert("RGB")
+    region_w, region_h = int(width * 0.42), int(height * 0.72)
+    scale = min(region_w / art.width, region_h / art.height, 1.0)
+    if scale < 1.0:
+        art = art.resize((max(1, int(art.width * scale)), max(1, int(art.height * scale))))
+    art_x = width - int(width * 0.045) - art.width
+    art_y = (height - art.height) // 2
+    img.paste(art, (art_x, art_y))
+
+    img.save(output_path)
+    return output_path
 
 
 def concatenate_with_transition(clips: list, transition_seconds: float):

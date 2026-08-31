@@ -15,6 +15,7 @@ providers:
     base_url: https://swarmui.locopuente.org
     api_key: "${SWARMUI_TOKEN}"
     model: juggernautXL_v9
+    timeout: 300            # first generation may load the model (cold start)
     fallback: text
   avatar:
     provider: wan-s2v

@@ -30,7 +30,11 @@ from .draft import (
     validate_deck_markdown,
 )
 from .llm import get_llm_client, query_llm, query_llm_with_image
-from .media import concatenate_with_transition, create_video_fragment
+from .media import (
+    compose_slide_with_bullets,
+    concatenate_with_transition,
+    create_video_fragment,
+)
 from .narration import (
     build_narration_prompt,
     narration_source,
@@ -750,6 +754,34 @@ def create(
                     # Avatar wanted for this slide but there is no narration
                     # audio to drive it; count it as a headless slide.
                     avatar_failed += 1
+
+                # Bullets are the core of the slide: when an image provider
+                # produced the art (which contains no text), compose the
+                # educator's bullet points beside it for the video. The text
+                # provider already draws bullets into its own cards.
+                bullets = [
+                    str(c).strip() for c in slide.get("content", []) if str(c).strip()
+                ]
+                if (
+                    bullets
+                    and image_provider.name != "text"
+                    and config["settings"].get("video", {}).get("bullets_overlay", True)
+                ):
+                    composed_path = temp_dir / f"slide_{slide_num}_composed.png"
+                    try:
+                        compose_slide_with_bullets(
+                            str(img_path),
+                            effective_title,
+                            bullets,
+                            str(composed_path),
+                            config,
+                        )
+                        img_path = composed_path
+                    except Exception as e:  # fall back to art-only
+                        err_console.print(
+                            f"  - Warning: bullet overlay failed ({e}); "
+                            "using the artwork alone."
+                        )
 
                 fragment_file = create_video_fragment(
                     str(img_path),
