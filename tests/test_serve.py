@@ -377,6 +377,7 @@ def test_demo_mode_needs_no_token(base_config):
     assert cfg["limits"] == {
         "max_slides": serve.DEMO_MAX_SLIDES,
         "jobs_per_hour": serve.DEMO_JOBS_PER_HOUR,
+        "job_ttl_minutes": serve.JOB_TTL_SECONDS // 60,
     }
     # protected endpoint reachable without a token
     assert client.get("/api/jobs/whatever").status_code == 404

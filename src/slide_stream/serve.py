@@ -1096,7 +1096,11 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
             "demo": demo_mode,
             "local": local_mode,
             "limits": (
-                {"max_slides": DEMO_MAX_SLIDES, "jobs_per_hour": DEMO_JOBS_PER_HOUR}
+                {
+                    "max_slides": DEMO_MAX_SLIDES,
+                    "jobs_per_hour": DEMO_JOBS_PER_HOUR,
+                    "job_ttl_minutes": JOB_TTL_SECONDS // 60,
+                }
                 if demo_mode
                 else None
             ),
@@ -2028,6 +2032,9 @@ footer a:hover{color:var(--accent)}
  <code>pip install slide-stream</code> &middot;
  <a href="https://slidestream.eduserver.au">learn more</a>
  <span class="muted" id="limits" style="display:block"></span>
+ <span class="muted" style="display:block">Everything you see — images, voice, animated presenter — is generated on one
+ modest self-hosted machine. Slower than a cloud render farm, and proof of
+ what consumer-grade hardware can do.</span>
 </div>
 
 <div class="steps demo-hide" id="steps">
@@ -2192,6 +2199,14 @@ footer a:hover{color:var(--accent)}
  <div id="progWrap" style="display:none">
   <div id="progTrack"><div id="progBar"></div></div>
   <p class="muted" id="progLabel"></p>
+ </div>
+ <div id="doneAdvert" class="banner" style="display:none">
+  <strong>Like it?</strong> That whole video — images, voice, animated
+  presenter — was generated on the same modest self-hosted machine. The free
+  <strong>desktop app</strong> unlocks your own cloned voice, your own
+  headshot, unlimited slides — and it is faster on your own hardware.
+  <a id="doneDl" href="https://github.com/michael-borck/slide-stream/releases/latest">⬇ Get the desktop app</a>
+  <span class="muted" id="linkExpiry" style="display:block"></span>
  </div>
  <details id="logWrap" style="display:none">
   <summary>Render log &amp; trace</summary>
@@ -2702,11 +2717,17 @@ async function poll(id,tok,kind){
    $("notice").textContent="⚠️ "+j.warnings.join(" ");$("notice").style.display="block"}
   const lbl=kind==="pptx"?"download deck (.zip)":"download video";
   $("status").innerHTML='<span class="badge">done</span> <a href="/api/jobs/'+id+
-   '/result?t='+encodeURIComponent(tok||j.token||"")+'" download>⬇ '+lbl+"</a>"+
-   (demo?' <span class="elapsed">this link works once</span>':"");
-  if(demo){const a=$("status").querySelector("a");
+   '/result?t='+encodeURIComponent(tok||j.token||"")+'" download>⬇ '+lbl+"</a>";
+  if(demo){
+   const a=$("status").querySelector("a");
    if(a)a.onclick=()=>{$("status").innerHTML=
-    '<span class="badge">done</span> <span class="elapsed">downloaded — the job is wiped (demo)</span>'}}
+    '<span class="badge">done</span> <span class="elapsed">downloaded — the job is wiped (demo)</span>'};
+   const doneAd=$("doneAdvert");doneAd.style.display="block";
+   const doneDl=$("doneDl");if(doneDl&&$("dlBanner"))doneDl.href=$("dlBanner").href;
+   const ttl=cfg.limits&&cfg.limits.job_ttl_minutes?cfg.limits.job_ttl_minutes:60;
+   $("linkExpiry").textContent=
+    "Download links work once and expire after about "+ttl+" minutes (demo).";
+  }
   if(kind==="pptx"&&!demo&&projectId)showThumbs();return}
  if(j.status==="error"){stopProgress();t0=0;$("go").disabled=false;hideProg();
   $("status").textContent="Failed: "+(j.error||"see log");return}
