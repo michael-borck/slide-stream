@@ -1,0 +1,7 @@
+# Narration-only: text cards + spoken voice, no avatar, no image generation.
+# The fastest sanity check of parse -> narrate -> speak -> render.
+providers:
+  images:
+    provider: text
+  avatar:
+    provider: none

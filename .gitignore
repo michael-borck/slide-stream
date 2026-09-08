@@ -99,3 +99,6 @@ slidestream.yaml
 # local diagnostics
 run.log
 mascot-test/
+
+# e2e render outputs and logs
+e2e/out/

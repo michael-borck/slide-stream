@@ -1,0 +1,5 @@
+# Editable deck instead of a video: slides + SwarmUI artwork, narration in
+# the speaker notes. Output file extension (.pptx) selects this mode.
+providers:
+  avatar:
+    provider: none

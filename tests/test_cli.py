@@ -170,6 +170,44 @@ def test_cli_create_basic(runner, sample_markdown, tmp_path, mocker, monkeypatch
     assert output.exists()
 
 
+def test_cli_create_pptx_output_skips_video_pipeline(
+    runner, sample_markdown, tmp_path, mocker, monkeypatch
+):
+    """A .pptx output filename exports an editable deck: no TTS, no ffmpeg."""
+    monkeypatch.chdir(tmp_path)
+    md_file = tmp_path / "slides.md"
+    md_file.write_text(sample_markdown)
+    config_file = tmp_path / "config.yaml"
+    # Text images keep the test hermetic; llm: none keeps narration default.
+    config_file.write_text(
+        "providers:\n"
+        "  llm:\n    provider: none\n"
+        "  images:\n    provider: text\n"
+        + FAST_VIDEO_CONFIG
+    )
+
+    tts = mocker.MagicMock()
+    tts.synthesize.side_effect = AssertionError("TTS must not run for .pptx output")
+
+    output = tmp_path / "out.pptx"
+    result = runner.invoke(
+        app,
+        ["create", str(md_file), str(output), "--config", str(config_file)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert output.exists()
+    tts.synthesize.assert_not_called()
+
+    from pptx import Presentation
+
+    prs = Presentation(str(output))
+    assert len(prs.slides) > 0
+    # Narration lands in the speaker notes, not an audio track.
+    first_notes = prs.slides[0].notes_slide.notes_text_frame.text.strip()
+    assert first_notes
+
+
 def test_cli_create_powerpoint(runner, sample_powerpoint, tmp_path, mocker, monkeypatch):
     """create renders a real video from PowerPoint, with TTS mocked out."""
     monkeypatch.chdir(tmp_path)

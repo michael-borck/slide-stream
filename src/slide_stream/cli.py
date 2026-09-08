@@ -29,6 +29,7 @@ from .draft import (
     extract_source_text,
     validate_deck_markdown,
 )
+from .export_pptx import export_pptx
 from .llm import get_llm_client, query_llm, query_llm_with_image
 from .media import (
     compose_slide_with_bullets,
@@ -197,7 +198,8 @@ def create(
     output_filename: Annotated[
         str,
         typer.Argument(
-            help="Filename for the output video.",
+            help="Filename for the output video (.mp4) or an editable "
+            "PowerPoint deck (.pptx: slides, artwork, narration in notes).",
         ),
     ],
     config_file: Annotated[
@@ -430,6 +432,11 @@ def create(
         err_console.print(f"Unsupported file type: {file_extension}. Supported: .md, .pptx")
         raise typer.Exit(code=1)
 
+    # A .pptx OUTPUT means "editable deck, not a video": same per-slide
+    # pipeline (artwork + narration), but no TTS/audio, avatar, or ffmpeg —
+    # narration goes into the speaker notes instead of the soundtrack.
+    pptx_mode = Path(str(output_filename)).suffix.lower() == ".pptx"
+
     # Setup a unique temporary directory. Creating our own subdirectory (rather
     # than reusing the configured path directly) guarantees we can never delete
     # files we did not create, and that concurrent runs never collide.
@@ -533,6 +540,7 @@ def create(
 
         # Process each slide with Rich progress bar
         video_fragments = []
+        pptx_slides: list[dict[str, Any]] = []
         audio_failed = 0
         llm_narration_failed = 0
         avatar_failed = 0
@@ -702,6 +710,26 @@ def create(
                         err_console.print(f"Slide {slide_num}: {e}")
                         _doctor_nudge(input_path.name)
                         raise typer.Exit(code=1)
+
+                if pptx_mode:
+                    # Deck export stops here: the artwork exists and the
+                    # narration text is final — audio and compositing below
+                    # are video-only steps.
+                    pptx_slides.append(
+                        {
+                            "title": effective_title or str(slide["title"]),
+                            "content": [
+                                str(c).strip()
+                                for c in slide.get("content", [])
+                                if str(c).strip()
+                            ],
+                            "image_path": str(img_path),
+                            "notes": speech_text,
+                        }
+                    )
+                    progress.update(process_task, advance=1)
+                    continue
+
                 if not speech_text.strip():
                     # Nothing to say (e.g. an empty slide or a blank script
                     # block): render the slide silently rather than sending
@@ -801,6 +829,25 @@ def create(
                     raise typer.Exit(code=1)
 
                 progress.update(process_task, advance=1)
+
+        # PowerPoint export: write the collected slides and skip the whole
+        # audio/video tail of the pipeline.
+        if pptx_mode:
+            try:
+                export_pptx(pptx_slides, Path(str(output_filename)))
+            except Exception as e:
+                err_console.print(f"Error writing PowerPoint deck: {e}")
+                raise typer.Exit(code=1)
+            console.print(
+                Panel(
+                    f"🎉 [bold green]PowerPoint creation complete![/bold green] 🎉\n\n"
+                    f"Output file: [yellow]{output_filename}[/yellow]\n"
+                    f"Narration is in each slide's speaker notes.",
+                    border_style="green",
+                    expand=False,
+                )
+            )
+            return
 
         # Per-run summary: surface partial output and degradation rather than
         # always declaring total success.
