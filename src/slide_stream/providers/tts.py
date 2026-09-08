@@ -1,6 +1,7 @@
 """Text-to-speech provider implementations."""
 
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
@@ -38,6 +39,28 @@ GTTS_ACCENTS = {
     "irish": "ie",
     "south-african": "co.za",
 }
+
+
+def _parse_status_body(body: str) -> dict[str, Any]:
+    """Parse a /generate/{id}/status response body into a dict.
+
+    Voicebox deployments answer with either plain JSON or a
+    ``text/event-stream`` of ``data:`` frames (the stream ends at the terminal
+    status, so the last frame carries the final state). Requests reads the
+    whole body before we see it, so peeling the SSE framing here is enough.
+    """
+    text = body.strip()
+    if text.startswith("data:"):
+        frames = [
+            line[5:].strip() for line in text.splitlines() if line.startswith("data:")
+        ]
+        if frames:
+            text = frames[-1]
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _warn_if_sample_too_short(sample_path: Path) -> None:
@@ -696,7 +719,7 @@ class VoiceboxTTSProvider(TTSProvider):
                         timeout=30,
                     )
                     st.raise_for_status()
-                    status_data = st.json()
+                    status_data = _parse_status_body(st.text)
                     status = status_data.get("status")
 
                 if status == "failed":

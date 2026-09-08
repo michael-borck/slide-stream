@@ -1001,9 +1001,9 @@ def test_voicebox_polls_until_done(config, tmp_path, mocker):
     mocker.patch("slide_stream.providers.tts.requests.post", return_value=gen)
 
     generating = mocker.MagicMock()
-    generating.json.return_value = {"status": "generating"}
+    generating.text = '{"status": "generating"}'
     done = mocker.MagicMock()
-    done.json.return_value = {"status": "completed"}
+    done.text = '{"status": "completed"}'
     audio = mocker.MagicMock(content=b"OK")
     get = mocker.patch(
         "slide_stream.providers.tts.requests.get",
@@ -1016,6 +1016,74 @@ def test_voicebox_polls_until_done(config, tmp_path, mocker):
     assert out.read_bytes() == b"OK"
     # Last GET fetched the audio after polling status twice.
     assert get.call_args_list[-1][0][0] == "https://vb.org/audio/g1"
+
+
+def test_voicebox_status_body_parsing():
+    from slide_stream.providers.tts import _parse_status_body
+
+    # Plain JSON (older deployments).
+    assert _parse_status_body('{"status": "completed"}') == {"status": "completed"}
+    # SSE framing: single and multiple frames — last frame wins.
+    sse_one = 'data: {"status": "failed", "error": "CUDA busy"}\n\n'
+    assert _parse_status_body(sse_one) == {"status": "failed", "error": "CUDA busy"}
+    sse_multi = (
+        'data: {"status": "generating"}\n\n'
+        'data: {"status": "completed", "duration": 1.5}\n\n'
+    )
+    assert _parse_status_body(sse_multi) == {"status": "completed", "duration": 1.5}
+    # Unparseable junk (e.g. an SPA HTML catch-all) becomes an empty dict.
+    assert _parse_status_body("<!doctype html><html></html>") == {}
+
+
+def test_voicebox_polls_over_sse_status_stream(config, tmp_path, mocker):
+    """Deployed Voicebox answers /status with text/event-stream frames."""
+    from slide_stream.providers.tts import VoiceboxTTSProvider
+
+    config["providers"]["tts"] = {
+        "provider": "voicebox", "base_url": "https://vb.org",
+        "profile_id": "p1", "poll_interval": 0,
+    }
+    gen = mocker.MagicMock()
+    gen.json.return_value = {"id": "g1", "status": "generating"}
+    mocker.patch("slide_stream.providers.tts.requests.post", return_value=gen)
+
+    generating = mocker.MagicMock()
+    generating.text = 'data: {"status": "generating"}\n\n'
+    done = mocker.MagicMock()
+    done.text = 'data: {"status": "completed"}\n\n'
+    audio = mocker.MagicMock(content=b"OK")
+    mocker.patch(
+        "slide_stream.providers.tts.requests.get",
+        side_effect=[generating, done, audio],
+    )
+    mocker.patch("slide_stream.providers.tts.time.sleep")
+
+    out = tmp_path / "a.mp3"
+    assert VoiceboxTTSProvider(config).synthesize("hi", str(out)) == str(out)
+    assert out.read_bytes() == b"OK"
+
+
+def test_voicebox_sse_failure_surfaces_error(config, tmp_path, mocker):
+    """A terminal SSE 'failed' frame raises with the server's error detail."""
+    from slide_stream.providers.tts import VoiceboxTTSProvider
+
+    config["providers"]["tts"] = {
+        "provider": "voicebox", "base_url": "https://vb.org", "profile_id": "p1",
+    }
+    config["settings"]["strict"] = True
+    gen = mocker.MagicMock()
+    gen.json.return_value = {"id": "g1", "status": "generating"}
+    mocker.patch("slide_stream.providers.tts.requests.post", return_value=gen)
+
+    failed = mocker.MagicMock()
+    failed.text = 'data: {"status": "failed", "error": "CUDA error: busy"}\n\n'
+    mocker.patch(
+        "slide_stream.providers.tts.requests.get", return_value=failed
+    )
+    mocker.patch("slide_stream.providers.tts.time.sleep")
+
+    result = VoiceboxTTSProvider(config).synthesize("hi", str(tmp_path / "a.mp3"))
+    assert result is None  # falls back to gTTS after the RuntimeError
 
 
 def test_voicebox_strict_failure_returns_none(config, tmp_path, mocker):
@@ -1445,9 +1513,9 @@ def test_voicebox_pending_and_queued_poll_like_generating(config, tmp_path, mock
     gen.json.return_value = {"id": "g1", "status": "pending"}
     mocker.patch("slide_stream.providers.tts.requests.post", return_value=gen)
     queued = mocker.MagicMock()
-    queued.json.return_value = {"status": "queued"}
+    queued.text = '{"status": "queued"}'
     done = mocker.MagicMock()
-    done.json.return_value = {"status": "completed"}
+    done.text = '{"status": "completed"}'
     audio = mocker.MagicMock(content=b"OK")
     get = mocker.patch(
         "slide_stream.providers.tts.requests.get",
