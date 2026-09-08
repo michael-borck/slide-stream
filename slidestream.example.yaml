@@ -54,6 +54,12 @@ providers:
   # Talking-head avatar overlay (off by default). Enable per run with --avatar,
   # disable with --no-avatar. List the built-in mascots with: slide-stream avatars
   #
+  # Speed on real decks: a wan-s2v/sadtalker GPU render takes minutes PER SLIDE.
+  # settings.avatar.reuse_clip renders ONE head clip (slide 1's voice) and loops
+  # it under every later slide — one GPU render for the whole deck, at the cost
+  # of approximate lip-sync. settings.avatar.slides picks which slides get a
+  # head at all ("all", a number, or a list like [1, 5]).
+  #
   # No-GPU options (work on any mascot or your own image):
   #   provider: static             # a still image held in the corner
   #   source: owl                  # a built-in name (teddy/panda/robot/

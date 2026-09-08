@@ -1,0 +1,22 @@
+# Architecture Decision Records
+
+Decisions that shape SlideStream, recorded so nobody has to reverse-engineer
+them from code. Backfilled 2026-09 from module docstrings, config comments,
+and the git history (the repo's visible history starts in the 2.15.x era).
+
+| ADR | Title | Status |
+|-----|-------|--------|
+| [0001](0001-provider-registry-fallback-strict.md) | Provider registry with fallback chains and strict mode | Accepted |
+| [0002](0002-layered-yaml-config.md) | Layered YAML configuration with `${ENV}` expansion | Accepted |
+| [0003](0003-openai-compatible-self-hosted.md) | OpenAI-compatible APIs as the default self-hosted shape | Accepted |
+| [0004](0004-always-available-floor.md) | gTTS and text cards are the always-available floor | Accepted |
+| [0005](0005-privacy-first-voice-cloning.md) | Privacy-first voice cloning (ephemeral, deleted after the run) | Accepted |
+| [0006](0006-avatar-render-economics.md) | Avatar render economics: one GPU clip per deck | Accepted |
+| [0007](0007-hermetic-tests-env-scrubbing.md) | Hermetic tests; provider env vars scrubbed | Accepted |
+| [0008](0008-dual-output-video-and-pptx.md) | Dual output modes: `.mp4` video and editable `.pptx` deck | Accepted |
+
+## Format
+
+Each ADR is short: Context (the forces), Decision (what we chose), and
+Consequences (what that costs or enables). New ADRs get the next number and
+are never edited after acceptance — supersede them with a new record instead.

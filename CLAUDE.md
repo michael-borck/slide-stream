@@ -100,8 +100,10 @@ Also: `deploy/` (Docker), `desktop/` (Tauri app), `landing/` (website), `contrib
 
 - **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)**: Comprehensive user guide with examples
 - **[docs/DEVELOPMENT_WORKFLOW.md](docs/DEVELOPMENT_WORKFLOW.md)**: Development workflow and release process
+- **[docs/adr/](docs/adr/)**: Architecture Decision Records (backfilled; read before changing provider/config/test design)
 - **[docs/TYPE_SAFETY.md](docs/TYPE_SAFETY.md)**: Type safety documentation
 - **[docs/TYPING_IMPROVEMENTS.md](docs/TYPING_IMPROVEMENTS.md)**: Type improvement roadmap
+- **[e2e/](e2e/)**: End-to-end render matrix against the configured stack (`e2e/run.sh`)
 - **[tests/fixtures/](tests/fixtures/)**: Test data files
 
 ## Version History (milestones)
