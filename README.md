@@ -249,6 +249,27 @@ server, image provider, avatar engine, and API keys come from the server's own
 layered config (`~/.slidestream.yaml`). The desktop app and Docker deploy are
 the same UI.
 
+Project renders reuse images from the last enrichment while the source deck
+is unchanged. Editing the deck invalidates that association. Download retention
+starts when a job finishes, with a default of 60 minutes; queued and running
+jobs keep their working files.
+
+Web avatar names must be built-in mascots. Upload custom photos through the
+photo field. Request bodies have a streaming size limit, and private-instance
+uploads require authentication before the server reads their bodies.
+For reverse proxies, configure `SLIDESTREAM_TRUSTED_PROXIES` with explicit
+proxy IPs or CIDRs. The old boolean trust switch is no longer used. See the
+[deployment guide](deploy/README.md#reverse-proxy-and-client-ips).
+
+For a deck-only export with narration in its speaker notes:
+
+```bash
+slide-stream create slides.md presentation.pptx
+```
+
+This output needs no FFmpeg, TTS provider, or avatar provider, including in
+strict mode and when checking it with `--dry-run`.
+
 ### Examples
 
 ```bash
@@ -394,6 +415,9 @@ slide-stream enrich deck.md out/ --image-provider local --image-folder ./pics --
 slide-stream enrich deck.md out/ --pptx --notes all    # every slide
 slide-stream enrich deck.md out/ --pptx --notes fill   # only slides missing notes
 ```
+
+Existing PowerPoint speaker notes are preserved by default. `--notes all`
+replaces them; `--notes fill` writes notes where they are missing.
 
 The output is a real artifact you can review, hand-edit, or narrate as a second
 pass (`slide-stream create out/deck.md video.mp4`). `--notes` are written as a

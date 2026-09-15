@@ -17,7 +17,7 @@ services:
     #     args: {SLIDE_STREAM_VERSION: "${SLIDE_STREAM_VERSION:-}"}
     restart: unless-stopped
     ports:
-      - "${PORT:-8080}:8080"
+      - "${BIND_HOST:-127.0.0.1}:${PORT:-8080}:8080"
     environment:
       # Token gates private/full instances. The demo (SLIDESTREAM_DEMO=true)
       # is open instead: no token, but rate-limited (3 videos/hour per IP)
@@ -26,10 +26,8 @@ services:
       SLIDESTREAM_TOKEN: ${SLIDESTREAM_TOKEN:-}
       # Show the "install locally for full control" banner on the hosted demo.
       SLIDESTREAM_DEMO: ${SLIDESTREAM_DEMO:-true}
-      # This deployment sits behind a reverse proxy (nginx/Caddy/NPM for TLS),
-      # so trust the X-Forwarded-For entry the proxy appends when rate-limiting
-      # demo jobs per IP. Set 0 if clients hit the container port directly.
-      SLIDESTREAM_TRUSTED_PROXY: ${SLIDESTREAM_TRUSTED_PROXY:-1}
+      # Actual proxy peer IPs/CIDRs as seen by the container; empty trusts none.
+      SLIDESTREAM_TRUSTED_PROXIES: ${SLIDESTREAM_TRUSTED_PROXIES:-}
       # Cloud provider keys (see .env.example). The LLM that writes the
       # narration reads its key from here: openai->OPENAI_API_KEY,
       # gemini->GEMINI_API_KEY, claude->ANTHROPIC_API_KEY, groq->GROQ_API_KEY.

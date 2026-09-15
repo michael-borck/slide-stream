@@ -394,9 +394,13 @@ def create(
     if voice_sample:
         config["providers"]["tts"]["voice_sample"] = voice_sample
 
+    # Select output before validating dependencies: deck export has no audio
+    # or video tail, even when the user's normal config enables those providers.
+    pptx_mode = Path(str(output_filename)).suffix.lower() == ".pptx"
+
     if avatar is False:
         config["providers"]["avatar"]["provider"] = "none"
-    elif avatar is True and config["providers"]["avatar"].get("provider", "none") == "none":
+    elif not pptx_mode and avatar is True and config["providers"]["avatar"].get("provider", "none") == "none":
         err_console.print(
             "--avatar requires an avatar provider in the config file "
             "(e.g. providers.avatar.provider: precomputed)."
@@ -413,7 +417,7 @@ def create(
         config["settings"].setdefault("video", {})["transition_seconds"] = transition
 
     # FFmpeg is required to encode video; fail early with an actionable hint.
-    if not shutil.which("ffmpeg"):
+    if not pptx_mode and not shutil.which("ffmpeg"):
         err_console.print(
             "FFmpeg was not found on your PATH. SlideStream needs FFmpeg to "
             "encode video. Install it (e.g. 'brew install ffmpeg' or "
@@ -432,11 +436,6 @@ def create(
         err_console.print(f"Unsupported file type: {file_extension}. Supported: .md, .pptx")
         raise typer.Exit(code=1)
 
-    # A .pptx OUTPUT means "editable deck, not a video": same per-slide
-    # pipeline (artwork + narration), but no TTS/audio, avatar, or ffmpeg —
-    # narration goes into the speaker notes instead of the soundtrack.
-    pptx_mode = Path(str(output_filename)).suffix.lower() == ".pptx"
-
     # Setup a unique temporary directory. Creating our own subdirectory (rather
     # than reusing the configured path directly) guarantees we can never delete
     # files we did not create, and that concurrent runs never collide.
@@ -451,8 +450,10 @@ def create(
         # Initialize providers
         try:
             image_provider = ProviderFactory.create_image_provider(config)
-            tts_provider = ProviderFactory.create_tts_provider(config)
-            avatar_provider = ProviderFactory.create_avatar_provider(config)
+            avatar_provider = None
+            if not pptx_mode:
+                tts_provider = ProviderFactory.create_tts_provider(config)
+                avatar_provider = ProviderFactory.create_avatar_provider(config)
         except StrictModeError as e:
             err_console.print(f"{e}")
             raise typer.Exit(code=1)
@@ -500,6 +501,14 @@ def create(
             raise typer.Exit(code=1)
         console.print(f"📄 Found [bold yellow]{len(slides)}[/bold yellow] slides.")
 
+        # Per-slide artwork supplied by a project enrichment. Keeping these
+        # paths separate preserves the original Markdown/PPTX and its notes.
+        slide_paths = config["settings"].get("image", {}).get("slide_paths", [])
+        if isinstance(slide_paths, list):
+            for slide, path in zip(slides, slide_paths, strict=False):
+                if isinstance(path, str) and path:
+                    slide["image_path"] = path
+
         # Optional external narration script (verbatim, one block per slide).
         script_blocks: list[str] | None = None
         if script_file:
@@ -516,7 +525,7 @@ def create(
                     "are ignored."
                 )
 
-        avatar_enabled = avatar_provider.name != "none"
+        avatar_enabled = avatar_provider is not None and avatar_provider.name != "none"
 
         # --dry-run: assess and report, then stop before any rendering.
         if dry_run:
@@ -526,7 +535,7 @@ def create(
                 slides,
                 config,
                 {
-                    "mode": "create",
+                    "mode": "pptx" if pptx_mode else "create",
                     "input_ext": file_extension,
                     "verbatim_notes": verbatim_notes,
                     "script_blocks": script_blocks,
@@ -741,6 +750,7 @@ def create(
                     )
                     audio_file = None
                 else:
+                    assert tts_provider is not None  # video-only branch
                     audio_file = tts_provider.synthesize(
                         speech_text, str(audio_path)
                     )
@@ -763,6 +773,7 @@ def create(
                     if reuse_avatar_clip and reused_head is not None:
                         head_path = reused_head
                     else:
+                        assert avatar_provider is not None
                         head_path = avatar_provider.generate(
                             str(audio_path),
                             str(temp_dir / f"head_{slide_num}.mp4"),
@@ -1576,7 +1587,9 @@ def serve(
 
         webbrowser.open(url)
 
-    uvicorn.run(app_instance, host=host, port=port, log_level="warning")
+    # The app validates the actual socket peer against its proxy allowlist.
+    # Uvicorn must not replace that peer using forwarded headers first.
+    uvicorn.run(app_instance, host=host, port=port, log_level="warning", proxy_headers=False)
 
 
 @app.command()

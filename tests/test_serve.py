@@ -757,7 +757,8 @@ def test_non_demo_still_requires_token(base_config):
 def test_local_mode_open_and_no_demo_limits(base_config):
     """Desktop mode: no token, demo limits off even if both are set."""
     client = TestClient(serve.create_app(
-        config=base_config, token="secret", demo=True, local=True))
+        config=base_config, token="secret", demo=True, local=True),
+        base_url="http://127.0.0.1")
     cfg = client.get("/api/config").json()
     assert cfg["local"] is True
     assert cfg["auth_required"] is False
@@ -872,9 +873,10 @@ def test_xff_ignored_without_trusted_proxy(base_config, mocker, monkeypatch):
 
 def test_xff_rightmost_honored_behind_trusted_proxy(base_config, mocker,
                                                     monkeypatch):
-    monkeypatch.setenv("SLIDESTREAM_TRUSTED_PROXY", "1")
+    monkeypatch.setenv("SLIDESTREAM_TRUSTED_PROXIES", "10.0.0.0/24")
     mocker.patch.object(serve, "_run_job")
-    client = TestClient(serve.create_app(config=base_config, demo=True))
+    client = TestClient(serve.create_app(config=base_config, demo=True),
+                        client=("10.0.0.2", 1234))
     deck = {"deck": ("deck.md", b"# One\n- a\n")}
     # The proxy-appended (rightmost) value keys the limit; the client-chosen
     # left entries are ignored.
@@ -1056,8 +1058,9 @@ def test_reaper_evicts_expired_jobs(tmp_path):
     now = time.time()
     serve._JOBS["old"] = serve.Job(
         id="old", status="done", workdir=workdir,
-        created_at=now - serve.JOB_TTL_SECONDS - 10)
-    serve._JOBS["new"] = serve.Job(id="new", status="done", created_at=now)
+        created_at=now - serve.JOB_TTL_SECONDS - 10,
+        completed_at=now - serve.JOB_TTL_SECONDS - 10)
+    serve._JOBS["new"] = serve.Job(id="new", status="done", created_at=now, completed_at=now)
     serve._JOBS["run"] = serve.Job(
         id="run", status="running",
         created_at=now - serve.JOB_TTL_SECONDS - 10)
@@ -1065,7 +1068,59 @@ def test_reaper_evicts_expired_jobs(tmp_path):
     assert "old" not in serve._JOBS
     assert not workdir.exists()
     assert "new" in serve._JOBS
-    assert "run" in serve._JOBS  # running jobs get the render-timeout grace
+    assert "run" in serve._JOBS
+
+
+@pytest.mark.parametrize("status", ["queued", "running"])
+def test_reaper_never_removes_active_work(tmp_path, status):
+    job = serve.Job(id="active", status=status, workdir=tmp_path, created_at=1)
+    serve._JOBS[job.id] = job
+    serve._reap_expired_jobs(now=serve.JOB_TTL_SECONDS + 20000)
+    assert tmp_path.is_dir()
+    assert job.id in serve._JOBS
+
+
+@pytest.mark.parametrize("runner", ["_run_job", "_run_video_pipeline", "_run_project_enrich"])
+@pytest.mark.parametrize("returncode", [0, 1])
+def test_finished_jobs_get_full_retention_after_long_wait(tmp_path, monkeypatch, runner, returncode):
+    workdir = tmp_path / "job"
+    workdir.mkdir()
+    deck = workdir / "deck.md"
+    deck.write_text("# Slide\n")
+    job_yaml = workdir / "job.yaml"
+    job_yaml.write_text("{}")
+    now = serve.JOB_TTL_SECONDS + 10000
+    monkeypatch.setattr(serve.time, "time", lambda: now)
+
+    def process(command, job, timeout):
+        if "enrich" in command:
+            out = Path(command[command.index("enrich") + 2])
+            out.mkdir(exist_ok=True)
+            (out / "deck.md").write_text("# Slide\n")
+            (out.parent / f"{out.name}.zip").write_bytes(b"ZIP")
+        else:
+            Path(command[command.index("create") + 2]).write_bytes(b"MP4")
+        return returncode
+
+    monkeypatch.setattr(serve, "_stream_process", process)
+    job = serve.Job(id="long", workdir=workdir, created_at=1)
+    serve._JOBS[job.id] = job
+    if runner == "_run_project_enrich":
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+        project = serve.Project(id="p", workdir=project_dir)
+        serve._run_project_enrich(job, project, deck, job_yaml, None)
+    elif runner == "_run_video_pipeline":
+        serve._run_video_pipeline(job, deck, job_yaml, None, None)
+    else:
+        serve._run_job(job, deck, job_yaml, None, None)
+    assert job.status == ("done" if returncode == 0 else "error")
+    assert job.started_at == now
+    assert job.completed_at == now
+    serve._reap_expired_jobs(now=now + serve.JOB_TTL_SECONDS - 1)
+    assert job.id in serve._JOBS and workdir.is_dir()
+    serve._reap_expired_jobs(now=now + serve.JOB_TTL_SECONDS + 1)
+    assert job.id not in serve._JOBS and not workdir.exists()
 
 
 def test_settings_template_mentions_voicebox():
@@ -1414,7 +1469,8 @@ def test_reap_expired_projects(tmp_path):
     assert "old" not in serve._PROJECTS
 
 
-def test_run_project_enrich_populates_project_images(tmp_path, monkeypatch):
+@pytest.mark.parametrize("edited", [False, True])
+def test_run_project_enrich_populates_project_images(tmp_path, monkeypatch, edited):
     proj_dir = tmp_path / "proj"
     proj_dir.mkdir()
     job_dir = tmp_path / "job"
@@ -1423,6 +1479,7 @@ def test_run_project_enrich_populates_project_images(tmp_path, monkeypatch):
     job = serve.Job(id="j", workdir=job_dir, created_at=time.time())
     deck = job_dir / "deck.md"
     deck.write_text("# A\n")
+    (proj_dir / "deck.md").write_text("# A\n")
     jy = job_dir / "job.yaml"
     jy.write_text("{}")
 
@@ -1433,7 +1490,10 @@ def test_run_project_enrich_populates_project_images(tmp_path, monkeypatch):
             images = job_dir / "enriched" / "images"
             images.mkdir(parents=True)
             (images / "slide_1.png").write_bytes(b"PNG")
+            (images.parent / "deck.md").write_text("# A\n![](images/slide_1.png)\n")
             (job_dir / "enriched.zip").write_bytes(b"ZIP")
+            if edited:
+                (proj_dir / "deck.md").write_text("# Changed during enrichment\n")
 
         def wait(self, timeout=None):
             return 0
@@ -1444,7 +1504,76 @@ def test_run_project_enrich_populates_project_images(tmp_path, monkeypatch):
     monkeypatch.setattr(serve.subprocess, "Popen", FakePopen)
     serve._run_project_enrich(job, proj, deck, jy, None)
     assert job.status == "done"
-    assert (proj_dir / "images" / "slide_1.png").read_bytes() == b"PNG"
+    if edited:
+        assert not (proj_dir / "images").exists()
+    else:
+        assert (proj_dir / "images" / "slide_1.png").read_bytes() == b"PNG"
+
+
+@pytest.mark.parametrize("edit", [False, True])
+@pytest.mark.parametrize("suffix", [".md", ".pptx"])
+def test_project_enrich_render_reuses_only_matching_revision(base_config, monkeypatch, tmp_path, edit, suffix):
+    """Exercise the API chain and CLI image selection, preserving PPTX notes."""
+    from PIL import Image
+    from pptx import Presentation
+    from typer.testing import CliRunner
+
+    from slide_stream.cli import app as cli_app
+    from slide_stream.export_pptx import export_pptx
+    from slide_stream.providers.images import TextImageProvider
+
+    monkeypatch.chdir(tmp_path)
+    if suffix == ".pptx":
+        original = tmp_path / "source.pptx"
+        export_pptx([{"title": "A", "content": ["Bullet"], "notes": "Original notes."}], original)
+        source = original.read_bytes()
+    else:
+        source = b"# A\n- Bullet\n"
+
+    def fake_process(command, job, timeout):
+        out = Path(command[command.index("enrich") + 2])
+        (out / "images").mkdir(parents=True)
+        Image.new("RGB", (16, 16), "red").save(out / "images" / "slide_1.png")
+        (out / "deck.md").write_text("# A\n![](images/slide_1.png)\n- Bullet\n")
+        (out.parent / f"{out.name}.zip").write_bytes(b"ZIP")
+        return 0
+
+    seen = {}
+
+    def render(job, deck_path, job_yaml, *args):
+        # PPTX output exercises the same prebuilt image selection as video.
+        output = tmp_path / "rendered.pptx"
+        result = CliRunner().invoke(cli_app, ["create", str(deck_path), str(output), "--config", str(job_yaml)])
+        assert result.exit_code == 0, result.output
+        prs = Presentation(str(output))
+        if suffix == ".pptx" and not edit:
+            notes = prs.slides[0].notes_slide.notes_text_frame
+            assert notes is not None and "Original notes." in notes.text
+        seen["rendered"] = True
+
+    generated = []
+    original_generate = TextImageProvider.generate_image
+
+    def generate(self, query, filename, slide=None):
+        generated.append(query)
+        return original_generate(self, query, filename, slide)
+
+    monkeypatch.setattr(TextImageProvider, "generate_image", generate)
+    monkeypatch.setattr(serve, "_stream_process", fake_process)
+    monkeypatch.setattr(serve, "_run_job", render)
+    monkeypatch.setattr(serve.ThreadPoolExecutor, "submit", lambda self, fn, *a, **k: fn(*a, **k))
+    client = TestClient(serve.create_app(config=base_config))
+    project = client.post("/api/projects", files={"deck": (f"deck{suffix}", source)}).json()
+    url = f"/api/projects/{project['project_id']}"
+    headers = {"X-Project-Token": project["token"]}
+    assert client.post(url + "/enrich", headers=headers).status_code == 200
+    # The UI saves even unchanged Markdown before rendering.
+    if suffix == ".md" or edit:
+        markdown = "# Changed\n- New content\n" if edit else source.decode()
+        assert client.put(url + "/deck", headers=headers, json={"markdown": markdown}).status_code == 200
+    assert client.post(url + "/render", headers=headers).status_code == 200
+    assert seen["rendered"]
+    assert len(generated) == (1 if edit else 0)
 
 
 def test_project_image_thumbnail_endpoint():

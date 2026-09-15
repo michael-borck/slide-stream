@@ -17,6 +17,8 @@ Design notes:
 """
 
 import copy
+import hashlib
+import ipaddress
 import os
 import re
 import secrets
@@ -50,6 +52,8 @@ class Job:
     workdir: Path | None = None
     output_path: Path | None = None
     created_at: float = field(default_factory=lambda: 0.0)
+    started_at: float = 0.0
+    completed_at: float = 0.0
     # When log output last arrived (heartbeat for long renders: a GPU job can
     # legitimately go quiet for minutes, and the UI says "still working").
     updated_at: float = field(default_factory=lambda: 0.0)
@@ -78,6 +82,9 @@ class Project:
     created_at: float = field(default_factory=lambda: 0.0)
     # Per-project secret: the project id alone must not authorize edits/reads.
     token: str = ""
+    # Generated artwork is reusable only for the deck revision it came from.
+    image_deck_hash: str = ""
+    image_paths: list[str | None] = field(default_factory=list)
 
 
 # In-memory project registry (single-process v1). project_id -> Project.
@@ -113,19 +120,17 @@ JOB_TTL_SECONDS = _env_int("SLIDESTREAM_JOB_TTL_MIN", 60) * 60
 
 
 def _reap_expired_jobs(now: float | None = None) -> None:
-    """Evict jobs past the TTL and delete their workdirs.
+    """Delete terminal jobs after a full TTL measured from completion.
 
-    Called lazily from the job endpoints so 'nothing stored' holds without a
-    dedicated reaper thread. Jobs that are still queued/running get an extra
-    hour of grace (the render subprocess timeout) so a live render's files
-    are never deleted out from under it.
+    Queued/running work remains owned by its runner, which enforces subprocess
+    timeouts. Removing its files here would race the worker and its cleanup.
     """
     t = now if now is not None else time.time()
     expired: list[Job] = []
     with _LOCK:
         for job in list(_JOBS.values()):
-            grace = 0 if job.status in ("done", "error") else 3600
-            if job.created_at and t - job.created_at > JOB_TTL_SECONDS + grace:
+            if (job.status in ("done", "error") and job.completed_at
+                    and t - job.completed_at > JOB_TTL_SECONDS):
                 expired.append(job)
                 del _JOBS[job.id]
     for job in expired:
@@ -397,6 +402,8 @@ def _build_job_config(base: dict[str, Any], workdir: Path, options: dict[str, An
 
     # Keep renders self-contained inside the job dir.
     cfg["settings"]["temp_dir"] = str(workdir / "tmp")
+    if "slide_image_paths" in options:
+        cfg["settings"].setdefault("image", {})["slide_paths"] = options["slide_image_paths"]
 
     if options.get("narration_seconds"):
         cfg["settings"].setdefault("narration", {})["target_seconds"] = float(
@@ -696,6 +703,7 @@ def _run_job(job: Job, deck_path: Path, job_yaml: Path,
 
     with _LOCK:
         job.status = "running"
+        job.started_at = time.time()
         job.media_type = media_type
         job.download_name = download_name
     try:
@@ -717,6 +725,8 @@ def _run_job(job: Job, deck_path: Path, job_yaml: Path,
             job.status = "error"
             job.error = str(e)
     finally:
+        with _LOCK:
+            job.completed_at = time.time()
         # Ephemeral: inputs and the key-bearing job config never persist past
         # the render. Only output.mp4 remains, until it is downloaded (demo)
         # or the TTL reaper removes the whole workdir.
@@ -734,6 +744,7 @@ def _run_video_pipeline(job: Job, deck_path: Path, job_yaml: Path,
     assert job.workdir is not None
     with _LOCK:
         job.status = "running"
+        job.started_at = time.time()
     try:
         enhanced = job.workdir / "enhanced"
         code = _stream_process(
@@ -771,6 +782,8 @@ def _run_video_pipeline(job: Job, deck_path: Path, job_yaml: Path,
             job.status = "error"
             job.error = str(e)
     finally:
+        with _LOCK:
+            job.completed_at = time.time()
         for p in (voice_path, photo_path, deck_path, job_yaml):
             if p is not None:
                 Path(p).unlink(missing_ok=True)
@@ -792,19 +805,37 @@ def _run_project_enrich(job: Job, project: Project, deck_path: Path,
         command += ["--notes", notes]
     with _LOCK:
         job.status = "running"
+        job.started_at = time.time()
         job.media_type = "application/zip"
         job.download_name = "slidestream-deck.zip"
     try:
+        source_hash = hashlib.sha256(deck_path.read_bytes()).hexdigest()
         returncode = _stream_process(command, job, 3600)
         if returncode == 0 and output.exists():
             src_images = out_dir / "images"
-            if src_images.is_dir():
-                proj_images = project.workdir / "images"
-                proj_images.mkdir(exist_ok=True)
-                for img in src_images.iterdir():
-                    if img.is_file():
-                        shutil.copyfile(img, proj_images / img.name)
             with _LOCK:
+                canonical = _project_deck(project)
+                # An edit during enrichment must not publish stale artwork.
+                if (canonical is not None and src_images.is_dir()
+                        and hashlib.sha256(canonical.read_bytes()).hexdigest() == source_hash):
+                    from .parser import parse_markdown
+
+                    enriched = parse_markdown(
+                        (out_dir / f"{deck_path.stem}.md").read_text(encoding="utf-8")
+                    )
+                    proj_images = project.workdir / "images"
+                    shutil.rmtree(proj_images, ignore_errors=True)
+                    proj_images.mkdir()
+                    paths: list[str | None] = []
+                    for slide in enriched:
+                        name = Path(slide.get("image_path", "")).name
+                        if name and (src_images / name).is_file():
+                            shutil.copyfile(src_images / name, proj_images / name)
+                            paths.append(name)
+                        else:
+                            paths.append(None)
+                    project.image_paths = paths
+                    project.image_deck_hash = source_hash
                 job.status = "done"
                 job.output_path = output
         else:
@@ -820,6 +851,8 @@ def _run_project_enrich(job: Job, project: Project, deck_path: Path,
             job.status = "error"
             job.error = str(e)
     finally:
+        with _LOCK:
+            job.completed_at = time.time()
         for p in (deck_path, job_yaml):
             Path(p).unlink(missing_ok=True)
 
@@ -1013,16 +1046,25 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
     if demo is None:
         demo = os.getenv("SLIDESTREAM_DEMO", "").lower() in ("1", "true", "yes")
     demo_mode = bool(demo) and not local_mode
-    # Only honor X-Forwarded-For when the operator says a reverse proxy sits
-    # in front (deploy/docker-compose.yml sets this); otherwise the header is
-    # client-supplied and would let anyone dodge the demo rate limit.
-    trusted_proxy = os.getenv(
-        "SLIDESTREAM_TRUSTED_PROXY", ""
-    ).lower() in ("1", "true", "yes")
+    # Trust only explicitly listed peer addresses/networks. The former boolean
+    # SLIDESTREAM_TRUSTED_PROXY switch cannot establish who sent a header.
+    trusted_proxies = [
+        ipaddress.ip_network(value.strip(), strict=False)
+        for value in os.getenv("SLIDESTREAM_TRUSTED_PROXIES", "").split(",")
+        if value.strip()
+    ]
     executor = ThreadPoolExecutor(max_workers=max_workers)
     jobs_root = Path(tempfile.mkdtemp(prefix="slidestream_serve_"))
 
     app = FastAPI(title="SlideStream")
+
+    from .web_security import UploadGuard
+
+    app.add_middleware(
+        UploadGuard,
+        max_bytes=MAX_DECK_BYTES + MAX_VOICE_BYTES + MAX_PHOTO_BYTES + 1024 * 1024,
+        token=auth_token if not demo_mode else "",
+    )
 
     if local_mode:
 
@@ -1031,19 +1073,17 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
             request: Request,
             call_next: Callable[[Request], Awaitable[Response]],
         ) -> Response:
-            # Local (desktop) mode has no token, so block CSRF/DNS-rebinding:
-            # state-changing requests must target localhost and come from a
-            # local page (or the Tauri shell's webview).
-            if request.method in ("POST", "PUT", "PATCH", "DELETE"):
-                host = (
-                    (request.headers.get("host") or "")
-                    .rsplit(":", 1)[0].strip("[]").lower()
+            # Reads include secrets, so host validation covers every method.
+            try:
+                host = urlsplit("//" + request.headers.get("host", "")).hostname
+            except ValueError:
+                host = None
+            if host not in _LOCAL_HOSTS:
+                return JSONResponse(
+                    {"detail": "Requests must be addressed to localhost"},
+                    status_code=403,
                 )
-                if host not in _LOCAL_HOSTS:
-                    return JSONResponse(
-                        {"detail": "Requests must be addressed to localhost"},
-                        status_code=403,
-                    )
+            if request.method in ("POST", "PUT", "PATCH", "DELETE"):
                 origin = request.headers.get("origin")
                 if origin and not _local_origin_ok(origin):
                     return JSONResponse(
@@ -1067,11 +1107,25 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
         # Behind a trusted reverse proxy the real IP is the value the proxy
         # appended to X-Forwarded-For (the rightmost one — earlier entries
         # are whatever the client chose to send).
-        if trusted_proxy:
+        peer = request.client.host if request.client else "unknown"
+        try:
+            trusted = any(ipaddress.ip_address(peer) in network for network in trusted_proxies)
+        except ValueError:
+            trusted = False
+        if trusted:
             fwd = request.headers.get("x-forwarded-for")
             if fwd:
-                return fwd.split(",")[-1].strip()
-        return request.client.host if request.client else "unknown"
+                try:
+                    return str(ipaddress.ip_address(fwd.split(",")[-1].strip()))
+                except ValueError:
+                    pass
+        return peer
+
+    def validate_avatar_name(name: str | None) -> None:
+        from .avatars import avatar_names
+
+        if name and name not in avatar_names():
+            raise HTTPException(status_code=400, detail="Unknown avatar")
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
@@ -1204,6 +1258,7 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
         _: None = Depends(require_token),
     ) -> JSONResponse:
         _reap_expired_jobs()
+        validate_avatar_name(avatar_name)
         suffix = Path(deck.filename or "deck.md").suffix.lower()
         if suffix not in (".md", ".pptx", ".txt", ".qmd"):
             raise HTTPException(
@@ -1214,12 +1269,6 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
         notes_mode = (notes or "").lower() if notes else None
         if notes_mode not in (None, "fill", "all"):
             raise HTTPException(status_code=400, detail="notes must be 'fill' or 'all'")
-
-        # Reject obviously oversized requests before touching the body.
-        declared = request.headers.get("content-length")
-        max_request = MAX_DECK_BYTES + MAX_VOICE_BYTES + MAX_PHOTO_BYTES + 1024 * 1024
-        if declared and declared.isdigit() and int(declared) > max_request:
-            raise HTTPException(status_code=413, detail="Upload too large")
 
         if demo_mode and not _demo_rate_ok(client_ip(request)):
             raise HTTPException(
@@ -1357,6 +1406,7 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
     ) -> JSONResponse:
         """Offline preflight (the 'doctor'): assess the deck + resolved config
         and return warnings + estimates as JSON, without rendering anything."""
+        validate_avatar_name(avatar_name)
         suffix = Path(deck.filename or "deck.md").suffix.lower()
         if suffix not in (".md", ".pptx", ".txt", ".qmd"):
             raise HTTPException(
@@ -1684,9 +1734,10 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
         finally:
             src_path.unlink(missing_ok=True)
 
-        (project.workdir / "deck.md").write_text(markdown, encoding="utf-8")
-        # A freshly drafted deck supersedes any previously uploaded .pptx.
-        (project.workdir / "deck.pptx").unlink(missing_ok=True)
+        with _LOCK:
+            (project.workdir / "deck.md").write_text(markdown, encoding="utf-8")
+            # A freshly drafted deck supersedes any previously uploaded .pptx.
+            (project.workdir / "deck.pptx").unlink(missing_ok=True)
         return JSONResponse(
             {"markdown": markdown, "state": _project_state(project)}
         )
@@ -1715,8 +1766,9 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
                 status_code=400,
                 detail="No slides found (need at least one '# ' heading).",
             )
-        (project.workdir / "deck.md").write_text(markdown, encoding="utf-8")
-        (project.workdir / "deck.pptx").unlink(missing_ok=True)
+        with _LOCK:
+            (project.workdir / "deck.md").write_text(markdown, encoding="utf-8")
+            (project.workdir / "deck.pptx").unlink(missing_ok=True)
         return JSONResponse({"state": _project_state(project)})
 
     def _prepare_project_job(
@@ -1726,24 +1778,25 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
         """Copy the project deck (and, for renders, its enriched images) into a
         fresh job workdir so the canonical project is never consumed. Returns the
         job plus the paths the runner needs."""
-        deck = _project_deck(project)
-        if deck is None:
-            raise HTTPException(status_code=400, detail="Project has no deck yet")
         job_id = uuid.uuid4().hex
         workdir = jobs_root / job_id
-        workdir.mkdir(parents=True)
-        deck_copy = workdir / deck.name
-        shutil.copyfile(deck, deck_copy)
-        # Bring the enriched images alongside the deck so its ``images/slide_N``
-        # references resolve during the render.
-        if include_images:
-            proj_images = project.workdir / "images"
-            if proj_images.is_dir():
-                dest = workdir / "images"
-                dest.mkdir(exist_ok=True)
-                for img in proj_images.iterdir():
-                    if img.is_file():
-                        shutil.copyfile(img, dest / img.name)
+        with _LOCK:
+            deck = _project_deck(project)
+            if deck is None:
+                raise HTTPException(status_code=400, detail="Project has no deck yet")
+            workdir.mkdir(parents=True)
+            deck_copy = workdir / deck.name
+            shutil.copyfile(deck, deck_copy)
+            options = {**options, "slide_image_paths": []}
+            if include_images:
+                proj_images = project.workdir / "images"
+                if proj_images.is_dir():
+                    dest = workdir / "images"
+                    shutil.copytree(proj_images, dest)
+                    if hashlib.sha256(deck_copy.read_bytes()).hexdigest() == project.image_deck_hash:
+                        options["slide_image_paths"] = [
+                            str(dest / name) if name else None for name in project.image_paths
+                        ]
         # Voice/photo were uploaded into a temp area; move them under the job.
         moved_voice = moved_photo = None
         if voice_path is not None:
@@ -1823,6 +1876,7 @@ def create_app(config: dict[str, Any] | None = None, token: str | None = None,
     ) -> JSONResponse:
         _reap_expired_jobs()
         project = _project_or_401(project_id, x_project_token)
+        validate_avatar_name(avatar_name)
         if _project_deck(project) is None:
             raise HTTPException(
                 status_code=400, detail="Project has no deck to render yet"

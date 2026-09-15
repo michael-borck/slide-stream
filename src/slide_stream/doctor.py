@@ -154,7 +154,7 @@ def run_doctor(
 ) -> DoctorReport:
     """Assess a parsed deck against the resolved config + render options.
 
-    ``options`` keys: mode ('create'|'enrich'), input_ext, verbatim_notes,
+    ``options`` keys: mode ('create'|'enrich'|'pptx'), input_ext, verbatim_notes,
     script_blocks, avatar_enabled, narration_seconds, output_path.
     """
     report = DoctorReport()
@@ -167,11 +167,14 @@ def run_doctor(
 
     _check_deck(report, slides, options)
     per_slide = _check_narration(report, slides, options, target_seconds, wpm)
-    _check_voice(report, providers)
+    video_output = options.get("mode", "create") == "create"
+    if video_output:
+        _check_voice(report, providers)
     _check_images(report, slides, providers, video)
-    _check_avatar(report, providers, options)
+    if video_output:
+        _check_avatar(report, providers, options)
     _check_providers_env(report, providers, settings, options)
-    _estimates(report, slides, providers, per_slide, video)
+    _estimates(report, slides, providers, per_slide, video, video_output)
     return report
 
 
@@ -391,24 +394,23 @@ def _check_providers_env(report, providers, settings, options) -> None:
         report.add("Providers & environment", WARN,
                    f"image provider '{img}' has no key/base_url — will fall back to text cards")
 
-    tts = providers.get("tts", {}).get("provider", "gtts")
-    extra = _missing_extra(tts, _TTS_PKG)
-    if extra:
-        report.add("Providers & environment", BLOCKER if strict else WARN,
-                   f"TTS '{tts}' package not installed — run: "
-                   f'pip install "slide-stream[{extra}]"'
-                   + ("" if strict else " (falls back to free gTTS)"))
-    ok = key_present(tts, providers.get("tts", {}), _TTS_KEY)
-    if ok is False:
-        report.add("Providers & environment", WARN,
-                   f"TTS '{tts}' has no key/base_url — will fall back to free gTTS")
+    if options.get("mode", "create") == "create":
+        tts = providers.get("tts", {}).get("provider", "gtts")
+        extra = _missing_extra(tts, _TTS_PKG)
+        if extra:
+            report.add("Providers & environment", BLOCKER if strict else WARN,
+                       f"TTS '{tts}' package not installed — run: "
+                       f'pip install "slide-stream[{extra}]"'
+                       + ("" if strict else " (falls back to free gTTS)"))
+        ok = key_present(tts, providers.get("tts", {}), _TTS_KEY)
+        if ok is False:
+            report.add("Providers & environment", WARN,
+                       f"TTS '{tts}' has no key/base_url — will fall back to free gTTS")
 
-    # ffmpeg is required for voice cloning and avatar compositing.
-    needs_ffmpeg = options.get("avatar_enabled") or providers.get("tts", {}).get("voice_sample")
-    if needs_ffmpeg and not shutil.which("ffmpeg"):
-        report.add("Providers & environment", BLOCKER,
-                   "ffmpeg not found — voice cloning & avatars need it "
-                   "(brew install ffmpeg / distro package)")
+        if not shutil.which("ffmpeg"):
+            report.add("Providers & environment", BLOCKER,
+                       "ffmpeg not found — video output needs it "
+                       "(brew install ffmpeg / distro package)")
 
     out = options.get("output_path")
     if out and Path(str(out)).exists():
@@ -418,10 +420,11 @@ def _check_providers_env(report, providers, settings, options) -> None:
         report.add("Providers & environment", OK, "strict mode on — no silent provider fallbacks")
 
 
-def _estimates(report, slides, providers, per_slide, video) -> None:
+def _estimates(report, slides, providers, per_slide, video, video_output=True) -> None:
     pad = float(video.get("slide_duration_padding", 1.0) or 0)
     total = sum(per_slide) + pad * len(slides)
-    report.estimates.append(f"Video length ~{_fmt_dur(total)} ({len(slides)} slides)")
+    if video_output:
+        report.estimates.append(f"Video length ~{_fmt_dur(total)} ({len(slides)} slides)")
 
     img_provider = providers.get("images", {}).get("provider", "text")
     per_img = _IMAGE_COST.get(img_provider)
@@ -434,7 +437,7 @@ def _estimates(report, slides, providers, per_slide, video) -> None:
         report.estimates.append(f"LLM: ~{len(slides)} narration call(s) via {llm}")
 
     avatar = providers.get("avatar", {})
-    if avatar.get("provider", "none") != "none":
+    if video_output and avatar.get("provider", "none") != "none":
         mins = _AVATAR_MINUTES.get(avatar["provider"])
         if mins:
             report.estimates.append(

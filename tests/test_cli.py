@@ -186,18 +186,22 @@ def test_cli_create_pptx_output_skips_video_pipeline(
         + FAST_VIDEO_CONFIG
     )
 
-    tts = mocker.MagicMock()
-    tts.synthesize.side_effect = AssertionError("TTS must not run for .pptx output")
+    monkeypatch.setattr("slide_stream.cli.shutil.which", lambda _: None)
+    tts = mocker.patch("slide_stream.cli.ProviderFactory.create_tts_provider",
+                       side_effect=AssertionError("TTS must not initialize for .pptx output"))
+    avatar = mocker.patch("slide_stream.cli.ProviderFactory.create_avatar_provider",
+                          side_effect=AssertionError("Avatar must not initialize for .pptx output"))
 
     output = tmp_path / "out.pptx"
     result = runner.invoke(
         app,
-        ["create", str(md_file), str(output), "--config", str(config_file)],
+        ["create", str(md_file), str(output), "--config", str(config_file), "--strict"],
     )
 
     assert result.exit_code == 0, result.output
     assert output.exists()
-    tts.synthesize.assert_not_called()
+    tts.assert_not_called()
+    avatar.assert_not_called()
 
     from pptx import Presentation
 
@@ -206,6 +210,20 @@ def test_cli_create_pptx_output_skips_video_pipeline(
     # Narration lands in the speaker notes, not an audio track.
     first_notes = prs.slides[0].notes_slide.notes_text_frame.text.strip()
     assert first_notes
+
+
+def test_cli_pptx_dry_run_ignores_video_dependencies(runner, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("slide_stream.cli.shutil.which", lambda _: None)
+    (tmp_path / "deck.md").write_text("# Slide\n- Bullet\n")
+    (tmp_path / "slidestream.yaml").write_text(
+        "providers:\n  tts:\n    provider: kokoro\n    voice_sample: /missing/voice.wav\n"
+        "  avatar:\n    provider: sadtalker\nsettings:\n  strict: true\n"
+    )
+    result = runner.invoke(app, ["create", "deck.md", "out.pptx", "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "Video length" not in result.output
+    assert not (tmp_path / "out.pptx").exists()
 
 
 def test_cli_create_powerpoint(runner, sample_powerpoint, tmp_path, mocker, monkeypatch):

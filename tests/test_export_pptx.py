@@ -47,10 +47,9 @@ def test_exports_titles_bullets_and_notes(tmp_path):
     assert "Coffee" in first_texts
     assert "It fuels developers" in first_texts
     assert "Espresso or filter" in first_texts
-    assert (
-        prs.slides[0].notes_slide.notes_text_frame.text
-        == "Coffee keeps the lights on."
-    )
+    notes = prs.slides[0].notes_slide.notes_text_frame
+    assert notes is not None
+    assert notes.text == "Coffee keeps the lights on."
     assert "Tea" in _shape_texts(prs.slides[1])
 
 
@@ -70,9 +69,11 @@ def test_embeds_artwork_and_fits_the_slide(tmp_path):
         s for s in slide.shapes if s.shape_type == MSO_SHAPE_TYPE.PICTURE
     )
     # Picture stays inside the slide bounds.
+    width, height = prs.slide_width, prs.slide_height
+    assert width is not None and height is not None
     assert pic.left >= 0 and pic.top >= 0
-    assert pic.left + pic.width <= prs.slide_width
-    assert pic.top + pic.height <= prs.slide_height
+    assert pic.left + pic.width <= width
+    assert pic.top + pic.height <= height
 
 
 def test_tall_image_is_scaled_to_fit(tmp_path):
@@ -85,8 +86,10 @@ def test_tall_image_is_scaled_to_fit(tmp_path):
     pic = next(
         s for s in prs.slides[0].shapes if s.shape_type == MSO_SHAPE_TYPE.PICTURE
     )
-    assert pic.height <= prs.slide_height
-    assert pic.width <= prs.slide_width
+    width, height = prs.slide_width, prs.slide_height
+    assert width is not None and height is not None
+    assert pic.height <= height
+    assert pic.width <= width
 
 
 def test_missing_image_file_renders_text_only(tmp_path):
@@ -120,4 +123,6 @@ def test_blank_notes_are_skipped(tmp_path, empty_notes):
     prs = Presentation(str(out))
     slide = prs.slides[0]
     # Accessing notes_slide creates it lazily; the text must stay blank.
-    assert slide.notes_slide.notes_text_frame.text.strip() == ""
+    notes = slide.notes_slide.notes_text_frame
+    assert notes is not None
+    assert notes.text.strip() == ""

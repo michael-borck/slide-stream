@@ -20,6 +20,12 @@ Config layers, later winning, deep-merged (`config_loader.py`):
 3. `./slidestream.yaml` / `.yml` or `--config` — deck/project overrides
 4. CLI flags
 
+The web project workflow supplies `settings.image.slide_paths` in its per-job
+config. This is an ordered list of local artwork paths, with null entries for
+slides without generated images. The server reuses it only when the source
+deck's SHA-256 hash matches the enrichment input. Keeping this mapping separate
+from the source deck preserves editable Markdown and PowerPoint speaker notes.
+
 Any value may reference `${ENV_VAR}`; unset vars expand to `""` (backward
 compatible), so a token missing from the environment degrades rather than
 crashing the YAML load. The home file is deliberately the "set once" layer:

@@ -98,7 +98,7 @@ def enrich_deck(
             console.print(f"Slide {i}/{total}: {title}")
             img_path = images_dir / f"slide_{i}.png"
 
-            existing_notes = str(slide.get("notes", "")).strip()
+            existing_notes = str(slide.get("notes") or "").strip()
             keep_existing = (
                 notes_mode == "fill" and notes_narration_ready(existing_notes)
             )
@@ -130,12 +130,10 @@ def enrich_deck(
                 console.print("  - Image generation failed — slide left text-only")
 
             wrote_notes = False
-            notes = ""
+            notes = existing_notes
             if notes_future is not None:
                 notes = notes_future.result() or ""
                 wrote_notes = True
-            elif notes_mode == "fill":
-                notes = existing_notes
             if wrote_notes:
                 console.print("  - Wrote AI speaker notes")
 

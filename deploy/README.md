@@ -19,8 +19,9 @@ curl -o slidestream.yaml "$base/slidestream.yaml.example"   # choose providers
 docker compose up -d          # pulls ghcr.io/michael-borck/slide-stream
 ```
 
-The UI is now on `http://<host>:8080`. Put a reverse proxy (nginx / Caddy /
-Nginx Proxy Manager) in front for TLS on `app.slidestream.eduserver.au`.
+The UI listens on `http://127.0.0.1:8080` on the Docker host. Put a reverse
+proxy in front for HTTPS. For a containerized proxy, use a private Docker
+network or restrict `BIND_HOST` to an interface reachable only by that proxy.
 `restart: unless-stopped` keeps it running across crashes and reboots.
 
 ### Updating
@@ -51,13 +52,25 @@ Chatterbox / SwarmUI / SadTalker servers.
 
 ## Reverse proxy and client IPs
 
-The demo rate limit (3 videos/hour) is keyed by client IP. Because this
-deployment assumes a reverse proxy in front for TLS, `docker-compose.yml`
-sets `SLIDESTREAM_TRUSTED_PROXY=1`, which makes the server use the
-`X-Forwarded-For` entry appended by the proxy. If clients instead reach the
-container port directly (no proxy), set `SLIDESTREAM_TRUSTED_PROXY=0` in
-`.env` — otherwise the header is client-supplied and the rate limit could be
-spoofed away.
+The demo rate limit is 3 videos/hour per client IP. Forwarded headers are
+ignored by default. Set `SLIDESTREAM_TRUSTED_PROXIES` to a comma-separated
+list of proxy peer IPs or CIDRs as seen by the application, for example
+`172.20.0.2/32`. Docker networking can change the address the app sees.
+Only listed peers may supply the rightmost `X-Forwarded-For` entry. The proxy
+must append the connecting client's address or overwrite the header.
+
+The former `SLIDESTREAM_TRUSTED_PROXY=1` switch no longer enables trust.
+Migrate it to the explicit address list. Keep the application port inaccessible
+to public clients. When running through Uvicorn directly, pass
+`--no-proxy-headers` so the app can validate the original socket peer;
+`slide-stream serve` already does this.
+
+The server bounds request bodies while receiving them, including chunked
+uploads, before multipart parsing. The aggregate limit is the sum of the
+deck, voice, and photo limits plus 1 MiB for form fields and multipart headers.
+Set the reverse proxy's request-body limit to the same value, 76 MiB with the
+defaults. Token-protected writes reject missing or invalid credentials before
+reading their bodies.
 
 ## Notes
 
@@ -67,7 +80,8 @@ spoofed away.
   data is stored on the server. The deck and the per-job config are wiped when
   the render finishes; in demo mode the video is deleted right after download,
   and any leftovers are reaped after `SLIDESTREAM_JOB_TTL_MIN` (default 60)
-  minutes. The user's browser remembers voice/photo (IndexedDB) so they need
+  minutes from completion. Queued and running jobs keep their working files.
+  The user's browser remembers voice/photo (IndexedDB) so they need
   not re-upload each job.
 - Uploads are capped (30 MB deck, 30 MB voice, 15 MB photo) — override with
   `SLIDESTREAM_MAX_DECK_MB` / `SLIDESTREAM_MAX_VOICE_MB` /

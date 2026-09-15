@@ -213,6 +213,18 @@ def test_enrich_notes_requires_llm_context():
                     also_pptx=True, notes_mode="all", llm=None)
 
 
+def test_enrich_preserves_original_notes_by_default(tmp_path, mocker):
+    llm = mocker.patch("slide_stream.llm.query_llm")
+    make_image(tmp_path / "topic.png")
+    out = tmp_path / "out"
+    enrich_deck(
+        [{"title": "Topic", "content": ["Bullet"], "notes": "Original presenter notes."}],
+        LocalImageProvider(config_with_folder(tmp_path)), out, "deck", also_pptx=True,
+    )
+    assert _pptx_notes(out / "deck.pptx") == ["Original presenter notes."]
+    llm.assert_not_called()
+
+
 def test_enrich_cli_notes_without_llm_fails_cleanly(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     deck = tmp_path / "deck.md"
