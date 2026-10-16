@@ -20,8 +20,9 @@ A thin [Tauri](https://tauri.app) shell around the Python engine:
 Everything runs on your machine. No account, no telemetry; the only network
 calls are to the AI providers *you* configure (and PyPI for the engine).
 
-Requires `slide-stream >= 2.9` (local mode). `ffmpeg` is recommended for
-voice cloning and avatars (`brew install ffmpeg` / distro package / ffmpeg.org).
+It installs `slide-stream[all] >= 2.16`, which includes FFmpeg and the
+offline Kokoro voice, so nothing else needs installing. The first render
+with Kokoro downloads its voice model (about 340 MB) once.
 
 ## Building
 

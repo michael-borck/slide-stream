@@ -63,16 +63,6 @@ fn find_uv() -> Option<PathBuf> {
     }
 }
 
-fn has_cmd(name: &str) -> bool {
-    Command::new(name)
-        .arg("-version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
 fn free_port() -> u16 {
     TcpListener::bind("127.0.0.1:0")
         .and_then(|l| l.local_addr())
@@ -150,14 +140,7 @@ fn bootstrap(app: tauri::AppHandle, state: State<'_, Srv>) {
             );
             return;
         };
-        if !has_cmd("ffmpeg") {
-            emit_status(
-                &app,
-                "note",
-                "ffmpeg was not found — voice cloning and avatars may not work. Install it from ffmpeg.org (or `brew install ffmpeg`).",
-                "",
-            );
-        }
+        // No ffmpeg check: the engine (slide-stream >= 2.16) ships its own.
 
         let port = free_port();
         *state.port.lock().unwrap() = port;
@@ -173,7 +156,7 @@ fn bootstrap(app: tauri::AppHandle, state: State<'_, Srv>) {
                 "tool",
                 "run",
                 "--from",
-                "slide-stream[all]>=2.15.24",
+                "slide-stream[all]>=2.16.0",
                 "slide-stream",
                 "serve",
                 "--host",
