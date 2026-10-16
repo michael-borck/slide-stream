@@ -6,7 +6,7 @@ workflow API — there is no separate microservice.
 
 - **Wan2.2-S2V** — still image + audio → lip-synced video. **No face detector at
   all**, so it works on teddy bears, cartoon animals, robots. This is the
-  recommended path for non-human subjects. See also [wan-s2v-api.md](wan-s2v-api.md).
+  recommended path for non-human subjects. See also [wan-s2v-api.md](../wan-s2v-api.md).
 - **LivePortrait (animal mode)** — portrait + driving *video* → reenactment, using
   animal-trained generator weights. Higher quality *when it works*, but the cropper
   is still human-only, so it needs a manual crop for non-human subjects. See also

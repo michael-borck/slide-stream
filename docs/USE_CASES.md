@@ -173,7 +173,7 @@ slide-stream create deck.pptx out.mp4 --dry-run   # same report, with create's e
 It reports: slide count, slides missing notes, **stage directions** in notes
 that would be read aloud ("[pause]", "click to advance"), voice-sample length
 (too short/long), image resolution vs the video frame, mascot-vs-engine
-mismatches, missing `ffmpeg`/API keys, and **estimated duration, cost, and
+mismatches, missing packages or API keys, and **estimated duration, cost, and
 render time**.
 
 ```bash

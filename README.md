@@ -1,615 +1,177 @@
-# Slide Stream 2.0
+# SlideStream
 
-<!-- BADGES:START -->
-[![ai](https://img.shields.io/badge/-ai-ff6f00?style=flat-square)](https://github.com/topics/ai) [![cli-tool](https://img.shields.io/badge/-cli--tool-blue?style=flat-square)](https://github.com/topics/cli-tool) [![markdown-to-video](https://img.shields.io/badge/-markdown--to--video-blue?style=flat-square)](https://github.com/topics/markdown-to-video) [![natural-language-processing](https://img.shields.io/badge/-natural--language--processing-blue?style=flat-square)](https://github.com/topics/natural-language-processing) [![python](https://img.shields.io/badge/-python-3776ab?style=flat-square)](https://github.com/topics/python) [![text-to-speech](https://img.shields.io/badge/-text--to--speech-blue?style=flat-square)](https://github.com/topics/text-to-speech) [![video-creation](https://img.shields.io/badge/-video--creation-blue?style=flat-square)](https://github.com/topics/video-creation) [![image-sourcing](https://img.shields.io/badge/-image--sourcing-blue?style=flat-square)](https://github.com/topics/image-sourcing) [![powerpoint-to-video](https://img.shields.io/badge/-powerpoint--to--video-blue?style=flat-square)](https://github.com/topics/powerpoint-to-video) [![presentation-automation](https://img.shields.io/badge/-presentation--automation-blue?style=flat-square)](https://github.com/topics/presentation-automation)
-<!-- BADGES:END -->
+Turn a Markdown file, a PowerPoint deck or a document into a narrated video
+presentation, an editable PowerPoint, or both.
 
-🎬 **Professional AI-powered video presentations from Markdown and PowerPoint files.**
-
-[![PyPI version](https://badge.fury.io/py/slide-stream.svg)](https://badge.fury.io/py/slide-stream)
+[![PyPI version](https://img.shields.io/pypi/v/slide-stream.svg)](https://pypi.org/project/slide-stream/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/michael-borck/slide-stream/blob/main/LICENSE)
+[![CI](https://github.com/michael-borck/slide-stream/actions/workflows/ci.yml/badge.svg)](https://github.com/michael-borck/slide-stream/actions/workflows/ci.yml)
 
-Transform your content into stunning video presentations with AI-generated images, premium text-to-speech, and smart content enhancement. **Version 2.0** introduces a modern configuration system and professional-grade providers.
+**[Website](https://slidestream.borck.education)** ·
+**[Documentation](https://slidestream.borck.education/docs/)** ·
+**[Desktop app](https://github.com/michael-borck/slide-stream/releases)** ·
+**[Changelog](https://slidestream.borck.education/docs/CHANGELOG/)**
 
-## ✨ What's New in 2.0
+SlideStream writes narration that a presenter would say (not the bullets read
+aloud), voices it, optionally in your own cloned voice, adds pictures and a
+presenter in the corner, and assembles the video. It works with no account
+and no API keys: the voice runs offline, and every AI service is optional.
 
-- 🖼️ **AI Image Generation**: DALL-E 3 creates custom images for your slides
-- 🎙️ **Premium Voices**: ElevenLabs delivers studio-quality narration  
-- 📸 **Stock Photos**: Pexels & Unsplash integration with API keys
-- ⚙️ **Configuration System**: YAML-based setup with environment variables
-- 🎯 **Simplified CLI**: Clean commands, no more option overload
-- 🔄 **Smart Fallbacks**: Graceful degradation when services unavailable
+## What it does
 
-## 🚀 Quick Start
+- **Sources:** Markdown decks (code blocks and tables included), PowerPoint
+  files with speaker notes, or a text, Word or PDF document turned into a
+  deck with `draft` (the web UI also starts from a one-line idea).
+- **Narration:** written by an LLM of your choice (local Ollama or a cloud
+  model), taken from speaker notes, or from your own script.
+- **Voice:** offline Kokoro by default; your own cloned voice through a
+  self-hosted Voicebox or Chatterbox server; or ElevenLabs and OpenAI.
+- **Pictures:** text cards, your own folder, stock photos, or AI images from
+  a local SwarmUI server or a cloud service.
+- **Presenter:** a mascot or photo in the corner, from a still image to full
+  lip-sync on your own GPU.
+- **Outputs:** an MP4 video, or an editable `.pptx` with the narration in the
+  speaker notes.
+- **Design (experimental):** designed slides through a self-hosted
+  [Presenton](https://github.com/presenton/presenton), with a check that the
+  design kept your content; or keep your own PowerPoint's look.
+- **Check first:** `slide-stream doctor` estimates length, cost and render
+  time and warns about problems before you render.
 
-### 1. Installation
+Interfaces: the `slide-stream` command, a web UI (`slide-stream serve`), a
+desktop app for macOS, Windows and Linux, and a Docker image for hosting.
 
-```bash
-# Install with all AI providers
-pip install slide-stream[all-ai]
-
-# Or install with specific providers
-pip install slide-stream[openai,elevenlabs]
-```
-
-### 2. Setup Configuration
-
-```bash
-# Create configuration file
-slide-stream init
-
-# Check available providers
-slide-stream providers
-```
-
-### 3. Configure API Keys
-
-Set environment variables for the services you want to use:
-
-```bash
-# For AI image generation
-export OPENAI_API_KEY="your-openai-key"
-
-# For premium text-to-speech  
-export ELEVENLABS_API_KEY="your-elevenlabs-key"
-
-# For stock photos (optional)
-export PEXELS_API_KEY="your-pexels-key"
-export UNSPLASH_ACCESS_KEY="your-unsplash-key"
-```
-
-### 4. Create Your First Video
+## Install
 
 ```bash
-# Create from Markdown
-slide-stream create presentation.md output.mp4
-
-# Create from PowerPoint
-slide-stream create slides.pptx video.mp4
+pip install "slide-stream[all]"
 ```
 
-## 🎯 Usage Examples
+`[all]` includes every AI provider, the offline voice, the web UI and
+document import. Python 3.10 or newer. FFmpeg comes with the package; a
+system install is optional. Smaller installs and every extra are listed in
+the [user guide](https://slidestream.borck.education/docs/USER_GUIDE/#install).
 
-### Basic Video Creation
+Prefer no terminal? Download the
+[desktop app](https://github.com/michael-borck/slide-stream/releases).
+
+## Quick start
+
+Write a deck. Each `#` heading starts a slide:
+
+````markdown
+# Hash Tables
+
+- Find a value without searching
+- Week 6, Data Structures
+
+# A Hash Function
+
+```python
+def bucket_for(key: str, n: int) -> int:
+    return hash(key) % n
+```
+````
+
+Render it:
 
 ```bash
-# Simple creation (uses default config)
-slide-stream create slides.md presentation.mp4
-
-# With custom configuration
-slide-stream create --config my-config.yaml presentation.pptx video.mp4
+slide-stream create deck.md talk.mp4      # narrated video
+slide-stream create deck.md deck.pptx     # editable PowerPoint, narration in the notes
+slide-stream create slides.pptx talk.mp4  # narrate an existing PowerPoint
 ```
 
-### Example Markdown File
+That works as is. To go further, write a config file and switch providers on:
 
-```markdown
-# Welcome to AI-First Development
-
-- Build smarter applications with integrated AI
-- Learn practical implementation patterns
-- Deploy production-ready solutions
-
-# Why Choose AI-First?
-
-- Faster development cycles
-- Enhanced user experiences  
-- Competitive advantage in the market
-
-# Getting Started
-
-- Set up your development environment
-- Choose the right AI services
-- Build your first AI-powered feature
+```bash
+slide-stream init         # a starter slidestream.yaml that works with no keys
+slide-stream doctor deck.md
 ```
-
-## ⚙️ Configuration
-
-> See [`slidestream.example.yaml`](slidestream.example.yaml) for a complete,
-> commented reference covering **every** provider (LLM, image, TTS, and all the
-> avatar engines). `slide-stream init` writes the same file for you to edit.
-
-SlideStream layers configuration so you set shared things (a TTS server URL,
-API keys) once and keep per-deck settings separate. Later layers win:
-
-1. Built-in defaults
-2. **`~/.slidestream.yaml`** — personal: your Chatterbox/LLM server URLs and
-   API-key references, shared across every project
-3. **`./slidestream.yaml`** (or `--config FILE`) — settings for the deck at hand
-4. **CLI flags** (`--voice`, `--tts-base-url`, `--narration-seconds`, …) — win
-   over everything, for one-off runs
-
-Run `slide-stream init` to write a starter `slidestream.yaml`. API keys are
-read from the environment via `${VAR}` expansion, so secrets never live in the
-files. Example:
 
 ```yaml
 # slidestream.yaml
 providers:
   llm:
-    provider: openai        # Content enhancement
-    model: gpt-4o-mini
-    
+    provider: ollama        # writes the narration; or claude, openai, gemini, ...
+    model: qwen3:4b
   images:
-    provider: dalle3        # AI-generated images
-    fallback: text         # Fallback when DALL-E unavailable
-    
+    provider: swarmui       # or text, local, pexels, dalle3, gemini, ...
+    base_url: http://localhost:7801
   tts:
-    provider: elevenlabs   # Premium text-to-speech
-    voice: rachel          # Voice selection
-
-# API Keys (use environment variables for security)
-api_keys:
-  openai: "${OPENAI_API_KEY}"
-  elevenlabs: "${ELEVENLABS_API_KEY}"
-  pexels: "${PEXELS_API_KEY}"
-  unsplash: "${UNSPLASH_ACCESS_KEY}"
-
-settings:
-  video:
-    resolution: [1920, 1080]
-    fps: 24
-    codec: libx264
-  cleanup: true
+    provider: voicebox      # your cloned voice; falls back to Kokoro offline
+    base_url: http://localhost:17493
+    voice_sample: ./my_voice.wav
 ```
 
-### Configuration Discovery
+API keys come from the environment, never the file.
 
-SlideStream automatically finds your config in this order:
-1. `./slidestream.yaml` (current directory)
-2. `~/.slidestream.yaml` (home directory)  
-3. Built-in defaults
+## Commands
 
-## 🔧 Available Providers
+| Command | Does |
+|---|---|
+| `create IN OUT` | Render a video (`.mp4`) or a deck (`.pptx`) |
+| `doctor IN` | Preflight: estimates and warnings, no rendering |
+| `draft DOC OUT.md` | Turn a text, Word, PDF or PowerPoint file into a Markdown deck |
+| `enrich IN DIR` | Add a picture (and optionally AI speaker notes) to every slide |
+| `presenton IN OUT` | Designed deck through Presenton (experimental) |
+| `scan DIR` | Name a folder of pictures so slides can find them |
+| `serve` | Web UI in the browser |
+| `init` | Write a config file |
+| `providers`, `voices`, `avatars` | List what is available |
 
-### Image Providers
+`slide-stream COMMAND --help` lists every option.
 
-| Provider | Description | Requirements |
-|----------|------------|--------------|
-| `dalle3` | AI image generation via DALL-E 3 | OpenAI API key |
-| `pexels` | Professional stock photos | Pexels API key |
-| `unsplash` | High-quality stock photos | Unsplash API key |
-| `text` | Text-based slides (always available) | None |
+## Documentation
 
-### Text-to-Speech Providers
+- [Use cases](https://slidestream.borck.education/docs/USE_CASES/): recipes
+  for common jobs (your own voice, a presenter, PowerPoint with notes,
+  designed decks, self-hosting)
+- [User guide](https://slidestream.borck.education/docs/USER_GUIDE/):
+  install, configuration, deck format, every command
+- [Providers](https://slidestream.borck.education/docs/PROVIDERS/): every
+  voice, picture, LLM, presenter and design option
+- [Services](https://slidestream.borck.education/docs/SERVICES/): the
+  self-hosted engines, their licences and how they are checked
+- [Roadmap](https://slidestream.borck.education/docs/ROADMAP/) and
+  [user stories](https://slidestream.borck.education/docs/USER_STORIES/)
+- [Hosting with Docker](https://github.com/michael-borck/slide-stream/blob/main/deploy/README.md)
 
-| Provider | Description | Requirements |
-|----------|------------|--------------|
-| `elevenlabs` | Premium AI voices with emotion | ElevenLabs API key |
-| `openai` | Natural OpenAI TTS voices | OpenAI API key |
-| `auto` | Local voice floor: Kokoro if installed (offline), else gTTS | None |
-| `gtts` | Google Text-to-Speech (free) | None |
+## Privacy
 
-### LLM Providers
+Everything can run on your own machine or servers. A voice sample or photo
+you upload is used for that render only and then deleted, on your server and
+in the web UI. The only network calls are to the services you configure.
 
-| Provider | Description | Requirements |
-|----------|------------|--------------|
-| `openai` | GPT models for content enhancement | OpenAI API key |
-| `gemini` | Google Gemini models | Gemini API key |
-| `claude` | Anthropic Claude models | Anthropic API key |
-| `groq` | Fast inference with Groq | Groq API key |
-| `ollama` | Local models via Ollama | Ollama installation |
+## Contributing
 
-## 📋 CLI Commands
-
-> **New to SlideStream?** See the task-based [use-case guide](docs/USE_CASES.md)
-> — recipes for the typical jobs (video, cloned voice, animated presenter,
-> PowerPoint export, preflight, self-hosting).
-
-### Core Commands
+Development uses [uv](https://docs.astral.sh/uv/):
 
 ```bash
-# Create a narrated video from a .md or .pptx deck
-slide-stream create <input_file> <output_file>
-
-# Preflight: assess a deck + config (estimates, warnings) WITHOUT rendering
-slide-stream doctor <input_file>            # or: create ... --dry-run
-
-# Add images to a deck and write a new deck (Markdown + images/, and --pptx)
-slide-stream enrich <input_file> <out_dir> --pptx [--notes all|fill]
-
-# Design a templated deck with Presenton (optional, external; see below)
-slide-stream presenton deck.md designed.pptx [--template modern]
-
-# AI-rename an image folder to match slides (used by the 'local' image provider)
-slide-stream scan <folder>
-
-# List the built-in mascot avatars / voices / provider status
-slide-stream avatars
-slide-stream voices
-slide-stream providers
-
-# Generate an example configuration
-slide-stream init [config_file]
-
-# Web UI: upload a deck + voice + photo in the browser, render, download
-slide-stream serve                    # needs: pip install "slide-stream[serve]"
-
-# Show help
-slide-stream --help
+git clone https://github.com/michael-borck/slide-stream.git
+cd slide-stream
+uv sync --all-extras --group dev
+uv run pytest && uv run ruff check . && uv run basedpyright
 ```
 
-### Web UI
-
-```bash
-pip install "slide-stream[serve]"
-slide-stream serve                    # local: binds 127.0.0.1, opens a browser
-slide-stream serve --host 0.0.0.0 --token "$(openssl rand -hex 24)"   # VPS, token-gated
-```
-
-Upload a deck (`.md`/`.pptx`) plus an optional **voice sample** and **photo**;
-it renders as a background job and returns a video. The same UI can also:
-
-- **Check deck first** — run the [preflight](docs/USE_CASES.md#5-check-a-deck-before-you-render)
-  in the browser (estimates + warnings) before committing to a render.
-- **Output: PowerPoint** — produce a downloadable deck (`.pptx` + images) with
-  optional AI presenter notes, instead of a video.
-
-Token-authenticated (set `--token` / `SLIDESTREAM_TOKEN`; auto-minted on a
-non-local bind). The server is **stateless about biometric data** — an uploaded
-voice/photo is used only for that render and deleted afterwards; the lecturer's
-**browser** remembers them (IndexedDB) so they need not re-pick each job. Voice
-server, image provider, avatar engine, and API keys come from the server's own
-layered config (`~/.slidestream.yaml`). The desktop app and Docker deploy are
-the same UI.
-
-Project renders reuse images from the last enrichment while the source deck
-is unchanged. Editing the deck invalidates that association. Download retention
-starts when a job finishes, with a default of 60 minutes; queued and running
-jobs keep their working files.
-
-Web avatar names must be built-in mascots. Upload custom photos through the
-photo field. Request bodies have a streaming size limit, and private-instance
-uploads require authentication before the server reads their bodies.
-For reverse proxies, configure `SLIDESTREAM_TRUSTED_PROXIES` with explicit
-proxy IPs or CIDRs. The old boolean trust switch is no longer used. See the
-[deployment guide](deploy/README.md#reverse-proxy-and-client-ips).
-
-For a deck-only export with narration in its speaker notes:
-
-```bash
-slide-stream create slides.md presentation.pptx
-```
-
-This output needs no FFmpeg, TTS provider, or avatar provider, including in
-strict mode and when checking it with `--dry-run`.
-
-### Examples
-
-```bash
-# Basic usage
-slide-stream create slides.md presentation.mp4
-
-# With custom config
-slide-stream create --config prod.yaml deck.pptx video.mp4
-
-# Check what's available
-slide-stream providers
-
-# Create config file
-slide-stream init my-config.yaml
-```
-
-## 🎨 Advanced Features
-
-### PowerPoint Integration
-
-- **Slide Content**: Extracts titles, bullet points, and images
-- **Speaker Notes**: Uses notes for enhanced AI narration
-- **Layouts**: Preserves slide structure and hierarchy
-
-### AI Enhancement
-
-- **Content Improvement**: LLMs enhance slide text for better flow
-- **Image Generation**: DALL-E 3 creates relevant, professional images
-- **Voice Selection**: Choose from multiple TTS voices and styles
-
-### Professional Output
-
-- **HD Video**: 1920x1080 resolution by default
-- **Quality Audio**: Synchronized speech with proper timing
-- **Custom Timing**: Configurable slide durations and padding
-
-### Talking-head presenter
-
-A presenter in a corner circle — a built-in mascot, or your own photo/video.
-Set `providers.avatar` and enable per run with `--avatar`
-([full recipe](docs/USE_CASES.md#3-add-a-talking-head-presenter)):
-
-- `static` / `puppet` — a held image or a no-GPU cartoon mouth-flap.
-- **`wan-s2v`** — Wan2.2-S2V lip-syncs a still image from the narration audio
-  with **no face detector**, so it animates the built-in mascots *and* human
-  head shots (self-hosted ComfyUI). This is the one that animates a teddy/owl.
-- `sadtalker` / `wav2lip` / `d-id` — human-face-only engines (a mascot won't
-  animate on these).
-
-### Designed decks: source → PPTX → video (Presenton, optional)
-
-SlideStream's built-in deck output is deliberately plain. For designed
-slides it delegates to [Presenton](https://github.com/presenton/presenton)
-(Apache-2.0) — an open-source, self-hosted presentation designer that
-SlideStream **does not bundle**. You run your own Presenton; SlideStream
-calls its API. Presenton designs, SlideStream narrates:
-
-```bash
-pip install "slide-stream[presenton]"     # pypdfium2 renders designed slides
-# Start Presenton first (see https://docs.presenton.ai), then:
-
-# 1. Templated, editable deck (narration in the speaker notes)
-slide-stream presenton deck.md designed.pptx --template modern
-
-# 2. Video with that design: designed slides become the video frames,
-#    and the edited .pptx is saved beside the video (--save-deck PATH)
-slide-stream create deck.md video.mp4 --template modern
-
-# 3. Already styled your deck in PowerPoint? Keep its style in the video
-#    (needs LibreOffice on PATH), or export its PDF yourself:
-slide-stream create mydeck.pptx video.mp4 --preserve-style
-slide-stream create mydeck.pptx video.mp4 --slides-pdf mydeck.pdf
-```
-
-Configure the server once in `~/.slidestream.yaml` (`providers.presenton`:
-`base_url`, `api_key`, `template`), or per run with `--presenton-url` /
-`--presenton-api-key`. Notes drive the narration exactly as in a normal
-`create` run. Two honest limits: Presenton may rephrase slide text to fit a
-layout (narration stays faithful to your source), and the designed deck and
-source must end up with the same slide count or the run aborts rather than
-misaligning narration. Decision record:
-[ADR-0009](docs/adr/0009-presenton-designed-decks.md).
-
-### Preflight (`doctor` / `--dry-run`)
-
-Assess a deck + config before rendering — estimated duration, cost and render
-time, plus warnings (missing notes, stage directions in notes, voice-sample
-length, image resolution, mascot/engine mismatch, missing ffmpeg/keys). Add
-`--fail-on-warn` for a CI gate. See
-[Check a deck before you render](docs/USE_CASES.md#5-check-a-deck-before-you-render).
-
-## 🔑 Getting API Keys
-
-### OpenAI (for DALL-E 3 & GPT)
-1. Visit [OpenAI Platform](https://platform.openai.com)
-2. Sign up and create an API key
-3. Add billing method (pay-per-use)
-
-### ElevenLabs (for Premium TTS)
-1. Visit [ElevenLabs](https://elevenlabs.io)
-2. Create account and get API key
-3. Choose from 900+ voices
-
-### Pexels (for Stock Photos)
-1. Visit [Pexels API](https://www.pexels.com/api/)
-2. Sign up for free API access
-3. Get your API key
-
-### Unsplash (for Stock Photos)
-1. Visit [Unsplash Developers](https://unsplash.com/developers)
-2. Create application
-3. Get your access key
-
-## 📦 Installation Options
-
-```bash
-# Core package only
-pip install slide-stream
-
-# With specific AI providers
-pip install slide-stream[openai]
-pip install slide-stream[elevenlabs]
-pip install slide-stream[gemini]
-pip install slide-stream[claude]
-pip install slide-stream[groq]
-
-# All AI providers
-pip install slide-stream[all-ai]
-
-# Development dependencies
-pip install slide-stream[dev]
-```
-
-## 📋 Requirements
-
-- **Python**: 3.10 or higher
-- **FFmpeg**: For video processing
-- **Internet**: For AI services and stock photos (offline mode available)
-
-### Installing FFmpeg
-
-```bash
-# macOS
-brew install ffmpeg
-
-# Ubuntu/Debian
-sudo apt update && sudo apt install ffmpeg
-
-# Windows
-# Download from https://ffmpeg.org/download.html
-```
-
-## 🔧 Configuration Reference
-
-### Provider Options
-
-**Image Providers:**
-- `text`: Always available, no setup required
-- `local`: Pick images from a local folder by filename keywords (`providers.images.folder`); pair with `slide-stream scan` to AI-name them
-- `dalle3`: Requires `OPENAI_API_KEY`
-- `gemini`: Google Imagen generation, cheap (~$0.02/image) — `pip install "slide-stream[gemini]"` + `GEMINI_API_KEY`; set `providers.images.model` for the Imagen tier (default Fast)
-- `swarmui`: Self-hosted [SwarmUI](https://github.com/mcmonkeyprojects/SwarmUI) server (`base_url`), free local generation via its native API — set `providers.images.model` (e.g. `juggernautXL_v9`), optional `steps`/`width`/`height`/`api_key`
-- `pexels`: Requires `PEXELS_API_KEY`  
-- `unsplash`: Requires `UNSPLASH_ACCESS_KEY`
-
-### Enriching a deck with images (`enrich` / `scan`)
-
-Beyond making videos, SlideStream can add an image to each slide and write a
-**new editable deck** — no narration, no video, your original untouched:
-
-```bash
-# Markdown deck + images/ folder (default). Add --pptx for a PowerPoint too.
-slide-stream enrich deck.md out/ --image-provider dalle3
-slide-stream enrich deck.md out/ --image-provider local --image-folder ./pics --pptx
-
-# ...and write AI presenter notes into the PowerPoint (needs an LLM):
-slide-stream enrich deck.md out/ --pptx --notes all    # every slide
-slide-stream enrich deck.md out/ --pptx --notes fill   # only slides missing notes
-```
-
-Existing PowerPoint speaker notes are preserved by default. `--notes all`
-replaces them; `--notes fill` writes notes where they are missing.
-
-The output is a real artifact you can review, hand-edit, or narrate as a second
-pass (`slide-stream create out/deck.md video.mp4`). `--notes` are written as a
-spoken script, so an enriched `.pptx` **round-trips**: `create out/deck.pptx`
-narrates straight from them. For a one-pass video that adds images *and*
-narrates internally, just run `create` with an image provider configured —
-`enrich` is the deck-only track.
-
-`scan` AI-renames a folder of images to keyword slugs so the `local` provider
-can match them to slides (dry-run by default):
-
-```bash
-slide-stream scan ./pics --provider claude          # preview renames
-slide-stream scan ./pics --provider claude --apply  # actually rename + write report
-```
-
-**TTS Providers:**
-- `gtts`: Free, always available (needs internet). English accent via `providers.tts.accent` (`australian`, `british`, `american`, `canadian`, `indian`, `irish`, `south-african`).
-- `kokoro`: Fully offline, no API key — `pip install "slide-stream[local-tts]"` (~340MB one-time model download; voices include `af_sarah`, `af_bella`, `am_adam`, `am_michael`)
-- `chatterbox`: Voice cloning via a self-hosted [Chatterbox TTS Server](https://github.com/devnen/Chatterbox-TTS-Server) (`base_url`); see "Privacy-first voice cloning" below
-- `elevenlabs`: Requires `ELEVENLABS_API_KEY`
-- `openai`: Requires `OPENAI_API_KEY`
-- `openai-compatible`: Any OpenAI-compatible speech endpoint via `base_url` (local or hosted)
-
-### Privacy-first voice cloning
-
-The `chatterbox` provider narrates videos in your own voice without storing it
-on the server between runs:
-
-```yaml
-providers:
-  tts:
-    provider: chatterbox
-    base_url: https://chatterbox.example.org
-    voice_sample: ./my_voice.wav       # 10-30s of clean speech (<5s fails)
-    api_key: "${CHATTERBOX_TOKEN}"     # if your proxy checks a Bearer token
-settings:
-  strict: true                         # never fall back to the wrong voice
-```
-
-- `voice_sample` is uploaded **once per run under a random UUID filename** and
-  referenced only for that render — no recognisable voice name ever exists on
-  the server, and other users can neither find nor select it.
-- Schedule `contrib/chatterbox/cleanup_uuid_voices.sh` on the server (cron) to
-  delete UUID files after a grace period. Zero-shot cloning has no training
-  step, so re-uploading each run costs only ~1-2 seconds.
-- Prefer a stock server voice instead? Set `voice: Emily.wav` (or any name
-  from `slide-stream voices`, which lists server voices and hides ephemeral
-  UUID uploads).
-
-### Narration
-
-By default (when an LLM provider is configured) SlideStream writes narration
-that *complements* the slides instead of reading them aloud, choosing a source
-per slide:
-
-1. **Speaker notes** (`.pptx`) — cleaned into speakable prose and fitted to the
-   target length (long notes are summarised, thin ones expanded).
-2. **Slide content** — turned into what a presenter would *say*, not a recital
-   of the bullets.
-3. **Slide image** — image-only slides are described by a vision-capable
-   provider (`claude`, `openai`, `gemini`) and tied to the slide title.
-4. **Title only** — a brief spoken introduction.
-
-Control it per run:
-
-```bash
-# Aim for ~30 seconds of narration per slide
-slide-stream create deck.pptx out.mp4 --llm-provider claude --narration-seconds 30
-
-# Speak the PowerPoint speaker notes exactly as written (no LLM rewriting)
-slide-stream create deck.pptx out.mp4 --verbatim-notes
-
-# Provide your own script: one block per slide, separated by lines of ---
-slide-stream create deck.md out.mp4 --script narration.txt
-```
-
-`--llm-model` selects a specific model (e.g. `claude-haiku-4-5`, the default for
-Claude). API keys are read from the environment (`ANTHROPIC_API_KEY`,
-`OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`). A `--script` file looks
-like:
-
-```
-Welcome to the course. Today we cover neural networks.
----
-A perceptron is the simplest building block of a network.
----
-Thanks for watching.
-```
-
-**Avatar Providers (talking-head overlay):**
-- `none`: Disabled (default)
-- `static`: A **static mascot image** in the corner (no lip-sync, no GPU). Use a built-in character (`slide-stream avatars` lists `teddy`, `panda`, `koala`, `robot`, `wizard`, `owl`) or your own image: `providers.avatar: {provider: static, source: teddy}`. A fun character + a chosen accent dodges the "looks like me but isn't quite me" uncanny valley. **Note:** SadTalker/Wav2Lip only lip-sync *photorealistic human* faces — stylized/animal mascots stay static here, or lip-sync via a stylized-capable engine like `d-id`.
-- `puppet`: A **cartoon mouth-flap** on a mascot, driven by the audio's loudness (open when loud, closed on silence) — no AI, no face detection, no GPU. The reliable *animated* tier for mascots: `providers.avatar: {provider: puppet, source: teddy}`. For a custom image, set the mouth region with `mouth: [cx, cy, w, h]` (fractions).
-- `precomputed`: Composites `head_1.mp4`, `head_2.mp4`, … from `providers.avatar.assets_dir` as a circle in a corner of each slide — no GPU or service needed.
-- `sadtalker`: Self-hosted talking head from a **photo**, via [SadTalker](https://github.com/OpenTalker/SadTalker) as a ComfyUI node — `providers.avatar.base_url` + `source_image`.
-- `wav2lip`: Self-hosted talking head from a short **video**, via Wav2Lip as a ComfyUI node — `base_url` + `source_video` (a ~15s idle clip; loops under longer narration). More natural than a photo; see [docs/wav2lip-api.md](docs/wav2lip-api.md).
-- `comfyui`: **Auto-router** — set `base_url` + a `source` that's either a photo or a video, and it picks SadTalker or Wav2Lip automatically. Ideal for the web UI. See [docs/talking-head-options.md](docs/talking-head-options.md).
-- `d-id`: Lip-synced talking head generated from a source image via the [D-ID](https://www.d-id.com/) API (BYOK) — set `providers.avatar.source_image` (lecturer photo) and `api_key`/`DID_API_KEY`. Bills per minute of video (~$1–2/min), so pricier than voice/images.
-
-Enable per run with `--avatar`, disable with `--no-avatar`; appearance via `settings.avatar` (`position`, `size`, `margin`).
-
-**LLM Providers:**
-- `none`: No content enhancement
-- `openai`: Requires `OPENAI_API_KEY`
-- `gemini`: Requires `GEMINI_API_KEY`
-- `claude`: Requires `ANTHROPIC_API_KEY`
-- `groq`: Requires `GROQ_API_KEY`
-- `ollama`: Requires local Ollama installation
-
-### Voice Options
-
-**ElevenLabs Voices:**
-- `rachel`: Professional female voice
-- `adam`: Clear male voice
-- `aria`: Expressive female voice
-- (See [ElevenLabs docs](https://elevenlabs.io/docs) for full list)
-
-**OpenAI Voices:**
-- `alloy`: Balanced and natural
-- `echo`: Clear and articulate  
-- `fable`: Warm and engaging
-- `nova`: Bright and energetic
-- `onyx`: Deep and authoritative
-- `shimmer`: Gentle and soothing
-
-## 🤝 Contributing
-
-We welcome contributions! See our documentation:
-
-- **[User Guide](docs/USER_GUIDE.md)** - Comprehensive usage examples
-- **[Development Workflow](docs/DEVELOPMENT_WORKFLOW.md)** - Setup and testing
-- **[Type Safety](docs/TYPE_SAFETY.md)** - Code quality standards
-
-## 🆕 Version History
-
-- **2.0.0**: Configuration system, provider architecture, AI image generation
-- **1.1.x**: PowerPoint support, bug fixes, stability improvements  
-- **1.0.0**: Initial release with Markdown support
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-Built with these excellent tools:
-- [Typer](https://typer.tiangolo.com/) - Modern CLI framework
-- [Rich](https://rich.readthedocs.io/) - Beautiful terminal output
-- [MoviePy](https://moviepy.readthedocs.io/) - Video processing
-- [OpenAI](https://openai.com/) - AI image generation and LLM
-- [ElevenLabs](https://elevenlabs.io/) - Premium text-to-speech
-- [PyYAML](https://pyyaml.org/) - Configuration parsing
-
----
-
-**Ready to create professional presentations?** Get started with `pip install slide-stream[all-ai]` 🚀
+See the
+[development workflow](https://slidestream.borck.education/docs/DEVELOPMENT_WORKFLOW/)
+and the [architecture decisions](https://slidestream.borck.education/docs/adr/).
+
+## Acknowledgements
+
+SlideStream builds on [MoviePy](https://zulko.github.io/moviepy/),
+[python-pptx](https://python-pptx.readthedocs.io/),
+[Kokoro](https://github.com/thewh1teagle/kokoro-onnx),
+[Pygments](https://pygments.org/), [pypdfium2](https://github.com/pypdfium2-team/pypdfium2),
+[Typer](https://typer.tiangolo.com/) and [Rich](https://rich.readthedocs.io/),
+and can call [Presenton](https://github.com/presenton/presenton),
+[Voicebox](https://slidestream.borck.education/docs/voicebox-api/),
+[ComfyUI](https://github.com/comfyanonymous/ComfyUI),
+[SwarmUI](https://github.com/mcmonkeyprojects/SwarmUI) and
+[Ollama](https://ollama.com). Credits and licences for every engine are in
+[SERVICES](https://slidestream.borck.education/docs/SERVICES/).
+
+## License
+
+MIT. See [LICENSE](https://github.com/michael-borck/slide-stream/blob/main/LICENSE).

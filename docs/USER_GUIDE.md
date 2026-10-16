@@ -1,768 +1,263 @@
-# SlideStream User Guide
+# User guide
 
-Comprehensive reference for creating video presentations with SlideStream's
-AI-powered tools.
+The reference for installing, configuring and running SlideStream. For
+step-by-step recipes see [Use cases](USE_CASES.md); for every voice,
+picture, LLM, presenter and design option see [Providers](PROVIDERS.md).
 
-> **Prefer recipes?** The task-based [use-case guide](USE_CASES.md) walks the
-> typical jobs step by step (video, cloned voice, animated presenter,
-> PowerPoint export with notes, the preflight, self-hosting). This guide is the
-> deeper reference behind them.
-
-## Table of Contents
-
-- [Quick Start](#quick-start)
-- [Installation](#installation)
-- [Configuration System](#configuration-system)
-- [Creating Your First Video](#creating-your-first-video)
-- [Working with Providers](#working-with-providers)
-- [Advanced Workflows](#advanced-workflows)
-- [Troubleshooting](#troubleshooting)
-- [Best Practices](#best-practices)
-
-## Quick Start
-
-### 1. Install SlideStream
+## Install
 
 ```bash
-# Everything: all AI providers + offline TTS + the web UI
 pip install "slide-stream[all]"
 ```
 
-(`[all-ai]` installs just the cloud AI providers, without the offline TTS or web UI — see [Installation](#installation) for the individual extras.)
+Python 3.10 or newer. FFmpeg comes with the package (through moviepy), so a
+system install is optional; SlideStream uses one on your `PATH` if present.
 
-### 2. Create Configuration
+`[all]` is everything. Smaller installs:
 
-```bash
-slide-stream init          # minimal starter — works with no API keys
-slide-stream init --full   # complete reference: every provider + option
-```
+| Extra | Adds |
+|---|---|
+| (none) | Markdown and PowerPoint input, text-card slides, gTTS voice, `.mp4` and `.pptx` output |
+| `local-tts` | Kokoro, the offline voice |
+| `serve` | The web UI (`slide-stream serve`); includes PDF and Word import |
+| `import` | PDF and Word input for `draft` |
+| `presenton` | Designed slides: Presenton, `--preserve-style`, `--slides-pdf` |
+| `openai`, `claude`, `gemini`, `groq`, `elevenlabs` | That provider's SDK |
+| `all-ai` | Every cloud provider SDK, without the offline voice or web UI (for lean servers) |
 
-The default `init` writes a short `slidestream.yaml` that renders out of the box (text-slide images, a local voice: Kokoro if installed, else free gTTS; no avatar). Switch providers on as you need them; `init --full` (mirrored by [`slidestream.example.yaml`](https://github.com/michael-borck/slide-stream/blob/main/slidestream.example.yaml)) documents every provider and setting. Run `slide-stream doctor <deck>` any time to check your setup.
+Quote the package name (`"slide-stream[all]"`) so your shell doesn't expand
+the brackets. `slide-stream doctor <deck>` names any extra a configured
+provider still needs.
 
-### 3. Set Up API Keys
+Other ways to run it:
 
-Edit your configuration file or set environment variables:
+- **Desktop app** for macOS, Windows and Linux: a window around the web UI
+  that installs and updates the engine itself. See the
+  [releases page](https://github.com/michael-borck/slide-stream/releases).
+- **Docker** for hosting the web UI for others: see
+  [deploy/README.md](https://github.com/michael-borck/slide-stream/blob/main/deploy/README.md).
 
-```bash
-export OPENAI_API_KEY="your-openai-key"
-export ELEVENLABS_API_KEY="your-elevenlabs-key"
-```
+## Configuration
 
-### 4. Create Your First Video
+Settings come from YAML files, merged in layers; later layers win
+([ADR-0002](adr/0002-layered-yaml-config.md)):
 
-```bash
-slide-stream create presentation.md output.mp4
-```
-
-## Draft a deck from a document
-
-Don't have a deck yet? Turn an existing document into one with `draft` — a
-preprocessing step that extracts the text, has an LLM outline it into slides,
-and writes a Markdown deck you then render with `create`.
-
-```bash
-# From a PDF, Word doc, PowerPoint, or plain text/markdown:
-slide-stream draft report.pdf outline.md          # LLM picks the slide count
-slide-stream draft report.pdf outline.md --slides 12
-slide-stream draft messy-deck.pptx clean.md       # rewrite/restructure a deck
-
-# Then the normal pipeline takes over:
-slide-stream enrich outline.md                    # (optional) add images
-slide-stream create outline.md talk.mp4           # narrated video
-```
-
-Notes:
-
-- Each step is explicit — `draft` never renders a video on its own, so the
-  workflow stays understandable and you can edit the Markdown in between.
-- `draft` needs an LLM: set `providers.llm.provider` (or pass `--llm-provider`).
-- PDF and Word extraction need an extra: `pip install "slide-stream[import]"`
-  (`.txt`, `.md`, and `.pptx` need nothing beyond the core install). It's
-  included in `[all]`.
-
-## Installation
-
-### Core Installation
+1. Built-in defaults.
+2. `~/.slidestream.yaml` (or `.yml`): personal settings shared by every
+   project, such as server URLs and key references.
+3. `./slidestream.yaml` (or `.yml`) in the current folder, or the file
+   given with `--config`: settings for this deck.
+4. Command-line flags, for one run.
 
 ```bash
-pip install slide-stream
+slide-stream init           # a minimal file that works with no keys
+slide-stream init --full    # every provider and setting, commented
 ```
 
-### With Specific Providers
+The full reference is also in
+[slidestream.example.yaml](https://github.com/michael-borck/slide-stream/blob/main/slidestream.example.yaml).
 
-```bash
-# For OpenAI (DALL-E, GPT, TTS)
-pip install slide-stream[openai]
+**Secrets** stay out of the files. A value written as `"${VAR}"` is read
+from the environment variable `VAR`, and SlideStream warns if it is unset.
+Providers also read their standard variables directly (`OPENAI_API_KEY`,
+`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `ELEVENLABS_API_KEY`,
+`PEXELS_API_KEY`, `UNSPLASH_ACCESS_KEY`, `DID_API_KEY`, `PRESENTON_API_KEY`).
+The command line does not read `.env` files.
 
-# For ElevenLabs premium voices
-pip install slide-stream[elevenlabs]
+### Settings
 
-# For Google Gemini
-pip install slide-stream[gemini]
+`providers:` chooses engines ([Providers](PROVIDERS.md)). `settings:`
+controls the output:
 
-# For Anthropic Claude
-pip install slide-stream[claude]
+| Setting | Default | Meaning |
+|---|---|---|
+| `video.resolution` | `[1920, 1080]` | Frame size |
+| `video.fps` | `24` | Frames per second |
+| `video.transition_seconds` | `0` | Crossfade between slides (`--transition`) |
+| `video.slide_duration_padding` | `1.0` | Seconds added after each slide's narration |
+| `video.default_slide_duration` | `5.0` | Length of a slide with no narration |
+| `video.bullets_overlay` | `true` | Show bullets beside generated pictures |
+| `image.bg_color`, `image.font_color` | `black`, `white` | Colours of text-card slides |
+| `image.title_font_size`, `image.content_font_size` | `100`, `60` | Text sizes on text cards |
+| `narration.target_seconds` | none | Aim for this many seconds of speech per slide (`--narration-seconds`) |
+| `narration.wpm` | `150` | Speaking rate used for that estimate |
+| `avatar.position` | `bottom-right` | Presenter corner |
+| `avatar.size` | `0.28` | Presenter circle, as a share of the frame height |
+| `avatar.slides` | `all` | Which slides show the presenter (`--avatar-slides`) |
+| `avatar.reuse_clip` | `false` | Render one presenter clip and loop it (`--reuse-avatar`) |
+| `voice_floor` | `auto` | Local fallback voice: `auto`, `kokoro` or `gtts` |
+| `strict` | `false` | Fail instead of falling back when a chosen provider fails (`--strict`) |
+| `temp_dir`, `cleanup` | `temp_files`, `true` | Working folder, and whether to delete it afterwards |
 
-# For Groq (fast inference)
-pip install slide-stream[groq]
+## Decks
 
-# Offline TTS (Kokoro) / the web UI
-pip install slide-stream[local-tts]
-pip install slide-stream[serve]
+### Markdown
 
-# Document import for `draft` (PDF / Word extraction)
-pip install slide-stream[import]
+Each `#` heading starts a slide. Everything under it until the next `#`
+heading belongs to that slide.
 
-# All cloud AI providers (no offline TTS / web UI)
-pip install slide-stream[all-ai]
+````markdown
+---
+title: optional front matter, ignored
+---
 
-# Everything: all-ai + local-tts + serve
-pip install "slide-stream[all]"
+# Hash Tables
+
+- Find a value without searching
+- **Week 6**, Data Structures
+
+# A Hash Function
+
+```python
+def bucket_for(key: str, n: int) -> int:
+    return hash(key) % n
 ```
 
-Not sure whether a provider's package is installed? `slide-stream doctor <deck>` reports any configured provider whose package or key is missing, with the exact `pip install` line to fix it.
-
-### System Requirements
-
-- **Python 3.10+**
-- **FFmpeg** (for video processing)
-
-#### Installing FFmpeg
-
-**macOS:**
-```bash
-brew install ffmpeg
-```
-
-**Ubuntu/Debian:**
-```bash
-sudo apt update && sudo apt install ffmpeg
-```
-
-**Windows:**
-Download from [FFmpeg website](https://ffmpeg.org/download.html)
-
-## Configuration System
-
-SlideStream 2.0 uses YAML configuration files for maximum flexibility and maintainability.
-
-### Configuration Discovery
-
-SlideStream searches for configuration in this order:
-
-1. `./slidestream.yaml` (current directory)
-2. `~/.slidestream.yaml` (home directory)
-3. Built-in defaults
-
-### Basic Configuration
-
-```yaml
-# slidestream.yaml
-providers:
-  llm:
-    provider: openai
-    model: gpt-4o-mini
-    
-  images:
-    provider: dalle3
-    fallback: text
-    
-  tts:
-    provider: elevenlabs
-    voice: rachel
-
-api_keys:
-  openai: "${OPENAI_API_KEY}"
-  elevenlabs: "${ELEVENLABS_API_KEY}"
-
-settings:
-  video:
-    resolution: [1920, 1080]
-    fps: 24
-  cleanup: true
-```
+## Notes on this slide
+
+| Operation | List | Hash table |
+|---|---|---|
+| Look up | O(n) | O(1) |
+````
+
+- **Bullets, paragraphs, quotes and `##` sub-headings** all become slide
+  content, in order.
+- **Fenced code blocks** keep their indentation and are drawn in a
+  monospace font with syntax colouring; give the language after the fence.
+  A `#` inside a code block never starts a slide.
+- **Tables** are drawn one row per line.
+- **Pictures:** a line such as `![](images/slide_1.png)` becomes the slide's
+  picture instead of narrated text (this is what `enrich` writes).
+- **Separator style:** a deck can instead separate slides with lines of
+  `---` (Marp style), one heading per slide.
+
+Markdown slides have no speaker notes. Provide narration with an LLM, or
+with a `--script` file.
+
+### PowerPoint
+
+`slide-stream create slides.pptx talk.mp4` reads each slide's title, text
+and pictures, and its **speaker notes**, which become the narration source.
+By default the video uses SlideStream's own slide layout; add
+`--preserve-style` to keep the deck's look (needs LibreOffice).
+
+Notes are used when they read as narration. Placeholders ("Click to add
+notes") and presenter cues ("Discuss the plan") are ignored, and bracketed
+stage directions such as `[pause]` are removed before speaking.
+
+## Narration
+
+Per slide, SlideStream uses the first of these that applies:
+
+1. A block from `--script FILE`: one block per slide, separated by lines of
+   `---`, spoken exactly as written.
+2. Speaker notes, spoken exactly as written, with `--verbatim-notes`.
+3. With an LLM configured: notes cleaned and fitted to the target length;
+   else the slide content turned into what a presenter would say; else a
+   picture-only slide described by a vision model; else a short
+   introduction of the title.
+4. With no LLM: the title, content and usable notes, read as written.
+
+`--narration-seconds 30` aims for about 30 seconds per slide.
+
+## Commands
+
+Every command has `--help`.
+
+### `create IN OUT`
+
+Renders a deck. The output's extension picks the mode:
+
+- `.mp4`: the full pipeline (narration, voice, pictures, presenter, video).
+- `.pptx`: an editable PowerPoint with the pictures and the narration in
+  the speaker notes. No voice, presenter or video work.
+
+| Option | Does |
+|---|---|
+| `-c, --config FILE` | Use this config file as the project layer |
+| `--llm-provider`, `--llm-model` | Narration writer for this run |
+| `--narration-seconds N` | Target speech per slide |
+| `--script FILE` | Narration from a script, one block per slide |
+| `--verbatim-notes` | Speak speaker notes as written |
+| `--tts-provider`, `--tts-base-url`, `--voice` | Voice for this run |
+| `--voice-sample FILE` | Clone this recording for this run |
+| `--avatar / --no-avatar` | Show the presenter |
+| `--avatar-slides SPEC` | `all`, `none`, `first`, `last`, `first,last`, `1,3,5`, `every:3` |
+| `--reuse-avatar` | One presenter clip looped across the deck |
+| `--transition SECONDS` | Crossfade between slides |
+| `--strict` | Fail instead of falling back |
+| `--dry-run`, `--fail-on-warn` | Report only, as `doctor` does |
+| `--preserve-style` | Keep a `.pptx` input's own design in the video |
+| `--slides-pdf FILE` | Use a PDF's pages as the video frames |
+| `--template NAME` | Designed slides from Presenton (experimental) |
+| `--presenton-url`, `--presenton-api-key`, `--save-deck` | Presenton connection and where to save its deck |
+
+### `doctor IN`
+
+A preflight that renders nothing. It reports the slide count, slides
+without notes, stage directions that would be spoken, voice-sample length,
+picture resolution, presenter and engine mismatches, missing packages or
+keys, and estimates video length, cost and render time. `--fail-on-warn`
+exits non-zero on any warning, for CI. `create --dry-run` gives the same
+report using `create`'s options.
+
+### `draft DOC [OUT.md]`
+
+Turns a `.txt`, `.md`, `.pdf`, `.docx` or `.pptx` file into a Markdown deck
+with an LLM. `--slides N` sets the count. It never renders; edit the deck,
+then run `create`. PDF and Word need the `import` extra (in `[all]`).
+
+### `enrich IN OUT_DIR`
+
+Adds a picture to every slide and writes a new deck: Markdown plus an
+`images/` folder, and a `.pptx` with `--pptx`. `--notes all` writes AI
+speaker notes for every slide, `--notes fill` only where notes are missing;
+existing notes are kept otherwise. The result round-trips:
+`create OUT_DIR/deck.pptx` narrates from those notes.
 
-### Environment Variables
+### `scan DIR`
 
-Use environment variables for secure API key management:
+Renames a folder of pictures to descriptive names with a vision model, so
+the `local` picture provider can match them to slides. It previews by
+default; `--apply` renames.
 
-```bash
-# OpenAI (for DALL-E 3, GPT, and OpenAI TTS)
-export OPENAI_API_KEY="sk-..."
+### `presenton IN OUT`
 
-# ElevenLabs (for premium TTS)
-export ELEVENLABS_API_KEY="..."
+Designs a deck with a running Presenton (experimental) and writes a `.pptx`
+or `.pdf` with the narration in the speaker notes, plus a fidelity report.
+See [Use cases](USE_CASES.md#designed-slides-instead-presenton).
 
-# Stock photo providers (optional)
-export PEXELS_API_KEY="..."
-export UNSPLASH_ACCESS_KEY="..."
+### `serve`
 
-# Other LLM providers
-export GEMINI_API_KEY="..."
-export ANTHROPIC_API_KEY="..."
-export GROQ_API_KEY="..."
-```
+The web UI: upload a deck, an optional voice sample and photo, render and
+download. Locally it binds to `127.0.0.1` and opens a browser. For a server,
+see [deploy/README.md](https://github.com/michael-borck/slide-stream/blob/main/deploy/README.md).
+Uploaded voice samples and photos are deleted after the render.
 
-### Configuration Profiles
+### Others
 
-Create different configurations for different use cases:
-
-**Basic Profile** (`basic.yaml`):
-```yaml
-providers:
-  llm:
-    provider: none
-  images:
-    provider: text
-  tts:
-    provider: gtts
-```
-
-**Professional Profile** (`pro.yaml`):
-```yaml
-providers:
-  llm:
-    provider: openai
-    model: gpt-4o
-  images:
-    provider: dalle3
-    fallback: pexels
-  tts:
-    provider: elevenlabs
-    voice: rachel
-
-api_keys:
-  openai: "${OPENAI_API_KEY}"
-  elevenlabs: "${ELEVENLABS_API_KEY}"
-  pexels: "${PEXELS_API_KEY}"
-```
-
-Use with:
-```bash
-slide-stream create --config pro.yaml presentation.md video.mp4
-```
-
-## Creating Your First Video
-
-### From Markdown
-
-Create a simple Markdown file:
-
-```markdown
-# Welcome to SlideStream
-
-- Create professional video presentations
-- Use AI to enhance your content
-- Generate videos automatically
-
-# Key Features
-
-- AI-powered image generation
-- Premium text-to-speech voices
-- Smart content enhancement
-- Professional video output
-
-# Getting Started
-
-- Install SlideStream
-- Configure your providers
-- Create your first video
-```
-
-Generate the video:
-
-```bash
-slide-stream create presentation.md my-video.mp4
-```
-
-### From PowerPoint
-
-SlideStream 2.0 supports PowerPoint files with enhanced features:
-
-```bash
-slide-stream create slides.pptx presentation.mp4
-```
-
-**PowerPoint Features:**
-- Extracts slide titles and content
-- Uses speaker notes for enhanced narration
-- Preserves slide structure
-- Supports complex layouts
-
-### Example Speaker Notes
-
-When using PowerPoint files, add speaker notes for better AI narration:
-
-```
-Slide Content: Key Benefits
-• Faster development
-• Better user experience
-• Competitive advantage
-
-Speaker Notes: In this slide, we'll explore the three main benefits of adopting our solution. First, you'll see dramatically faster development cycles, allowing your team to ship features in weeks rather than months. Second, your users will experience a more intuitive and responsive interface. Finally, these improvements will give you a significant competitive advantage in your market.
-```
-
-The AI will use these notes to create natural, flowing narration.
-
-## Working with Providers
-
-### Image Providers
-
-#### DALL-E 3 (AI Generation)
-```yaml
-providers:
-  images:
-    provider: dalle3
-    fallback: text
-
-api_keys:
-  openai: "${OPENAI_API_KEY}"
-```
-
-**Benefits:**
-- Custom images for each slide
-- Relevant to your content
-- Professional quality
-- No licensing concerns
-
-**Requirements:**
-- OpenAI API key
-- Pay-per-image pricing
-
-#### Stock Photo Providers
-
-**Pexels:**
-```yaml
-providers:
-  images:
-    provider: pexels
-    fallback: text
-
-api_keys:
-  pexels: "${PEXELS_API_KEY}"
-```
-
-**Unsplash:**
-```yaml
-providers:
-  images:
-    provider: unsplash
-    fallback: text
-
-api_keys:
-  unsplash: "${UNSPLASH_ACCESS_KEY}"
-```
-
-#### Text-Based Images
-```yaml
-providers:
-  images:
-    provider: text
-```
-
-Always available as a fallback. Creates clean, professional text-based slides.
-
-### Text-to-Speech Providers
-
-#### ElevenLabs (Premium)
-```yaml
-providers:
-  tts:
-    provider: elevenlabs
-    voice: rachel  # or adam, aria, etc.
-
-api_keys:
-  elevenlabs: "${ELEVENLABS_API_KEY}"
-```
-
-**Available Voices:**
-- `rachel`: Professional female voice
-- `adam`: Clear male voice
-- `aria`: Expressive female voice
-- `josh`: Warm male voice
-- And 900+ more voices
-
-#### OpenAI TTS
-```yaml
-providers:
-  tts:
-    provider: openai
-    voice: nova  # alloy, echo, fable, nova, onyx, shimmer
-
-api_keys:
-  openai: "${OPENAI_API_KEY}"
-```
-
-#### Google TTS (Free)
-```yaml
-providers:
-  tts:
-    provider: gtts
-```
-
-Always available, no API key required.
-
-### LLM Providers
-
-#### Content Enhancement
-
-LLMs improve your slide content by:
-- Making bullet points flow naturally
-- Creating engaging narratives
-- Improving clarity and structure
-- Generating better image search queries
-
-**OpenAI GPT:**
-```yaml
-providers:
-  llm:
-    provider: openai
-    model: gpt-4o-mini  # or gpt-4o for higher quality
-```
-
-**Google Gemini:**
-```yaml
-providers:
-  llm:
-    provider: gemini
-    model: gemini-1.5-flash
-```
-
-**Anthropic Claude:**
-```yaml
-providers:
-  llm:
-    provider: claude
-    model: claude-3-5-sonnet-20241022
-```
-
-## Advanced Workflows
-
-### Talking-head presenter
-
-Composite a presenter into a corner circle. Set `providers.avatar` and enable
-per run with `--avatar` (disable with `--no-avatar`):
-
-| Provider | Input | Notes |
-|----------|-------|-------|
-| `static` | image / mascot name | held still, no GPU |
-| `puppet` | image / mascot name | no-GPU cartoon mouth-flap driven by loudness |
-| `precomputed` | `head_N.mp4` clips in `assets_dir` | drop-in, no service |
-| **`wan-s2v`** | still image + narration audio | **no face detector** — animates mascots *and* human head shots (self-hosted ComfyUI); ~minutes of GPU/slide |
-| `sadtalker` | photo | human faces only |
-| `wav2lip` | short video | human faces only |
-| `d-id` | photo | hosted, BYOK, bills per minute |
-
-The built-in mascots (`slide-stream avatars`: teddy, panda, koala, robot,
-wizard, owl) only lip-sync on `wan-s2v` or `d-id` — the others need a human
-face. Example:
-
-```yaml
-providers:
-  avatar:
-    provider: wan-s2v
-    base_url: https://comfyui.example.org
-    api_key: "${COMFYUI_TOKEN}"
-    source: owl            # a built-in name, or ./me.jpg
-    clip_seconds: 4        # short clip looped under the narration (default)
-```
-
-**Show the head only on some slides.** Narration always plays on every slide;
-the talking head can be limited so it doesn't cover slide content — and so a
-heavy engine like `wan-s2v` renders a handful of clips instead of one per slide:
-
-```bash
-slide-stream create deck.md out.mp4 --avatar --avatar-slides first,last
-# also: all (default) | none | 1,3,5 | every:3
-```
-
-**Reuse one clip for the whole deck** (a cheap hack — one GPU render total,
-looped everywhere; lip-sync becomes approximate):
-
-```bash
-slide-stream create deck.md out.mp4 --avatar --reuse-avatar
-```
-
-Both are also settable in config under `settings.avatar` (`slides`,
-`reuse_clip`). For a slow engine, `providers.avatar.timeout` (seconds),
-`oom_retries`, and `oom_backoff` tune the render; a transient GPU OOM is retried
-automatically.
-
-### Crossfade transitions
-
-Dissolve between slides instead of hard-cutting:
-
-```bash
-slide-stream create deck.md out.mp4 --transition 0.4   # seconds; 0 = hard cut
-```
-
-Or set `settings.video.transition_seconds`.
-
-### PowerPoint export with AI notes
-
-`enrich` writes a new deck (Markdown + `images/`, plus a `.pptx` with `--pptx`)
-instead of a video. `--notes` adds AI presenter notes to the PowerPoint:
-
-```bash
-slide-stream enrich deck.md out/ --pptx --notes all    # write for every slide
-slide-stream enrich deck.md out/ --pptx --notes fill   # keep existing, fill gaps
-```
-
-Notes are written as a spoken script and **round-trip** — `create out/deck.pptx`
-narrates from them. `--notes` needs an LLM provider configured.
-
-### Preflight before rendering (`doctor` / `--dry-run`)
-
-Assess a deck + config and report warnings and estimates **without rendering**:
-
-```bash
-slide-stream doctor deck.pptx                     # standalone report
-slide-stream create deck.pptx out.mp4 --dry-run   # same, with create's flags
-slide-stream doctor deck.pptx --fail-on-warn      # non-zero exit for CI
-```
-
-It flags missing notes, stage directions in notes ("[pause]", "click"), voice-
-sample length, image resolution vs the frame, mascot/engine mismatches, missing
-ffmpeg/keys, and estimates duration, cost, and render time — worth running
-before a slow `wan-s2v` render.
-
-### Multi-Configuration Workflow
-
-Create different configurations for different scenarios:
-
-```bash
-# Quick prototype with free services
-slide-stream create --config basic.yaml draft.md prototype.mp4
-
-# High-quality final version
-slide-stream create --config premium.yaml final.md presentation.mp4
-
-# Client-specific branding
-slide-stream create --config client-brand.yaml proposal.md client-video.mp4
-```
-
-### Batch Processing
-
-Process multiple presentations:
-
-```bash
-# Create multiple videos
-for file in *.md; do
-    output="${file%.md}.mp4"
-    slide-stream create "$file" "$output"
-done
-```
-
-### Custom Video Settings
-
-Fine-tune video output:
-
-```yaml
-settings:
-  video:
-    resolution: [1920, 1080]  # 4K: [3840, 2160]
-    fps: 30                   # Smooth playback
-    codec: libx264            # Compatibility
-    audio_codec: aac
-    slide_duration_padding: 2.0  # More time per slide
-    default_slide_duration: 8.0
-
-  image:
-    bg_color: "#1a1a1a"      # Dark theme
-    font_color: "#ffffff"
-    title_font_size: 120
-    content_font_size: 80
-```
-
-### Integration with CI/CD
-
-Automate presentation generation:
-
-```yaml
-# .github/workflows/presentations.yml
-name: Generate Presentations
-on:
-  push:
-    paths: ['presentations/*.md']
-
-jobs:
-  generate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-      
-      - name: Install SlideStream
-        run: pip install slide-stream[all-ai]
-      
-      - name: Generate Videos
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
-        run: |
-          slide-stream create presentations/quarterly-review.md output/q4-review.mp4
-          slide-stream create presentations/product-launch.md output/launch.mp4
-```
+- `init [FILE] [--full]`: write a config file.
+- `providers`: list providers and whether each is usable.
+- `voices`: list voices on the configured voice server.
+- `avatars`: list the built-in mascots.
 
 ## Troubleshooting
 
-### Common Issues
+**Start with `slide-stream doctor deck.md`.** It names missing packages,
+keys and server URLs, with the fix.
 
-#### "Provider not available"
-```bash
-slide-stream providers
-```
-Check which providers are available and their status.
-
-#### "API key not found"
-- Verify environment variables: `echo $OPENAI_API_KEY`
-- Check configuration file syntax
-- Ensure API keys are valid and have sufficient credits
-
-#### "FFmpeg not found"
-Install FFmpeg:
-```bash
-# macOS
-brew install ffmpeg
-
-# Ubuntu/Debian
-sudo apt install ffmpeg
-```
-
-#### Video generation fails
-- Check disk space in temp directory
-- Verify input file format (.md or .pptx)
-- Try with `--config` to use specific configuration
-
-#### Audio/video sync issues
-Adjust timing settings:
-```yaml
-settings:
-  video:
-    slide_duration_padding: 2.0  # More padding
-    default_slide_duration: 6.0  # Longer default
-```
-
-### Debug Mode
-
-For detailed error information:
-
-```bash
-PYTHONPATH=. python -m slide_stream.cli create --help
-```
-
-### Provider Status
-
-Check what's working:
-
-```bash
-slide-stream providers
-```
-
-Output shows each provider's availability and requirements.
-
-## Best Practices
-
-### Content Creation
-
-**Markdown Structure:**
-```markdown
-# Clear, Descriptive Titles
-
-- Use bullet points for key ideas
-- Keep points concise and focused
-- Aim for 3-5 points per slide
-
-# Logical Flow
-
-- Structure your presentation logically
-- Use consistent formatting
-- Include call-to-action slides
-```
-
-**PowerPoint Tips:**
-- Use speaker notes for detailed explanations
-- Keep slide content brief
-- Use consistent layouts
-- Include relevant images in slides
-
-### Configuration Management
-
-**Environment Variables:**
-```bash
-# .env file (don't commit to git)
-OPENAI_API_KEY=sk-...
-ELEVENLABS_API_KEY=...
-PEXELS_API_KEY=...
-```
-
-**Version Control:**
-- Commit configuration files
-- Use environment variables for secrets
-- Create different configs for different environments
-
-### Performance Optimization
-
-**Fast Generation:**
-```yaml
-providers:
-  llm:
-    provider: groq  # Fastest inference
-    model: llama-3.1-8b-instant
-  images:
-    provider: text  # No API calls
-  tts:
-    provider: gtts  # Free and fast
-```
-
-**High Quality:**
-```yaml
-providers:
-  llm:
-    provider: openai
-    model: gpt-4o  # Best quality
-  images:
-    provider: dalle3
-  tts:
-    provider: elevenlabs
-    voice: rachel
-```
-
-### Cost Management
-
-**Monitor Usage:**
-- OpenAI: Check usage dashboard
-- ElevenLabs: Monitor character usage
-- Set usage alerts
-
-**Optimize Costs:**
-- Use text images for drafts
-- Switch to premium providers for final versions
-- Batch process multiple presentations
-
-### Quality Guidelines
-
-**For Professional Presentations:**
-- Use DALL-E 3 or stock photos for images
-- Use ElevenLabs or OpenAI TTS for voices
-- Enable LLM content enhancement
-- Use higher resolution (1920x1080 or 4K)
-
-**For Internal/Draft Use:**
-- Text-based images are sufficient
-- gTTS provides adequate quality
-- Disable LLM enhancement for speed
-
-### Security Best Practices
-
-- Never commit API keys to version control
-- Use environment variables or secure vaults
-- Rotate API keys regularly
-- Monitor API usage for unusual activity
-- Use least-privilege API permissions
-
----
-
-This guide covers the essential workflows for SlideStream 2.0. For development setup and contributing, see [DEVELOPMENT_WORKFLOW.md](DEVELOPMENT_WORKFLOW.md).
+- **A provider "is not available".** Its package, key or `base_url` is
+  missing. Without `--strict` SlideStream falls back and says so; check
+  `slide-stream providers`.
+- **The wrong voice.** A voice server failed and the voice floor took over;
+  the end-of-run summary counts such slides. Use `--strict` when the exact
+  voice matters.
+- **The first Kokoro run is slow.** It downloads its model (about 340 MB)
+  once, to `~/.cache/slide-stream/kokoro/`.
+- **"No FFmpeg found".** The bundled copy is missing, which means a broken
+  install; reinstall `slide-stream`, or install FFmpeg yourself.
+- **A slide count mismatch with designed slides.** The designed deck or PDF
+  must have the same number of slides as the source, or narration would
+  drift; SlideStream stops instead.
+- **`--preserve-style` fails.** It needs LibreOffice (`soffice`) on your
+  `PATH`, or export the PDF yourself and use `--slides-pdf`.

@@ -1,10 +1,10 @@
 # SlideStream documentation
 
-SlideStream turns a Markdown or PowerPoint deck into a **narrated video
-presentation** — spoken narration (not read-aloud bullets), optionally in a
-clone of your own voice, illustrated with AI images, and optionally fronted by a
-talking-head avatar. It runs on your machine or self-hosted; your decks and your
-voice stay yours.
+SlideStream turns a Markdown file, a PowerPoint deck or a document into a
+**narrated video presentation**, an editable PowerPoint, or both. Narration
+is what a presenter would say, not the bullets read aloud; the voice runs
+offline or can be a clone of your own; pictures and a presenter in the
+corner are optional. It runs on your machine or your own servers.
 
 ## Get started
 
@@ -12,20 +12,20 @@ voice stay yours.
 pip install "slide-stream[all]"      # everything: AI providers + offline TTS + web UI
 slide-stream init                     # a minimal, works-with-no-keys config
 slide-stream create deck.md out.mp4   # render a narrated video
+slide-stream create deck.md out.pptx  # or an editable PowerPoint
 ```
 
-New here? Start with the **[User Guide](USER_GUIDE.md)**. Prefer recipes? The
-**[Use Cases](USE_CASES.md)** guide walks through common tasks end to end.
+New here? The **[use cases](USE_CASES.md)** walk through common jobs; the
+**[user guide](USER_GUIDE.md)** is the reference.
 
 ## Find your way
 
-- **[User Guide](USER_GUIDE.md)** — installation, configuration, providers, and the full workflow.
-- **[Use Cases](USE_CASES.md)** — task-based recipes (narrate in your voice, add a presenter, export notes, …).
-- **Providers & integrations** — self-hosted API notes for [Voicebox](voicebox-api.md) (TTS) and the talking-head backends ([options overview](talking-head-options.md)).
-- **[Services](SERVICES.md)** — every engine SlideStream can call, how it is checked, and whose project it is.
-- **[User stories](USER_STORIES.md)** — who SlideStream is for and what each of them needs, with status.
-- **[Roadmap](ROADMAP.md)** — where the project is heading, phase by phase; decisions live in the [ADRs](adr/README.md).
-- **[Development workflow](DEVELOPMENT_WORKFLOW.md)** — for contributors.
+- **[Use cases](USE_CASES.md)**: recipes for common jobs.
+- **[User guide](USER_GUIDE.md)**: install, configuration, deck format, every command.
+- **[Providers](PROVIDERS.md)**: every voice, picture, LLM, presenter and design option.
+- **[Changelog](CHANGELOG.md)**: what changed in each release.
+- **[Services](SERVICES.md)**: the self-hosted engines SlideStream can call, their licences and checks.
+- **Project**: [roadmap](ROADMAP.md), [user stories](USER_STORIES.md), [decisions (ADRs)](adr/README.md), [development workflow](DEVELOPMENT_WORKFLOW.md).
 
 !!! tip "Check your setup"
     `slide-stream doctor <deck>` reports any configured provider whose package

@@ -316,63 +316,62 @@ The 2026-10 audit found the user-facing material describing SlideStream 2.0.
 The README is also the PyPI page.
 
 **Docs.**
-- [ ] README: cut to about 200 lines (what it is, install, quick start, links
+- [x] README: cut to about 200 lines (what it is, install, quick start, links
       to the docs site); absolute URLs, since PyPI breaks relative links;
       drop "What's New in 2.0" and the 2.0-era version history.
-- [ ] Add `CHANGELOG.md`, backfilled from the GitHub releases.
-- [ ] Remove every "FFmpeg required" claim (README, USER_GUIDE,
+- [x] Add `CHANGELOG.md`, backfilled from the GitHub releases.
+- [x] Remove every claim that FFmpeg must be installed (README, USER_GUIDE,
       DEVELOPMENT_WORKFLOW, landing page, desktop README and its startup
       warning, Dockerfile comment).
-- [ ] One provider reference per type (TTS, images, LLM, avatar), generated
+- [x] One provider reference per type (TTS, images, LLM, avatar), generated
       from the factory's lists, with defaults and the voice floor marked.
-- [ ] Fix config docs: layers merge, `.yml` accepted; delete the
+- [x] Fix config docs: layers merge, `.yml` accepted; delete the
       "discovery order" sections.
-- [ ] Standardise install advice on `pip install "slide-stream[all]"`
+- [x] Standardise install advice on `pip install "slide-stream[all]"`
       (quoted); `uv sync` for development, not `[dev]`.
-- [ ] USER_GUIDE: Presenton, code and tables, current model IDs; remove
+- [x] USER_GUIDE: Presenton, code and tables, current model IDs; remove
       content duplicated from README and USE_CASES (README: overview;
       USE_CASES: recipes; USER_GUIDE: reference).
-- [ ] DEVELOPMENT_WORKFLOW and CLAUDE.md: current module tree, release steps,
+- [x] DEVELOPMENT_WORKFLOW and CLAUDE.md: current module tree, release steps,
       live tests and `e2e/`.
-- [ ] Archive obsolete docs (`TYPING_IMPROVEMENTS.md`,
-      `avatar-feature-plan.md`, `liveportrait-api.md`) under `docs/archive/`;
-      regenerate or archive `TYPE_SAFETY.md`; merge `nonhuman-avatar-api.md`
-      into `wan-s2v-api.md`.
-- [ ] mkdocs: add Project (Roadmap, User stories, Services, Changelog) and
+- [x] Archive obsolete docs (`TYPING_IMPROVEMENTS.md`, `TYPE_SAFETY.md`,
+      `avatar-feature-plan.md`, `liveportrait-api.md`,
+      `nonhuman-avatar-api.md`) under `docs/archive/`.
+- [x] mkdocs: add Project (Roadmap, User stories, Services, Changelog) and
       Decisions (all ADRs) to the nav; build with `--strict`; fix the link
       that points outside `docs/`.
-- [ ] `deploy/README.md`: current image tags and engines.
+- [x] `deploy/README.md`: current image tags and engines.
 
 **Landing page.**
-- [ ] Confirm the domain (the old address redirects to
+- [x] Confirm the domain (the old address redirects to
       `slidestream.borck.education`); update `site_url`, links and CNAME.
-- [ ] Current features: offline Kokoro voice, mascots and wan-s2v,
+- [x] Current features: offline Kokoro voice, mascots and wan-s2v,
       PowerPoint output and notes, code slides, designed decks, `doctor`.
-- [ ] Link the docs site and PyPI; recommend `[all]`; no FFmpeg claim.
-- [ ] Accessibility: `<main>` and a skip link, hide decorative emoji from
+- [x] Link the docs site and PyPI; recommend `[all]`; no FFmpeg claim.
+- [x] Accessibility: `<main>` and a skip link, hide decorative emoji from
       screen readers, fix dark-mode contrast for the accent and links
       (both fail WCAG AA), keep Docs visible on small screens.
-- [ ] Self-host the fonts (the page promises privacy).
+- [x] No third-party fonts (the page promises privacy): system font stacks.
 
 **Tests and CI.**
-- [ ] Split `test_providers.py` (factory, images, TTS floor, OpenAI TTS,
+- [x] Split `test_providers.py` (factory, images, TTS floor, OpenAI TTS,
       Chatterbox, Voicebox) and `test_serve.py` (core, demo, teaser, local
       mode, jobs, projects), along their existing section headers.
-- [ ] Add tests for PDF and Word extraction in `draft` (untested today);
+- [x] Add tests for PDF and Word extraction in `draft` (untested today);
       install the `import` extra in CI.
-- [ ] One CI job without system ffmpeg, to exercise the bundled binary.
-- [ ] Coverage: publish the report and set a floor at today's level, so it
+- [x] One CI job without system ffmpeg, to exercise the bundled binary.
+- [x] Coverage: publish the report and set a floor at today's level, so it
       can only rise.
-- [ ] Silence or fix the Starlette TestClient deprecation warning.
-- [ ] e2e: a code-and-tables scenario and a Kokoro scenario; no hard-coded
+- [x] Silence or fix the Starlette TestClient deprecation warning.
+- [x] e2e: a code-and-tables scenario and a Kokoro scenario; no hard-coded
       server URLs in committed scenarios.
 - [ ] Live tests for Presenton (Phase 2 leftover) and Kokoro.
 
 **Repo.**
-- [ ] `pyproject.toml`: keywords, Documentation and Changelog URLs, SPDX
+- [x] `pyproject.toml`: keywords, Documentation and Changelog URLs, SPDX
       licence field, remove the stale black comment.
-- [ ] `.gitignore`: remove duplicates and old output names; ignore `site/`.
-- [ ] Move `scripts/mascot_video_test.py` into `e2e/` or remove it.
+- [x] `.gitignore`: remove duplicates and old output names; ignore `site/`.
+- [x] Move `scripts/mascot_video_test.py` into `e2e/` or remove it.
 
 **Done when** the PyPI page, docs site and landing page all describe 2.16
 correctly, `mkdocs build --strict` passes, and no test file is over 800

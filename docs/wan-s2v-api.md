@@ -80,5 +80,5 @@ whole point.
 Working script: `s2v_test.py` (scratchpad). Typical cost: ~4 min for 3s @ 10 steps,
 448x608, on the 3090.
 
-See also `docs/sadtalker-api.md`, `docs/wav2lip-api.md`, `docs/liveportrait-api.md` — use
+See also `docs/sadtalker-api.md`, `docs/wav2lip-api.md`, `docs/archive/liveportrait-api.md` — use
 those for **human** subjects, where they are cheaper and faster than S2V.

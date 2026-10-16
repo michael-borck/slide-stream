@@ -20,6 +20,8 @@ SlideStream is an AI-powered tool to create video presentations from Markdown an
 
 ### Publishing Steps:
 
+0. **Update `docs/CHANGELOG.md`** with the release's changes.
+
 1. **Update Version**: 
    ```bash
    # Update version in both files:
@@ -56,13 +58,17 @@ SlideStream is an AI-powered tool to create video presentations from Markdown an
 src/slide_stream/
 ├── __init__.py          # Version and package info
 ├── __main__.py          # python -m slide_stream entry point
-├── cli.py               # CLI (Typer): create, enrich, scan, init, voices, serve, avatars
+├── cli.py               # CLI (Typer): create, doctor, draft, enrich, scan, presenton, serve, init, providers, voices, avatars
 ├── config_loader.py     # Layered YAML config (defaults → ~/.slidestream.yaml → project → CLI)
 ├── llm.py               # LLM integration (OpenAI, Gemini, Claude, Groq, openai-compatible)
 ├── media.py             # Image/audio/video assembly (moviepy)
 ├── parser.py            # Markdown parsing (heading-style and ---separator decks; fenced code + tables; per-slide `content` text and `markdown` body)
 ├── powerpoint.py        # PowerPoint (.pptx) parsing incl. speaker notes
-├── narration.py         # Narration script (--script) parsing
+├── narration.py         # Narration source choice, --script parsing, stage directions
+├── doctor.py            # Preflight report (`doctor`, `create --dry-run`)
+├── draft.py             # `draft`: document -> Markdown deck
+├── export_pptx.py       # Plain .pptx output (ADR-0008)
+├── web_security.py      # Host checks and request limits for serve
 ├── presenton.py         # Client for an external Presenton (designed decks; ADR-0009)
 ├── slide_render.py      # Designed slides -> pictures (pypdfium2; LibreOffice for .pptx)
 ├── fidelity.py          # Designed deck vs source: code/title/text/table kept, possibly invented (ADR-0013)
@@ -79,24 +85,25 @@ src/slide_stream/
     ├── factory.py       # Provider selection/registry
     ├── tts.py           # TTS: gtts, kokoro, chatterbox, voicebox, elevenlabs, openai(-compat)
     ├── images.py        # Images: text, local, pexels, unsplash, dalle3, gemini, swarmui, ...
-    └── avatar.py        # Avatars: static/puppet, D-ID, ComfyUI/SadTalker
+    └── avatar.py        # Avatars: static, puppet, precomputed, D-ID, ComfyUI (wan-s2v, SadTalker, Wav2Lip)
 ```
-Also: `deploy/` (Docker), `desktop/` (Tauri app), `landing/` (website), `contrib/voicebox/` (server-side sweep script), `docs/`.
+Also: `deploy/` (Docker), `desktop/` (Tauri app), `landing/` (website), `contrib/` (Voicebox and Chatterbox server-side cleanup scripts), `e2e/`, `docs/`.
 
 ### Type Safety
 - Project maintains zero basedpyright errors
 - Uses type guards for dynamic content (BeautifulSoup, etc.)
-- Strategic `# type: ignore` for missing type stubs
-- See `TYPE_SAFETY.md` for detailed documentation
+- Specific `# type: ignore[...]` only for missing type stubs
+- Rules: docs/DEVELOPMENT_WORKFLOW.md
 
 ### Testing
 - Comprehensive test coverage for all modules
 - CLI tests use `typer.testing.CliRunner`
 - PowerPoint tests create temporary .pptx files
-- Tests avoid network calls (default config uses the `text` image provider; TTS is mocked at the provider/gTTS boundary)
+- Tests avoid network calls (ADR-0007): fake home, provider env vars scrubbed, voice floor pinned to gTTS (tests/conftest.py)
+- tests/test_docs.py checks every registered provider is in docs/PROVIDERS.md and README links are absolute
 
 ### CLI Design
-- Subcommands: `create` (main render), `enrich`, `scan`, `init`, `voices`, `serve`, `avatars`, `presenton` (designed deck via an external Presenton; `create --template`/`--preserve-style`/`--slides-pdf` put designed slides into the video — ADR-0009)
+- Subcommands: `create` (main render), `doctor`, `draft`, `enrich`, `scan`, `init`, `providers`, `voices`, `serve`, `avatars`, `presenton` (designed deck via an external Presenton; `create --template`/`--preserve-style`/`--slides-pdf` put designed slides into the video — ADR-0009)
 - Supports both `.md` and `.pptx` input files (detection by extension)
 - Behavior driven by layered YAML config (`config_loader.py`); CLI flags override config
 - `--strict` must fail (not silently fall back) when a configured provider errors
@@ -104,14 +111,17 @@ Also: `deploy/` (Docker), `desktop/` (Tauri app), `landing/` (website), `contrib
 
 ## Documentation Structure
 
-- **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)**: Comprehensive user guide with examples
+- **README.md**: also the PyPI page; keep it short and use absolute URLs only
+- **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)**: Reference (install, config, deck format, commands)
+- **[docs/USE_CASES.md](docs/USE_CASES.md)**: Task recipes
+- **[docs/PROVIDERS.md](docs/PROVIDERS.md)**: Every provider per role; update when adding one
+- **[docs/CHANGELOG.md](docs/CHANGELOG.md)**: Update with every release
 - **[docs/DEVELOPMENT_WORKFLOW.md](docs/DEVELOPMENT_WORKFLOW.md)**: Development workflow and release process
 - **[docs/adr/](docs/adr/)**: Architecture Decision Records (backfilled; read before changing provider/config/test design)
 - **[docs/USER_STORIES.md](docs/USER_STORIES.md)**: Personas and stories with status; every story belongs to a roadmap phase or future work
 - **[docs/ROADMAP.md](docs/ROADMAP.md)**: Phased plan. New features must be a pipeline stage (ADR-0011) or a service adapter (ADR-0010)
 - **[docs/SERVICES.md](docs/SERVICES.md)**: Every external engine, its probe, tested version and licence; update it when adding an adapter
-- **[docs/TYPE_SAFETY.md](docs/TYPE_SAFETY.md)**: Type safety documentation
-- **[docs/TYPING_IMPROVEMENTS.md](docs/TYPING_IMPROVEMENTS.md)**: Type improvement roadmap
+- **docs/archive/**: superseded plans and notes, not maintained
 - **[e2e/](e2e/)**: End-to-end render matrix against the configured stack (`e2e/run.sh`)
 - **[tests/fixtures/](tests/fixtures/)**: Test data files
 
@@ -127,7 +137,7 @@ Also: `deploy/` (Docker), `desktop/` (Tauri app), `landing/` (website), `contrib
 1. Write tests first (TDD approach)
 2. Implement feature with type safety
 3. Update CLI help text if needed
-4. Update README.md with examples
+4. Update USER_GUIDE/USE_CASES/PROVIDERS (README only for headline features)
 5. Run full test suite
 6. Check type coverage: `basedpyright`
 
@@ -137,8 +147,8 @@ Also: `deploy/` (Docker), `desktop/` (Tauri app), `landing/` (website), `contrib
 - Use Rich console for better error formatting
 
 ### Dependencies
-- Core: `typer`, `rich`, `moviepy`, `numpy`, `pillow`, `beautifulsoup4`, `python-pptx`, `gtts`, `pyyaml`, `requests`
-- Optional extras: `[openai]`, `[gemini]`, `[claude]`, `[groq]`, `[elevenlabs]`, `[local-tts]`, `[serve]`, `[presenton]` (pypdfium2 slide rendering; avoid AGPL deps such as PyMuPDF), `[all-ai]`
+- Core: `typer`, `rich`, `moviepy`, `numpy`, `pillow`, `markdown`, `beautifulsoup4`, `python-pptx`, `gtts`, `pyyaml`, `requests`, `pygments`
+- Optional extras: `[openai]`, `[gemini]`, `[claude]`, `[groq]`, `[elevenlabs]`, `[local-tts]`, `[serve]`, `[import]`, `[presenton]` (pypdfium2 slide rendering; avoid AGPL deps such as PyMuPDF), `[all-ai]`, `[all]` (everything)
 - Development (uv dependency group `dev`): `pytest`, `ruff`, `basedpyright`, `twine`
 
 ## Important Notes

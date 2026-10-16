@@ -121,7 +121,7 @@ engines put limits on what you can do with their *output* or *weights*:
 - **MusicGen weights** are CC-BY-NC-4.0. Music generated with them may not be
   fine for commercial or monetised videos.
 - **Wav2Lip** and the **Insightface** models used by some face pipelines are
-  for non-commercial research use. See [liveportrait-api.md](liveportrait-api.md)
+  for non-commercial research use. See [liveportrait-api.md](archive/liveportrait-api.md)
   for the Insightface case.
 - **ComfyUI** is GPL-3.0. SlideStream talks to it over HTTP as a separate
   program, which keeps the licences separate.

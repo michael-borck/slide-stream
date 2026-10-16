@@ -30,7 +30,8 @@ network or restrict `BIND_HOST` to an interface reachable only by that proxy.
 docker compose pull && docker compose up -d
 ```
 
-Pin a specific version with `SLIDESTREAM_IMAGE_TAG=2.7.0` in `.env`. To build
+Pin a specific version with `SLIDESTREAM_IMAGE_TAG=2.16.0` in `.env` (image
+tags match the PyPI versions). To build
 locally instead of pulling, see the commented `build:` block in
 `docker-compose.yml` (you'll also need the `Dockerfile`).
 
@@ -48,7 +49,9 @@ locally instead of pulling, see the commented `build:` block in
 `SLIDESTREAM_DEMO=true` shows a banner in the UI: *"Hosted demo — install
 locally for full control over voice, image and video generation."* Set it
 `false` for a private/full instance where you've wired up your own
-Chatterbox / SwarmUI / SadTalker servers.
+voice (Voicebox, Chatterbox), picture (SwarmUI) and presenter (ComfyUI
+with wan-s2v or SadTalker) servers. See the
+[providers reference](https://slidestream.borck.education/docs/PROVIDERS/).
 
 ## Reverse proxy and client IPs
 
@@ -74,8 +77,11 @@ reading their bodies.
 
 ## Notes
 
-- The image bundles the cloud AI clients (`[all-ai,serve]`). For offline TTS
-  (Kokoro) add `[local-tts]` to the Dockerfile — it pulls ~340MB of models.
+- The image bundles the cloud AI clients and the web UI (`[all-ai,serve]`).
+  Without Kokoro the fallback voice is gTTS, which needs internet. For the
+  offline voice add `local-tts` to the Dockerfile's extras and mount a
+  volume at `/home/app/.cache/slide-stream` (the model is about 340 MB).
+  Designed slides (`presenton`) are not in the image.
 - Voice samples and photos are **used per render and deleted** — no biometric
   data is stored on the server. The deck and the per-job config are wiped when
   the render finishes; in demo mode the video is deleted right after download,

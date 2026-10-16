@@ -68,7 +68,7 @@ The main conclusions are:
 ## Phase 1 live trial (16 October 2026)
 
 The integration was run against a real Presenton for the first time. Full
-record: [e2e/presenton/README.md](../e2e/presenton/README.md).
+record: [e2e/presenton/README.md](https://github.com/michael-borck/slide-stream/blob/main/e2e/presenton/README.md).
 
 **Setup.** Presenton `v0.9.11-beta` from the official Docker image (arm64),
 bound to `127.0.0.1:5001`, LLM `claude-haiku-5-5`, image generation off,

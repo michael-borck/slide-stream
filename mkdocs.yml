@@ -1,14 +1,15 @@
 # MkDocs site for the SlideStream user documentation.
 #
-# Deployed to https://slidestream.eduserver.au/docs/ as a SUBPATH — the marketing
+# Deployed to https://slidestream.borck.education/docs/ as a SUBPATH — the marketing
 # landing page (landing/) stays the primary page at the site root. The Pages
 # workflow (.github/workflows/pages.yml) builds this into _site/docs and copies
 # the landing page over _site root.
 #
-# Preview locally:  pip install mkdocs-material && mkdocs serve
+# Preview locally:  uvx --with mkdocs-material mkdocs serve
+# CI builds with --strict: a broken link or a page missing from the nav fails.
 site_name: SlideStream Docs
 site_description: Turn Markdown or PowerPoint decks into narrated video presentations.
-site_url: https://slidestream.eduserver.au/docs/
+site_url: https://slidestream.borck.education/docs/
 repo_url: https://github.com/michael-borck/slide-stream
 repo_name: michael-borck/slide-stream
 edit_uri: edit/main/docs/
@@ -60,18 +61,42 @@ markdown_extensions:
 # The first entry (index.md) is the docs home page, served at /docs/.
 nav:
   - Home: index.md
-  - User Guide: USER_GUIDE.md
-  - Use Cases: USE_CASES.md
-  - Providers & integrations:
+  - Use cases: USE_CASES.md
+  - User guide: USER_GUIDE.md
+  - Providers: PROVIDERS.md
+  - Changelog: CHANGELOG.md
+  - Integrations:
+    - Services: SERVICES.md
     - Talking-head options: talking-head-options.md
-    - Voicebox (TTS) API: voicebox-api.md
+    - Voicebox API: voicebox-api.md
     - Wan2.2-S2V API: wan-s2v-api.md
     - SadTalker API: sadtalker-api.md
     - Wav2Lip API: wav2lip-api.md
-    - LivePortrait API: liveportrait-api.md
-    - Non-human avatars API: nonhuman-avatar-api.md
-    - Avatar feature plan: avatar-feature-plan.md
-  - Development:
+    - Presenton analysis: PRESENTON_ANALYSIS.md
+  - Project:
+    - Roadmap: ROADMAP.md
+    - User stories: USER_STORIES.md
     - Development workflow: DEVELOPMENT_WORKFLOW.md
-    - Type safety: TYPE_SAFETY.md
-    - Typing improvements: TYPING_IMPROVEMENTS.md
+  - Decisions (ADRs):
+    - Overview: adr/README.md
+    - 0001 Provider registry, fallback, strict: adr/0001-provider-registry-fallback-strict.md
+    - 0002 Layered YAML config: adr/0002-layered-yaml-config.md
+    - 0003 OpenAI-compatible servers: adr/0003-openai-compatible-self-hosted.md
+    - 0004 Always-available floor (superseded): adr/0004-always-available-floor.md
+    - 0005 Privacy-first voice cloning: adr/0005-privacy-first-voice-cloning.md
+    - 0006 Avatar render economics: adr/0006-avatar-render-economics.md
+    - 0007 Hermetic tests: adr/0007-hermetic-tests-env-scrubbing.md
+    - 0008 Video and PowerPoint output: adr/0008-dual-output-video-and-pptx.md
+    - 0009 Presenton designed decks: adr/0009-presenton-designed-decks.md
+    - 0010 Orchestrator over services: adr/0010-orchestrator-over-external-services.md
+    - 0011 Project folder: adr/0011-project-folder-pipeline-state.md
+    - 0012 Three-level fallback: adr/0012-three-level-fallback-kokoro-floor.md
+    - 0013 Faithful designed decks: adr/0013-faithful-designed-decks.md
+    - 0014 PowerPoint templates: adr/0014-powerpoint-template-design.md
+  - Archive: archive/README.md
+
+# Archived pages are reachable from archive/README.md only.
+not_in_nav: |
+  archive/*.md
+exclude_docs: |
+  ._*

@@ -1,7 +1,8 @@
 # SlideStream web UI (slide-stream serve) for self-hosting on a VPS.
 FROM python:3.12-slim
 
-# FFmpeg is required to encode video; fonts for text slides.
+# System FFmpeg (used if present; the package also bundles one) and fonts
+# for text slides.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
