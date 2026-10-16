@@ -6,7 +6,7 @@ Versions follow [semantic versioning](https://semver.org). The desktop app
 (`desktop-v*` tags) installs the newest engine from PyPI, so it is not listed
 here.
 
-## 2.16.1 — unreleased
+## 2.16.1 — 2026-10-17
 
 Documentation, website and test-suite housekeeping (roadmap Phase 11). No
 behaviour changes.

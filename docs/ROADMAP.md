@@ -39,7 +39,7 @@ order of work. Planned order:
 
 | # | Phase | Why now | Release |
 |---|---|---|---|
-| 1 | 11: housekeeping | The PyPI page, docs and landing page describe 2.0, not 2.16 | 2.16.1 |
+| 1 | 11: housekeeping (done, except two live tests) | The PyPI page, docs and landing page describe 2.0, not 2.16 | 2.16.1, released |
 | 2 | 12: captions, transcript, chapters, alt text | Cheap (narration text and timings exist), often required by institutions | 2.17 |
 | 3 | 2c: the user's PowerPoint template | Deterministic design with no service | 2.18 |
 | 4 | 14: lecture-quality narration | Bullets appear as spoken, pronunciation, video clips | 2.19 |
