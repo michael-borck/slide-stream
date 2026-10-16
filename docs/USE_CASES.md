@@ -133,6 +133,31 @@ from those notes. `--notes` needs an LLM provider configured.
 **Web UI:** switch **Output** to *PowerPoint deck* and pick a notes option; you
 get a `.zip` (deck + images) to download.
 
+### Designed slides instead (Presenton)
+
+The decks above are plain on purpose. For designed, templated slides,
+SlideStream delegates to [Presenton](https://github.com/presenton/presenton)
+(Apache-2.0, self-hosted, never bundled): run your own, then —
+
+```bash
+pip install "slide-stream[presenton]"
+slide-stream presenton deck.md designed.pptx --template modern   # deck only
+slide-stream create deck.md video.mp4 --template modern           # deck + video
+slide-stream create mydeck.pptx video.mp4 --preserve-style        # keep YOUR design
+```
+
+Notes still drive the narration, and the `.pptx` is saved beside the video.
+See [ADR-0009](adr/0009-presenton-designed-decks.md).
+
+After design, SlideStream checks each slide against your source and prints
+what changed (titles rewritten, text trimmed, names or figures that look
+invented). The report is also saved as `<output>.fidelity.json`. Presenton's
+templates have no layout for code, so slides whose code was dropped are
+rebuilt by SlideStream, with syntax colouring and the template's colours,
+in both the video and the `.pptx`. Settings: `providers.presenton.code_slides`
+(`auto`, `always`, `never`) and `providers.presenton.fidelity` (`warn`,
+`strict`, `off`). See [ADR-0013](adr/0013-faithful-designed-decks.md).
+
 ---
 
 ## 5. Check a deck before you render

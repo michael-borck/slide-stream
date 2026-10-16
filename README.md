@@ -208,6 +208,9 @@ slide-stream doctor <input_file>            # or: create ... --dry-run
 # Add images to a deck and write a new deck (Markdown + images/, and --pptx)
 slide-stream enrich <input_file> <out_dir> --pptx [--notes all|fill]
 
+# Design a templated deck with Presenton (optional, external; see below)
+slide-stream presenton deck.md designed.pptx [--template modern]
+
 # AI-rename an image folder to match slides (used by the 'local' image provider)
 slide-stream scan <folder>
 
@@ -319,6 +322,40 @@ Set `providers.avatar` and enable per run with `--avatar`
   head shots (self-hosted ComfyUI). This is the one that animates a teddy/owl.
 - `sadtalker` / `wav2lip` / `d-id` — human-face-only engines (a mascot won't
   animate on these).
+
+### Designed decks: source → PPTX → video (Presenton, optional)
+
+SlideStream's built-in deck output is deliberately plain. For designed
+slides it delegates to [Presenton](https://github.com/presenton/presenton)
+(Apache-2.0) — an open-source, self-hosted presentation designer that
+SlideStream **does not bundle**. You run your own Presenton; SlideStream
+calls its API. Presenton designs, SlideStream narrates:
+
+```bash
+pip install "slide-stream[presenton]"     # pypdfium2 renders designed slides
+# Start Presenton first (see https://docs.presenton.ai), then:
+
+# 1. Templated, editable deck (narration in the speaker notes)
+slide-stream presenton deck.md designed.pptx --template modern
+
+# 2. Video with that design: designed slides become the video frames,
+#    and the edited .pptx is saved beside the video (--save-deck PATH)
+slide-stream create deck.md video.mp4 --template modern
+
+# 3. Already styled your deck in PowerPoint? Keep its style in the video
+#    (needs LibreOffice on PATH), or export its PDF yourself:
+slide-stream create mydeck.pptx video.mp4 --preserve-style
+slide-stream create mydeck.pptx video.mp4 --slides-pdf mydeck.pdf
+```
+
+Configure the server once in `~/.slidestream.yaml` (`providers.presenton`:
+`base_url`, `api_key`, `template`), or per run with `--presenton-url` /
+`--presenton-api-key`. Notes drive the narration exactly as in a normal
+`create` run. Two honest limits: Presenton may rephrase slide text to fit a
+layout (narration stays faithful to your source), and the designed deck and
+source must end up with the same slide count or the run aborts rather than
+misaligning narration. Decision record:
+[ADR-0009](docs/adr/0009-presenton-designed-decks.md).
 
 ### Preflight (`doctor` / `--dry-run`)
 

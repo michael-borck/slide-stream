@@ -1,0 +1,16 @@
+# Presenton trial: isolate the design step.
+# Narration comes from the *_script.txt files (no LLM needed), the voice is
+# gTTS (fast, no setup), and there is no avatar or image generation. Remove
+# the tts block to hear your own configured voice instead.
+providers:
+  llm:
+    provider: none
+  tts:
+    provider: gtts
+  images:
+    provider: text
+  avatar:
+    provider: none
+  presenton:
+    base_url: http://localhost:5001
+    api_key: "${PRESENTON_API_KEY}"

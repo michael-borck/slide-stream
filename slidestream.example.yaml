@@ -154,6 +154,31 @@ providers:
 #     voice: en_US-amy
 # -------------------------------------------------------------------------
 
+# --- Designed decks via Presenton (optional, external) --------------------
+# Presenton (https://github.com/presenton/presenton, Apache-2.0) designs
+# templated PowerPoint decks. SlideStream calls YOUR running Presenton; it
+# is never bundled. Used by `slide-stream presenton deck.md out.pptx` and
+# `slide-stream create deck.md out.mp4 --template NAME`. Requires:
+# pip install "slide-stream[presenton]" (pypdfium2 renders the designed
+# slides to pictures for the video).
+#
+# providers:
+#   presenton:
+#     base_url: http://localhost:5001
+#     api_key: "${PRESENTON_API_KEY}"   # if your server requires a key
+#     template: general                 # default template name
+#     # Sent with every request; the built-in default asks Presenton to keep
+#     # code verbatim and not invent names or data. "" sends none.
+#     # instructions: "Keep code blocks exactly as written."
+#     # After design SlideStream compares each slide with the source and
+#     # prints a report (also <output>.fidelity.json). No template has a
+#     # code layout, so slides whose code was dropped are rebuilt by
+#     # SlideStream in the video and the .pptx (ADR-0013).
+#     # code_slides: auto           # auto | always | never
+#     # fidelity: warn              # warn | strict (stop the run) | off
+#     # fidelity_min_kept: 0.5      # strict: least share of text kept per slide
+# ---------------------------------------------------------------------------
+
 # API Keys (use environment variables)
 api_keys:
   openai: "${OPENAI_API_KEY}"

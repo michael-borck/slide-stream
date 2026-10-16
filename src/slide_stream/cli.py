@@ -9,6 +9,7 @@ from typing import Annotated, Any
 
 import typer
 from moviepy import VideoFileClip
+from PIL import Image
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
@@ -47,8 +48,18 @@ from .narration import (
 )
 from .parser import parse_markdown
 from .powerpoint import format_powerpoint_content_for_llm, parse_powerpoint
+from .presenton import (
+    DEFAULT_PRESENTON_INSTRUCTIONS,
+    DesignReview,
+    PresentonClient,
+    PresentonError,
+    inject_speaker_notes,
+    resolve_presenton_settings,
+    review_designed_deck,
+)
 from .providers.base import StrictModeError
 from .providers.factory import ProviderFactory
+from .slide_render import SlideRenderError, pdf_to_slide_images, pptx_to_pdf
 
 # Rich Console Initialization
 console = Console()
@@ -170,6 +181,56 @@ def _resolve_avatar_slides(spec: Any, total: int) -> set[int]:
         elif tok.isdigit() and 1 <= int(tok) <= total:
             result.add(int(tok))
     return result
+
+
+def _presenton_client(settings: dict[str, Any]) -> PresentonClient:
+    """Build a Presenton client from resolved settings (tests patch this)."""
+    return PresentonClient(
+        settings["base_url"], api_key=settings["api_key"],
+        instructions=settings.get("instructions", DEFAULT_PRESENTON_INSTRUCTIONS),
+    )
+
+
+def _report_design_review(
+    review: DesignReview, settings: dict[str, Any], json_path: Path,
+    *, pdf_only: bool = False,
+) -> None:
+    """Print the designed deck's fidelity report, write it as JSON, and stop
+    the run in strict mode if something important was lost (ADR-0013)."""
+    mode = settings.get("fidelity", "warn")
+    if mode == "off":
+        return
+    flagged = review.report.flagged()
+    rebuilt = {i + 1 for i in review.rebuilt}
+    if flagged or rebuilt:
+        table = Table(title="Designed deck vs source (heuristic check)", title_justify="left")
+        table.add_column("Slide", justify="right")
+        table.add_column("Title")
+        table.add_column("Findings")
+        for s in review.report.slides:
+            problems = s.problems(review.report.min_kept)
+            if s.index in rebuilt:
+                # The rebuilt slide shows the source title, text and code;
+                # the findings described Presenton's version.
+                problems = ["code dropped by the designer; slide rebuilt by SlideStream"]
+            if problems:
+                table.add_row(str(s.index), s.title[:40], "; ".join(problems))
+        console.print(table)
+    else:
+        console.print("✅ Designed deck matches the source text on every slide.")
+    if pdf_only and review.report.code_missing():
+        console.print(
+            "[yellow]Code slides can't be rebuilt in a PDF. Use a .pptx "
+            "output, or `create --template`, to fix them.[/yellow]"
+        )
+    review.write_json(json_path)
+    console.print(f"[dim]Fidelity report: {json_path}[/dim]")
+    if mode == "strict" and review.failures:
+        err_console.print(
+            "Strict fidelity check failed: " + "; ".join(review.failures)
+            + ". Set providers.presenton.fidelity: warn to continue anyway."
+        )
+        raise typer.Exit(code=1)
 
 
 def _slide_query(title: str, content: list[Any]) -> str:
@@ -359,6 +420,64 @@ def create(
             help="With --dry-run, exit non-zero if there are any warnings (CI gate).",
         ),
     ] = False,
+    template_name: Annotated[
+        str | None,
+        typer.Option(
+            "--template",
+            help=(
+                "Design the slides with this Presenton template (e.g. general, "
+                "modern): Presenton designs the deck, the designed slides "
+                "become the video frames, and the editable .pptx is saved "
+                "beside the video (see --save-deck). Needs a running "
+                "Presenton and slide-stream[presenton]. Video output only."
+            ),
+        ),
+    ] = None,
+    presenton_url: Annotated[
+        str | None,
+        typer.Option(
+            "--presenton-url",
+            help="Presenton server URL, overriding providers.presenton.base_url.",
+        ),
+    ] = None,
+    presenton_api_key: Annotated[
+        str | None,
+        typer.Option(
+            "--presenton-api-key",
+            help="Presenton API key, overriding providers.presenton.api_key.",
+        ),
+    ] = None,
+    preserve_style: Annotated[
+        bool,
+        typer.Option(
+            "--preserve-style",
+            help=(
+                "For .pptx input: render each slide exactly as designed "
+                "(LibreOffice -> PDF -> pictures) instead of rebuilding "
+                "frames from its text, so your PowerPoint's style survives "
+                "into the video. Needs LibreOffice + slide-stream[presenton]."
+            ),
+        ),
+    ] = False,
+    slides_pdf: Annotated[
+        Path | None,
+        typer.Option(
+            "--slides-pdf",
+            help=(
+                "PDF of designed slides (e.g. exported from PowerPoint) to "
+                "use as full-frame slide pictures, one page per slide. "
+                "Needs slide-stream[presenton]."
+            ),
+        ),
+    ] = None,
+    save_deck: Annotated[
+        str | None,
+        typer.Option(
+            "--save-deck",
+            help="Where to save the Presenton-designed .pptx (--template "
+            "runs). Default: beside the video, same name with .pptx.",
+        ),
+    ] = None,
 ) -> None:
     """Create a video from a Markdown (.md) or PowerPoint (.pptx) file."""
     console.print(
@@ -398,6 +517,33 @@ def create(
     # Select output before validating dependencies: deck export has no audio
     # or video tail, even when the user's normal config enables those providers.
     pptx_mode = Path(str(output_filename)).suffix.lower() == ".pptx"
+
+    # Designed-slide modes produce video frames, so they sit on the video
+    # pipeline only. Deck-only design is the `presenton` command's job.
+    design_modes = [
+        name
+        for name, chosen in (
+            ("--template", template_name is not None),
+            ("--slides-pdf", slides_pdf is not None),
+            ("--preserve-style", preserve_style),
+        )
+        if chosen
+    ]
+    if len(design_modes) > 1:
+        err_console.print(
+            f"Choose one designed-slide source, not several: {', '.join(design_modes)}."
+        )
+        raise typer.Exit(code=1)
+    if design_modes and pptx_mode:
+        err_console.print(
+            f"{design_modes[0]} designs slides for video output. For a "
+            "designed deck only, use: slide-stream presenton <deck> "
+            f"{Path(str(output_filename)).name}"
+        )
+        raise typer.Exit(code=1)
+    if save_deck and not template_name:
+        err_console.print("--save-deck only applies with --template.")
+        raise typer.Exit(code=1)
 
     if avatar is False:
         config["providers"]["avatar"]["provider"] = "none"
@@ -549,9 +695,95 @@ def create(
             render_report(report, console, f"Dry run — {input_path.name}")
             raise typer.Exit(code=report.exit_code(fail_on_warn))
 
+        # Designed slides (source -> designed PPTX/PDF -> pictures -> video):
+        # resolve one full-frame picture per slide up front. The count must
+        # match exactly, or narration would drift out of alignment.
+        full_slide_images: list[Path] | None = None
+        presenton_temp_pptx: Path | None = None
+        presenton_temp_pdf: Path | None = None
+        presenton_settings: dict[str, Any] | None = None
+        presenton_deck_dest: Path | None = None
+        if design_modes:
+            width = int(config["settings"]["video"]["resolution"][0])
+            try:
+                if slides_pdf is not None:
+                    console.print("\n[bold]Rendering designed slides from PDF...[/bold]")
+                    full_slide_images = pdf_to_slide_images(
+                        slides_pdf, temp_dir / "slides_pdf", width=width
+                    )
+                elif template_name is not None:
+                    settings = resolve_presenton_settings(
+                        config, url=presenton_url,
+                        api_key=presenton_api_key, template=template_name,
+                    )
+                    console.print(
+                        f"\n[bold]Designing slides with Presenton template "
+                        f"'{settings['template']}'...[/bold]"
+                    )
+                    client = _presenton_client(settings)
+                    temp_pptx = temp_dir / "presenton_deck.pptx"
+                    temp_pdf = temp_dir / "presenton_deck.pdf"
+                    client.generate_deck_pair(
+                        slides, str(settings["template"]), temp_pptx, temp_pdf
+                    )
+                    presenton_temp_pptx = temp_pptx
+                    presenton_temp_pdf = temp_pdf
+                    presenton_settings = settings
+                    presenton_deck_dest = (
+                        Path(save_deck) if save_deck
+                        else Path(str(output_filename)).with_suffix(".pptx")
+                    )
+                    full_slide_images = pdf_to_slide_images(
+                        temp_pdf, temp_dir / "presenton_slides", width=width
+                    )
+                else:  # --preserve-style
+                    if file_extension != ".pptx":
+                        err_console.print(
+                            "--preserve-style only applies to .pptx input; "
+                            "for Markdown use --template or --slides-pdf."
+                        )
+                        raise typer.Exit(code=1)
+                    console.print(
+                        "\n[bold]Rendering your PowerPoint's slides as designed...[/bold]"
+                    )
+                    rendered_pdf = pptx_to_pdf(input_path, temp_dir / "preserved")
+                    full_slide_images = pdf_to_slide_images(
+                        rendered_pdf, temp_dir / "preserved_slides", width=width
+                    )
+            except (PresentonError, SlideRenderError) as e:
+                err_console.print(str(e))
+                raise typer.Exit(code=1)
+            if len(full_slide_images) != len(slides):
+                err_console.print(
+                    f"The designed deck has {len(full_slide_images)} slide(s) "
+                    f"but the source has {len(slides)}; the count does not "
+                    "match, so narration would misalign. Aborting."
+                )
+                raise typer.Exit(code=1)
+
+            # ADR-0013: check the designed deck against the source and swap in
+            # SlideStream code slides (video frame and .pptx) where Presenton
+            # dropped the code. Strict mode stops here, before rendering.
+            if presenton_settings is not None and presenton_temp_pptx is not None:
+                with Image.open(full_slide_images[0]) as first_frame:
+                    frame_size = first_frame.size
+                review = review_designed_deck(
+                    slides, presenton_settings, config,
+                    pptx_path=presenton_temp_pptx, pdf_path=presenton_temp_pdf,
+                    frames=full_slide_images, frame_size=frame_size,
+                    work_dir=temp_dir / "code_slides",
+                )
+                _report_design_review(
+                    review, presenton_settings,
+                    Path(str(output_filename)).with_suffix(".fidelity.json"),
+                )
+
         # Process each slide with Rich progress bar
         video_fragments = []
         pptx_slides: list[dict[str, Any]] = []
+        # Final narration per slide, in order: written into the Presenton
+        # deck's speaker notes after the loop (one narration path, ADR-0008).
+        narration_texts: list[str] = []
         audio_failed = 0
         llm_narration_failed = 0
         avatar_failed = 0
@@ -702,15 +934,20 @@ def create(
                         if improved_query:
                             search_query = improved_query.strip().replace('"', "")
 
+                narration_texts.append(speech_text)
+
                 # File paths
                 img_path = temp_dir / f"slide_{slide_num}.png"
                 audio_path = temp_dir / f"slide_{slide_num}.mp3"
                 fragment_path = temp_dir / f"fragment_{slide_num}.mp4"
 
-                # Use a pre-made image the deck already references (e.g. from
-                # `enrich`), else generate one via the provider.
+                # Designed full-frame slide first, then a pre-made image the
+                # deck already references (e.g. from `enrich`), else generate
+                # one via the provider.
                 prebuilt = _prebuilt_slide_image(slide, input_path.parent)
-                if prebuilt is not None:
+                if full_slide_images is not None:
+                    shutil.copyfile(full_slide_images[i], img_path)
+                elif prebuilt is not None:
                     shutil.copyfile(prebuilt, img_path)
                 else:
                     try:
@@ -805,6 +1042,9 @@ def create(
                 ]
                 if (
                     bullets
+                    # A designed slide already shows its text; overlaying the
+                    # bullets again beside it would duplicate them.
+                    and full_slide_images is None
                     and image_provider.name != "text"
                     and config["settings"].get("video", {}).get("bullets_overlay", True)
                 ):
@@ -862,6 +1102,22 @@ def create(
                 )
             )
             return
+
+        # Presenton deck: narration is final now, so write it into the
+        # designed deck's speaker notes and save the deck beside the video.
+        if presenton_temp_pptx is not None and presenton_deck_dest is not None:
+            try:
+                inject_speaker_notes(presenton_temp_pptx, narration_texts)
+                presenton_deck_dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(presenton_temp_pptx, presenton_deck_dest)
+                console.print(
+                    f"🎨 Designed deck saved: [yellow]{presenton_deck_dest}[/yellow] "
+                    "(narration in speaker notes; designed by Presenton)"
+                )
+            except Exception as e:
+                err_console.print(
+                    f"Warning: could not save the Presenton deck: {e}"
+                )
 
         # Per-run summary: surface partial output and degradation rather than
         # always declaring total success.
@@ -1439,6 +1695,154 @@ def draft(
             expand=False,
         )
     )
+
+
+@app.command()
+def presenton(
+    input_path: Annotated[
+        Path,
+        typer.Argument(help="Deck to design (Markdown .md or PowerPoint .pptx)."),
+    ],
+    output_path: Annotated[
+        str | None,
+        typer.Argument(
+            help="Output deck (.pptx or .pdf; default: <input>.presenton.pptx)."
+        ),
+    ] = None,
+    template_name: Annotated[
+        str | None,
+        typer.Option(
+            "--template",
+            help="Presenton template name, overriding providers.presenton.template.",
+        ),
+    ] = None,
+    presenton_url: Annotated[
+        str | None,
+        typer.Option(
+            "--presenton-url",
+            help="Presenton server URL, overriding providers.presenton.base_url.",
+        ),
+    ] = None,
+    presenton_api_key: Annotated[
+        str | None,
+        typer.Option(
+            "--presenton-api-key",
+            help="Presenton API key, overriding providers.presenton.api_key.",
+        ),
+    ] = None,
+    config_file: Annotated[
+        str | None,
+        typer.Option("--config", "-c", help="Path to configuration file (YAML)."),
+    ] = None,
+    force: Annotated[
+        bool,
+        typer.Option("--force", "-f", help="Overwrite the output file if it exists."),
+    ] = False,
+) -> None:
+    """Design a templated deck with Presenton (external, never bundled).
+
+    Sends one slides_markdown entry per slide to your running Presenton
+    (https://github.com/presenton/presenton, Apache-2.0), downloads the
+    designed deck, and writes the narration (speaker notes, else clean
+    title+bullets) into its speaker notes. For a video with the same design,
+    use `slide-stream create <deck> out.mp4 --template NAME`.
+    """
+    slides = _parse_deck(input_path)
+    if not slides:
+        err_console.print(f"No slides found in {input_path.name}. Exiting.")
+        raise typer.Exit(code=1)
+
+    out = (
+        Path(output_path) if output_path
+        else input_path.with_suffix(".presenton.pptx")
+    )
+    export_as = out.suffix.lower().lstrip(".")
+    if export_as not in ("pptx", "pdf"):
+        err_console.print(f"Output must be a .pptx or .pdf file: {out}")
+        raise typer.Exit(code=1)
+    if out.exists() and not force:
+        err_console.print(f"{out} already exists. Re-run with --force to overwrite it.")
+        raise typer.Exit(code=1)
+
+    try:
+        config = load_config(config_file)
+    except ConfigurationError as e:
+        err_console.print(f"Configuration Error: {e}")
+        raise typer.Exit(code=1)
+    try:
+        settings = resolve_presenton_settings(
+            config, url=presenton_url, api_key=presenton_api_key,
+            template=template_name,
+        )
+    except PresentonError as e:
+        err_console.print(str(e))
+        raise typer.Exit(code=1)
+
+    console.print(
+        f"[bold]Designing {len(slides)} slides with Presenton template "
+        f"'{settings['template']}' at {settings['base_url']}...[/bold]"
+    )
+    client = _presenton_client(settings)
+    try:
+        result = client.generate_deck(
+            slides, str(settings["template"]), export_as, out
+        )
+    except PresentonError as e:
+        err_console.print(str(e))
+        raise typer.Exit(code=1)
+
+    # ADR-0013: compare with the source and rebuild lost code slides. A PDF
+    # of the same deck gives the most faithful text and the colours for any
+    # rebuilt slide; without one, fall back to the .pptx text.
+    with tempfile.TemporaryDirectory(prefix="slide_stream_review_") as tmp:
+        pdf_path: Path | None = out if export_as == "pdf" else None
+        frames: list[Path] | None = None
+        presentation_id = getattr(result, "presentation_id", None)
+        wants_pdf = settings["fidelity"] != "off" or settings["code_slides"] != "never"
+        if export_as == "pptx" and presentation_id and wants_pdf:
+            try:
+                pdf_path = Path(tmp) / "deck.pdf"
+                client.export_deck(str(presentation_id), "pdf", pdf_path)
+                frames = pdf_to_slide_images(pdf_path, Path(tmp) / "frames", width=960)
+            except (PresentonError, SlideRenderError, AttributeError):
+                frames = None
+                if pdf_path is not None and not pdf_path.is_file():
+                    pdf_path = None
+        review = review_designed_deck(
+            slides, settings, config,
+            pptx_path=out if export_as == "pptx" else None,
+            pdf_path=pdf_path, frames=frames,
+        )
+        _report_design_review(
+            review, settings, out.with_suffix(".fidelity.json"),
+            pdf_only=export_as == "pdf",
+        )
+
+    if export_as == "pptx":
+        notes = []
+        for slide in slides:
+            title = (
+                str(slide.get("title", "")) if slide.get("has_real_title", True)
+                else ""
+            )
+            notes.append(
+                _clean_narration(title, slide.get("content", []),
+                                 str(slide.get("notes", "") or ""))
+            )
+        inject_speaker_notes(out, notes)
+
+    lines = [
+        f"🎨 [bold green]Designed deck written![/bold green]\n\n"
+        f"File: [yellow]{out}[/yellow]  ·  Template: [yellow]{settings['template']}[/yellow]\n"
+        "Designed by Presenton (external, Apache-2.0) — not bundled with SlideStream."
+    ]
+    if getattr(result, "edit_url", None):
+        lines.append(f"Edit it in Presenton: {result.edit_url}")
+    lines.append(
+        f"Video with this design: [bold]slide-stream create {input_path} "
+        f"video.mp4 --template {settings['template']}[/bold]"
+    )
+    console.print(Panel("\n".join(lines), border_style="green", expand=False))
 
 
 # Ephemeral per-run voice uploads are named <uuid4>.<ext>; they are internal

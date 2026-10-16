@@ -1,0 +1,17 @@
+Today we look at one of the most useful tricks in computing. When you ask a Python dictionary for a value, it hands it back almost instantly, whether it holds ten items or ten million. By the end of this session you'll know how it does that.
+---
+Start with the obvious approach. Say we keep a million student records in a list and want the one with a particular ID. We check the first record, then the second, and keep going. On average we look at half a million records before we find it. Double the data and we double the wait.
+---
+Hash tables take a different route. Instead of searching, we calculate where the record should be. A hash function turns the key into a number, and that number picks a bucket in an array. We go straight to that bucket. How much data we have stops mattering.
+---
+Here's the whole idea in two lines of Python. The built-in hash function turns a key into a large integer. The remainder operator folds that integer into the range of buckets we actually have. With eight buckets, every student ID lands somewhere from zero to seven.
+---
+There's a catch. Two different keys can land in the same bucket. That's called a collision, and there are two common fixes. Chaining keeps a short list in each bucket. Open addressing looks for the next free bucket instead. Python's own dictionary uses a version of open addressing.
+---
+Here's what that buys us. Looking up a key in an unsorted list takes time proportional to its length. In a hash table it takes constant time on average. Notice the last column, though. If every key collides, a hash table is no faster than a list. Good hash functions make that very unlikely.
+---
+The number that tells you how a hash table is coping is the load factor: items stored divided by buckets. As it climbs, collisions climb with it. So implementations set a threshold, and when it's crossed they build a bigger array, about twice the size, and move every item across. That move is slow, but it's rare, so averaged over all inserts it still costs constant time.
+---
+You use hash tables every day. Every Python dictionary and set is one. Databases use them for indexes and caches. Git stores every file and commit under a hash of its contents. And the compiler that runs your code keeps its table of names in one.
+---
+To sum up. Hashing spends memory to save time. Lookups are constant time on average, but can degrade in the worst case. Resizing keeps the load factor, and therefore the speed, under control. And keys have to be immutable, because if a key changed, its hash would change and you'd never find it again.
