@@ -1,7 +1,6 @@
 """Talking-head avatar provider implementations."""
 
 import os
-import shutil
 import subprocess
 import tempfile
 import time
@@ -12,6 +11,7 @@ import requests
 from rich.console import Console
 
 from ..avatars import avatar_prompt, mouth_box, resolve_avatar
+from ..ffmpeg_bin import ffmpeg_exe
 from .base import AvatarProvider
 
 # Proven SadTalker ComfyUI workflow (see docs referenced by sadtalker-api.md):
@@ -905,13 +905,14 @@ def _to_16k_wav(audio_path: str) -> tuple[str, bool]:
     Returns (path, is_temporary). If ffmpeg is unavailable, returns the input
     unchanged so upload is still attempted.
     """
-    if not shutil.which("ffmpeg"):
+    ffmpeg = ffmpeg_exe()
+    if not ffmpeg:
         return audio_path, False
     fd, converted = tempfile.mkstemp(suffix=".wav")
     os.close(fd)
     try:
         subprocess.run(
-            ["ffmpeg", "-y", "-loglevel", "error", "-i", audio_path,
+            [ffmpeg, "-y", "-loglevel", "error", "-i", audio_path,
              "-ar", "16000", "-ac", "1", converted],
             check=True,
         )

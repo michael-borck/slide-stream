@@ -9,7 +9,6 @@ time or money. Powers ``create --dry-run`` and the ``doctor`` command.
 import importlib.util
 import os
 import re
-import shutil
 import wave
 from dataclasses import dataclass, field
 from io import BytesIO
@@ -17,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from .avatars import BUILTIN_AVATARS
+from .ffmpeg_bin import ffmpeg_exe
 from .narration import narration_source, strip_stage_directions
 
 # Severity ranks for the summary/exit code.
@@ -407,10 +407,10 @@ def _check_providers_env(report, providers, settings, options) -> None:
             report.add("Providers & environment", WARN,
                        f"TTS '{tts}' has no key/base_url — will fall back to free gTTS")
 
-        if not shutil.which("ffmpeg"):
+        if not ffmpeg_exe():
             report.add("Providers & environment", BLOCKER,
-                       "ffmpeg not found — video output needs it "
-                       "(brew install ffmpeg / distro package)")
+                       "ffmpeg not found (neither on PATH nor bundled with "
+                       "moviepy) — reinstall slide-stream or install ffmpeg")
 
     out = options.get("output_path")
     if out and Path(str(out)).exists():

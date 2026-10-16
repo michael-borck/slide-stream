@@ -448,7 +448,7 @@ def test_sadtalker_generate_flow(config, tmp_path, mocker, monkeypatch):
         preprocess="full", poll_interval=0,
     )
     # No ffmpeg in the test -> audio uploaded as-is.
-    monkeypatch.setattr("slide_stream.providers.avatar.shutil.which", lambda _: None)
+    monkeypatch.setattr("slide_stream.providers.avatar.ffmpeg_exe", lambda: None)
 
     img_up = mocker.MagicMock()
     img_up.json.return_value = {"name": "face.png"}
@@ -499,7 +499,7 @@ def test_sadtalker_workflow_error_returns_none(config, tmp_path, mocker, monkeyp
     audio = tmp_path / "a.wav"
     audio.write_bytes(b"w")
     _sadtalker_config(config, base_url="https://c.org", source_image=str(face), poll_interval=0)
-    monkeypatch.setattr("slide_stream.providers.avatar.shutil.which", lambda _: None)
+    monkeypatch.setattr("slide_stream.providers.avatar.ffmpeg_exe", lambda: None)
 
     img_up = mocker.MagicMock()
     img_up.json.return_value = {"name": "f.png"}
@@ -575,7 +575,7 @@ def test_wav2lip_uses_video_workflow(config, tmp_path, mocker, monkeypatch):
         "provider": "wav2lip", "base_url": "https://c.org",
         "source_video": str(vid), "poll_interval": 0,
     }
-    monkeypatch.setattr("slide_stream.providers.avatar.shutil.which", lambda _: None)
+    monkeypatch.setattr("slide_stream.providers.avatar.ffmpeg_exe", lambda: None)
 
     vid_up = mocker.MagicMock()
     vid_up.json.return_value = {"name": "idle.mp4"}
@@ -628,7 +628,7 @@ def test_comfyui_view_download_passes_subfolder(config, tmp_path, mocker, monkey
         "provider": "wav2lip", "base_url": "https://c.org",
         "source_video": str(vid), "poll_interval": 0,
     }
-    monkeypatch.setattr("slide_stream.providers.avatar.shutil.which", lambda _: None)
+    monkeypatch.setattr("slide_stream.providers.avatar.ffmpeg_exe", lambda: None)
 
     vid_up = mocker.MagicMock()
     vid_up.json.return_value = {"name": "idle.mp4"}
@@ -774,7 +774,7 @@ def test_wan_s2v_generate_frees_vram_and_reads_gifs(config, tmp_path, mocker, mo
         "provider": "wan-s2v", "base_url": "https://c.org",
         "source": str(img), "poll_interval": 0,
     }
-    monkeypatch.setattr("slide_stream.providers.avatar.shutil.which", lambda _: None)
+    monkeypatch.setattr("slide_stream.providers.avatar.ffmpeg_exe", lambda: None)
 
     img_up = mocker.MagicMock()
     img_up.json.return_value = {"name": "owl.png"}

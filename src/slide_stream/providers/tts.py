@@ -13,6 +13,7 @@ from typing import Any
 import requests
 from rich.console import Console
 
+from ..ffmpeg_bin import ffmpeg_exe
 from .base import TTSProvider, is_strict
 
 console = Console()
@@ -90,7 +91,8 @@ def _prepare_sample_as_wav(sample_path: Path) -> tuple[Path, bool]:
     """
     if sample_path.suffix.lower() == ".wav":
         return sample_path, False
-    if not shutil.which("ffmpeg"):
+    ffmpeg = ffmpeg_exe()
+    if not ffmpeg:
         raise RuntimeError(
             "ffmpeg is required to convert a non-WAV voice_sample "
             f"({sample_path.suffix}). Install it or supply a .wav file."
@@ -100,7 +102,7 @@ def _prepare_sample_as_wav(sample_path: Path) -> tuple[Path, bool]:
     try:
         subprocess.run(
             [
-                "ffmpeg", "-y", "-loglevel", "error",
+                ffmpeg, "-y", "-loglevel", "error",
                 "-i", str(sample_path),
                 "-ar", "24000", "-ac", "1",
                 converted,
@@ -195,7 +197,6 @@ class KokoroTTSProvider(TTSProvider):
         too long, copy the data (~19MB, one-time) to our short cache path.
         A symlink is not enough: phonemizer resolves it back to the long path.
         """
-        import shutil
 
         import espeakng_loader  # type: ignore[import-not-found]
         from kokoro_onnx import EspeakConfig  # type: ignore[import-not-found]

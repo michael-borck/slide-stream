@@ -762,6 +762,7 @@ def test_chatterbox_converts_m4a_sample_to_wav(config, tmp_path, mocker):
     import subprocess
     import wave
 
+    from slide_stream.ffmpeg_bin import ffmpeg_exe
     from slide_stream.providers.tts import ChatterboxTTSProvider
 
     # Build a real m4a: 1s of silence, wav -> m4a via ffmpeg.
@@ -773,7 +774,7 @@ def test_chatterbox_converts_m4a_sample_to_wav(config, tmp_path, mocker):
         w.writeframes(b"\x00\x00" * 24000)
     sample = tmp_path / "memo.m4a"
     subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error", "-i", str(src_wav), str(sample)],
+        [str(ffmpeg_exe()), "-y", "-loglevel", "error", "-i", str(src_wav), str(sample)],
         check=True,
     )
 
@@ -1692,7 +1693,7 @@ def test_prepare_sample_as_wav_cleans_temp_on_ffmpeg_failure(tmp_path, mocker):
         side_effect=recording_mkstemp,
     )
     mocker.patch(
-        "slide_stream.providers.tts.shutil.which", return_value="/usr/bin/ffmpeg"
+        "slide_stream.providers.tts.ffmpeg_exe", return_value="/usr/bin/ffmpeg"
     )
     mocker.patch(
         "slide_stream.providers.tts.subprocess.run",

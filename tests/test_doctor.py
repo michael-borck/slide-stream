@@ -145,7 +145,7 @@ def test_doctor_wan_s2v_slow_render_warning():
 
 
 def test_doctor_ffmpeg_missing_is_blocker(monkeypatch):
-    monkeypatch.setattr("slide_stream.doctor.shutil.which", lambda _: None)
+    monkeypatch.setattr("slide_stream.doctor.ffmpeg_exe", lambda: None)
     c = cfg()
     c["providers"]["avatar"] = {"provider": "wan-s2v", "base_url": "https://c", "source": "owl"}
     report = run_doctor([{"title": "A", "content": ["x"]}], c, opts(avatar_enabled=True))

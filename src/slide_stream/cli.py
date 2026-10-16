@@ -30,6 +30,7 @@ from .draft import (
     validate_deck_markdown,
 )
 from .export_pptx import export_pptx
+from .ffmpeg_bin import ffmpeg_exe
 from .llm import get_llm_client, query_llm, query_llm_with_image
 from .media import (
     compose_slide_with_bullets,
@@ -416,12 +417,13 @@ def create(
     if transition is not None:
         config["settings"].setdefault("video", {})["transition_seconds"] = transition
 
-    # FFmpeg is required to encode video; fail early with an actionable hint.
-    if not pptx_mode and not shutil.which("ffmpeg"):
+    # FFmpeg is required to encode video; moviepy ships one, so this only
+    # fails on a broken install. Fail early with an actionable hint.
+    if not pptx_mode and not ffmpeg_exe():
         err_console.print(
-            "FFmpeg was not found on your PATH. SlideStream needs FFmpeg to "
-            "encode video. Install it (e.g. 'brew install ffmpeg' or "
-            "'sudo apt install ffmpeg') and try again."
+            "No FFmpeg found: neither on your PATH nor the copy bundled with "
+            "moviepy (imageio-ffmpeg). Reinstall slide-stream, or install "
+            "FFmpeg (e.g. 'brew install ffmpeg' or 'sudo apt install ffmpeg')."
         )
         raise typer.Exit(code=1)
 

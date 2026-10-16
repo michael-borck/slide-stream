@@ -179,6 +179,28 @@ def test_puppet_renders_a_flap_clip(tmp_path):
         assert clip.duration > 0
 
 
+def test_puppet_reads_mp3_without_system_ffmpeg(tmp_path, monkeypatch):
+    """gTTS narration is MP3. With no ffmpeg on PATH the puppet used to skip
+    conversion and fail reading MP3 as WAV; moviepy's bundled ffmpeg fixes it."""
+    import subprocess
+
+    from slide_stream.ffmpeg_bin import ffmpeg_exe
+    from slide_stream.providers.avatar import PuppetAvatarProvider
+
+    wav = tmp_path / "a.wav"
+    _noise_wav(wav)
+    mp3 = tmp_path / "a.mp3"
+    subprocess.run(
+        [str(ffmpeg_exe()), "-y", "-loglevel", "error", "-i", str(wav), str(mp3)],
+        check=True,
+    )
+    monkeypatch.setattr("slide_stream.ffmpeg_bin.shutil.which", lambda _: None)
+    cfg = _cfg()
+    cfg["providers"]["avatar"] = {"provider": "puppet", "source": "teddy"}
+    out = tmp_path / "head.mp4"
+    assert PuppetAvatarProvider(cfg).generate(str(mp3), str(out), 1) == str(out)
+
+
 def test_puppet_custom_mouth_override(tmp_path):
     from slide_stream.providers.avatar import PuppetAvatarProvider
 
