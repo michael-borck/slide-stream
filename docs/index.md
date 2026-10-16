@@ -22,6 +22,8 @@ New here? Start with the **[User Guide](USER_GUIDE.md)**. Prefer recipes? The
 - **[User Guide](USER_GUIDE.md)** — installation, configuration, providers, and the full workflow.
 - **[Use Cases](USE_CASES.md)** — task-based recipes (narrate in your voice, add a presenter, export notes, …).
 - **Providers & integrations** — self-hosted API notes for [Voicebox](voicebox-api.md) (TTS) and the talking-head backends ([options overview](talking-head-options.md)).
+- **[Services](SERVICES.md)** — every engine SlideStream can call, how it is checked, and whose project it is.
+- **[Roadmap](ROADMAP.md)** — where the project is heading, phase by phase; decisions live in the [ADRs](adr/README.md).
 - **[Development workflow](DEVELOPMENT_WORKFLOW.md)** — for contributors.
 
 !!! tip "Check your setup"

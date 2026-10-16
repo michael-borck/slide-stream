@@ -60,9 +60,15 @@ src/slide_stream/
 ├── config_loader.py     # Layered YAML config (defaults → ~/.slidestream.yaml → project → CLI)
 ├── llm.py               # LLM integration (OpenAI, Gemini, Claude, Groq, openai-compatible)
 ├── media.py             # Image/audio/video assembly (moviepy)
-├── parser.py            # Markdown parsing (heading-style and ---separator decks)
+├── parser.py            # Markdown parsing (heading-style and ---separator decks; fenced code + tables; per-slide `content` text and `markdown` body)
 ├── powerpoint.py        # PowerPoint (.pptx) parsing incl. speaker notes
 ├── narration.py         # Narration script (--script) parsing
+├── presenton.py         # Client for an external Presenton (designed decks; ADR-0009)
+├── slide_render.py      # Designed slides -> pictures (pypdfium2; LibreOffice for .pptx)
+├── fidelity.py          # Designed deck vs source: code/title/text/table kept, possibly invented (ADR-0013)
+├── code_render.py       # Pygments syntax highlighting for frames and .pptx runs
+├── code_slides.py       # SlideStream-built code slides in designed decks: theme sampling, frame, .pptx rewrite
+├── ffmpeg_bin.py        # ffmpeg on PATH, else moviepy's bundled binary
 ├── enrich.py            # `enrich` command: add AI images to a deck
 ├── scan.py              # `scan` command: AI-rename image folders
 ├── serve.py             # FastAPI web UI (try-before-install demo + desktop backend)
@@ -90,7 +96,7 @@ Also: `deploy/` (Docker), `desktop/` (Tauri app), `landing/` (website), `contrib
 - Tests avoid network calls (default config uses the `text` image provider; TTS is mocked at the provider/gTTS boundary)
 
 ### CLI Design
-- Subcommands: `create` (main render), `enrich`, `scan`, `init`, `voices`, `serve`, `avatars`
+- Subcommands: `create` (main render), `enrich`, `scan`, `init`, `voices`, `serve`, `avatars`, `presenton` (designed deck via an external Presenton; `create --template`/`--preserve-style`/`--slides-pdf` put designed slides into the video — ADR-0009)
 - Supports both `.md` and `.pptx` input files (detection by extension)
 - Behavior driven by layered YAML config (`config_loader.py`); CLI flags override config
 - `--strict` must fail (not silently fall back) when a configured provider errors
@@ -101,6 +107,8 @@ Also: `deploy/` (Docker), `desktop/` (Tauri app), `landing/` (website), `contrib
 - **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)**: Comprehensive user guide with examples
 - **[docs/DEVELOPMENT_WORKFLOW.md](docs/DEVELOPMENT_WORKFLOW.md)**: Development workflow and release process
 - **[docs/adr/](docs/adr/)**: Architecture Decision Records (backfilled; read before changing provider/config/test design)
+- **[docs/ROADMAP.md](docs/ROADMAP.md)**: Phased plan. New features must be a pipeline stage (ADR-0011) or a service adapter (ADR-0010)
+- **[docs/SERVICES.md](docs/SERVICES.md)**: Every external engine, its probe, tested version and licence; update it when adding an adapter
 - **[docs/TYPE_SAFETY.md](docs/TYPE_SAFETY.md)**: Type safety documentation
 - **[docs/TYPING_IMPROVEMENTS.md](docs/TYPING_IMPROVEMENTS.md)**: Type improvement roadmap
 - **[e2e/](e2e/)**: End-to-end render matrix against the configured stack (`e2e/run.sh`)
@@ -129,7 +137,7 @@ Also: `deploy/` (Docker), `desktop/` (Tauri app), `landing/` (website), `contrib
 
 ### Dependencies
 - Core: `typer`, `rich`, `moviepy`, `numpy`, `pillow`, `beautifulsoup4`, `python-pptx`, `gtts`, `pyyaml`, `requests`
-- Optional extras: `[openai]`, `[gemini]`, `[claude]`, `[groq]`, `[elevenlabs]`, `[local-tts]`, `[serve]`, `[all-ai]`
+- Optional extras: `[openai]`, `[gemini]`, `[claude]`, `[groq]`, `[elevenlabs]`, `[local-tts]`, `[serve]`, `[presenton]` (pypdfium2 slide rendering; avoid AGPL deps such as PyMuPDF), `[all-ai]`
 - Development (uv dependency group `dev`): `pytest`, `ruff`, `basedpyright`, `twine`
 
 ## Important Notes
