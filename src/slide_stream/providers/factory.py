@@ -41,6 +41,7 @@ from .tts import (
     OpenAICompatTTSProvider,
     OpenAITTSProvider,
     VoiceboxTTSProvider,
+    floor_tts_provider,
 )
 
 console = Console()
@@ -48,8 +49,8 @@ err_console = Console(stderr=True, style="bold red")
 
 # TTS providers that need a self-hosted server URL to do anything. When one of
 # these is selected (e.g. the default, voicebox) but no connection details are
-# set, that just means "not configured yet" — a quiet gTTS fallback, not an
-# error. Providers keyed on an API key (elevenlabs/openai) or a local package
+# set, that just means "not configured yet" — a quiet fallback to the local
+# voice floor (Kokoro, else gTTS; ADR-0012), not an error. Providers keyed on an API key (elevenlabs/openai) or a local package
 # (kokoro) are the user's explicit choice, so their unavailability is an error.
 _SERVER_TTS_PROVIDERS = ("voicebox", "chatterbox", "openai-compatible")
 _TTS_CONNECTION_KEYS = ("base_url", "api_key", "profile_id", "voice_sample")
@@ -73,6 +74,13 @@ def _tts_unconfigured(provider_name: str, tts_config: dict[str, Any]) -> bool:
     return not any(
         os.getenv(var) for var in _SERVER_TTS_ENV_VARS.get(provider_name, ())
     )
+
+
+def _floor_label(provider: TTSProvider) -> str:
+    """How to describe the voice floor in a status line."""
+    if provider.name == "kokoro":
+        return "the local Kokoro voice (offline)"
+    return "free gTTS (needs internet)"
 
 
 class ProviderFactory:
@@ -164,6 +172,13 @@ class ProviderFactory:
 
         provider_name = tts_config.get("provider", "gtts")
 
+        # `auto` asks for the local voice floor directly: Kokoro when
+        # installed (offline), else gTTS. What `slide-stream init` writes.
+        if provider_name == "auto":
+            provider = floor_tts_provider(config)
+            console.print(f"✅ TTS Provider: {provider.name} (auto)")
+            return provider
+
         # Try requested provider
         if provider_name in cls.TTS_PROVIDERS:
             provider_class = cls.TTS_PROVIDERS[provider_name]
@@ -178,11 +193,13 @@ class ProviderFactory:
             # install. There is nothing for strict mode to protect, so use the
             # free default rather than erroring or aborting.
             if _tts_unconfigured(provider_name, tts_config):
+                floor = floor_tts_provider(config)
                 console.print(
-                    f"🔊 No {provider.name} server configured — using free gTTS. "
+                    f"🔊 No {provider.name} server configured — using "
+                    f"{_floor_label(floor)}. "
                     f"Set providers.tts.base_url to enable {provider.name}."
                 )
-                return GTTSProvider(config)
+                return floor
 
             # Configured but unusable: a genuine error the user should see.
             err_console.print(
@@ -198,9 +215,10 @@ class ProviderFactory:
                 "and fallback is disabled."
             )
 
-        # Fallback to gTTS (always available)
-        console.print("🔄 Falling back to: gtts")
-        return GTTSProvider(config)
+        # Fall back to the local voice floor (Kokoro, else gTTS; ADR-0012).
+        floor = floor_tts_provider(config)
+        console.print(f"🔄 Falling back to: {floor.name}")
+        return floor
 
     @classmethod
     def create_avatar_provider(cls, config: dict[str, Any]) -> AvatarProvider:
@@ -254,6 +272,7 @@ class ProviderFactory:
     def list_tts_providers(cls) -> dict[str, str]:
         """Get list of available TTS providers."""
         return {
+            "auto": "Local voice floor: Kokoro when installed (offline), else gTTS",
             "gtts": "Google Text-to-Speech (free, no API key; requires an internet connection)",
             "kokoro": "Kokoro local TTS — fully offline (pip install 'slide-stream[local-tts]'; ~340MB one-time model download)",
             "chatterbox": "Self-hosted Chatterbox voice cloning (set base_url; voice_sample uploads ephemerally per run)",

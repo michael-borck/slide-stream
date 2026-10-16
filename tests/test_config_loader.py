@@ -333,7 +333,7 @@ def test_starter_config_works_without_api_keys():
     providers = parsed["providers"]
     assert providers["llm"]["provider"] == "none"
     assert providers["images"]["provider"] == "text"
-    assert providers["tts"]["provider"] == "gtts"
+    assert providers["tts"]["provider"] == "auto"  # local voice floor
     assert providers["avatar"]["provider"] == "none"
 
 

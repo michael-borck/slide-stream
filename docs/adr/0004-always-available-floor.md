@@ -1,6 +1,6 @@
 # 0004 — gTTS and text cards are the always-available floor
 
-- Status: Accepted (backfilled 2026-09)
+- Status: Superseded by [0012](0012-three-level-fallback-kokoro-floor.md) (2026-10). Accepted (backfilled 2026-09)
 - Drivers: first run must produce a watchable video with zero keys, zero
   servers, and no GPU
 

@@ -18,6 +18,7 @@ from typing import Any
 from .avatars import BUILTIN_AVATARS
 from .ffmpeg_bin import ffmpeg_exe
 from .narration import narration_source, strip_stage_directions
+from .providers.tts import voice_floor_name
 
 # Severity ranks for the summary/exit code.
 OK, WARN, BLOCKER = "ok", "warn", "blocker"
@@ -415,16 +416,19 @@ def _check_providers_env(report, providers, settings, options) -> None:
 
     if options.get("mode", "create") == "create":
         tts = providers.get("tts", {}).get("provider", "gtts")
+        floor = ("the local Kokoro voice"
+                 if voice_floor_name({"providers": providers, "settings": settings})
+                 == "kokoro" else "free gTTS")
         extra = _missing_extra(tts, _TTS_PKG)
         if extra:
             report.add("Providers & environment", BLOCKER if strict else WARN,
                        f"TTS '{tts}' package not installed — run: "
                        f'pip install "slide-stream[{extra}]"'
-                       + ("" if strict else " (falls back to free gTTS)"))
+                       + ("" if strict else f" (falls back to {floor})"))
         ok = key_present(tts, providers.get("tts", {}), _TTS_KEY)
         if ok is False:
             report.add("Providers & environment", WARN,
-                       f"TTS '{tts}' has no key/base_url — will fall back to free gTTS")
+                       f"TTS '{tts}' has no key/base_url — will fall back to {floor}")
 
         if not ffmpeg_exe():
             report.add("Providers & environment", BLOCKER,

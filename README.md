@@ -177,6 +177,7 @@ SlideStream automatically finds your config in this order:
 |----------|------------|--------------|
 | `elevenlabs` | Premium AI voices with emotion | ElevenLabs API key |
 | `openai` | Natural OpenAI TTS voices | OpenAI API key |
+| `auto` | Local voice floor: Kokoro if installed (offline), else gTTS | None |
 | `gtts` | Google Text-to-Speech (free) | None |
 
 ### LLM Providers

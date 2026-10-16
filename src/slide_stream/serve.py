@@ -976,8 +976,9 @@ providers:
     # api_key: "${OLLAMA_TOKEN}"   # sent as a Bearer token
     # think: false                 # reasoning models: keep answers clean
   tts:
-    provider: voicebox          # default; or gtts (free), kokoro (offline),
-                                # chatterbox, elevenlabs, openai
+    provider: voicebox          # default; with no base_url it uses the local
+                                # voice (kokoro, offline). Or: auto, gtts,
+                                # kokoro, chatterbox, elevenlabs, openai
     # base_url: https://voice.example.org        # voicebox/chatterbox server
     # api_key: "${VOICEBOX_TOKEN}"               # if the server needs auth
     # engine: kokoro            # voicebox: kokoro|chatterbox|qwen|luxtts|tada

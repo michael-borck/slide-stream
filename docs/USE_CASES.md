@@ -18,7 +18,7 @@ Every recipe takes a **deck** — a Markdown file (`.md`) or a PowerPoint
 
 ## 1. Slides → narrated video (fastest)
 
-No account, no keys. Uses free gTTS for the voice and renders text-card images.
+No account, no keys. The voice is Kokoro, which runs offline (or free gTTS if Kokoro isn't installed), and the pictures are text cards.
 
 ```bash
 slide-stream create deck.md talk.mp4

@@ -162,11 +162,16 @@ class KokoroTTSProvider(TTSProvider):
     After that, synthesis needs no network and no API key.
     """
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: dict[str, Any], *, floor: bool = False):
         super().__init__(config)
         # Loading the ~310 MB model is expensive; keep one engine per provider
         # instance so a multi-slide run pays the cost once.
         self._engine: Any = None
+        # As the voice floor (ADR-0012) Kokoro stands in for a voice that was
+        # never chosen or already failed, so falling further to gTTS is fine
+        # even in strict mode: strict guards the user's chosen voice, and the
+        # caller has already applied it.
+        self.floor = floor
 
     @property
     def name(self) -> str:
@@ -249,7 +254,14 @@ class KokoroTTSProvider(TTSProvider):
             from kokoro_onnx import Kokoro  # type: ignore[import-not-found]
 
             tts_config = self._tts_config()
-            voice = tts_config.get("voice") or "af_sarah"
+            # providers.tts.voice names a voice of the configured provider;
+            # only use it when that provider is Kokoro. As the floor for
+            # another provider, use kokoro_voice or Kokoro's default.
+            own_voice = (
+                tts_config.get("voice")
+                if tts_config.get("provider") == "kokoro" else None
+            )
+            voice = own_voice or tts_config.get("kokoro_voice") or "af_sarah"
             speed = float(tts_config.get("speed") or 1.0)
             lang = tts_config.get("lang") or "en-us"
 
@@ -283,7 +295,7 @@ class KokoroTTSProvider(TTSProvider):
 
     def _fallback_to_gtts(self, text: str, filename: str) -> str | None:
         """Fallback to gTTS, unless strict mode disables fallbacks."""
-        if is_strict(self.config):
+        if is_strict(self.config) and not self.floor:
             err_console.print(
                 f"  - Strict mode: not falling back to gTTS after {self.name} failed."
             )
@@ -291,6 +303,55 @@ class KokoroTTSProvider(TTSProvider):
         self.fallback_count += 1
         gtts_provider = GTTSProvider(self.config)
         return gtts_provider.synthesize(text, filename)
+
+
+# --- The voice floor (ADR-0012) ---------------------------------------------
+
+VOICE_FLOORS = ("auto", "kokoro", "gtts")
+
+
+def voice_floor_name(config: dict[str, Any]) -> str:
+    """Which local voice to fall back to: ``kokoro`` or ``gtts``.
+
+    ``settings.voice_floor`` (or the ``SLIDE_STREAM_VOICE_FLOOR`` env var)
+    may force one; ``auto`` (the default) picks Kokoro when its optional
+    packages are installed, since it runs offline and keeps the text on the
+    machine, and gTTS otherwise.
+    """
+    choice = (
+        os.getenv("SLIDE_STREAM_VOICE_FLOOR")
+        or config.get("settings", {}).get("voice_floor")
+        or "auto"
+    )
+    choice = str(choice).lower()
+    if choice == "gtts":
+        return "gtts"
+    kokoro_ready = KokoroTTSProvider(config).is_available()
+    return "kokoro" if kokoro_ready else "gtts"
+
+
+def floor_tts_provider(config: dict[str, Any]) -> TTSProvider:
+    """The local voice used when no voice is chosen, or the chosen one fails."""
+    if voice_floor_name(config) == "kokoro":
+        return KokoroTTSProvider(config, floor=True)
+    return GTTSProvider(config)
+
+
+def _fallback_to_floor(
+    provider: TTSProvider, text: str, filename: str
+) -> str | None:
+    """Per-slide fallback for a provider that failed: the voice floor, unless
+    strict mode disables fallbacks. One floor engine is kept per provider so
+    Kokoro loads its model once per run, not once per failed slide."""
+    if is_strict(provider.config):
+        err_console.print(
+            f"  - Strict mode: not falling back after {provider.name} failed."
+        )
+        return None
+    provider.fallback_count += 1
+    if provider._floor_provider is None:
+        provider._floor_provider = floor_tts_provider(provider.config)
+    return provider._floor_provider.synthesize(text, filename)
 
 
 class ChatterboxTTSProvider(TTSProvider):
@@ -412,19 +473,12 @@ class ChatterboxTTSProvider(TTSProvider):
             return filename
 
         except Exception as e:
-            err_console.print(f"  - Chatterbox error: {e}. Using gTTS fallback.")
-            return self._fallback_to_gtts(text, filename)
+            err_console.print(f"  - Chatterbox error: {e}. Using the fallback voice.")
+            return self._fallback_to_floor(text, filename)
 
-    def _fallback_to_gtts(self, text: str, filename: str) -> str | None:
-        """Fallback to gTTS, unless strict mode disables fallbacks."""
-        if is_strict(self.config):
-            err_console.print(
-                f"  - Strict mode: not falling back to gTTS after {self.name} failed."
-            )
-            return None
-        self.fallback_count += 1
-        gtts_provider = GTTSProvider(self.config)
-        return gtts_provider.synthesize(text, filename)
+    def _fallback_to_floor(self, text: str, filename: str) -> str | None:
+        """Fall back to the local voice floor, unless strict mode forbids it."""
+        return _fallback_to_floor(self, text, filename)
 
 
 class VoiceboxTTSProvider(TTSProvider):
@@ -752,19 +806,12 @@ class VoiceboxTTSProvider(TTSProvider):
             return filename
 
         except Exception as e:
-            err_console.print(f"  - Voicebox error: {e}. Using gTTS fallback.")
-            return self._fallback_to_gtts(text, filename)
+            err_console.print(f"  - Voicebox error: {e}. Using the fallback voice.")
+            return self._fallback_to_floor(text, filename)
 
-    def _fallback_to_gtts(self, text: str, filename: str) -> str | None:
-        """Fallback to gTTS, unless strict mode disables fallbacks."""
-        if is_strict(self.config):
-            err_console.print(
-                f"  - Strict mode: not falling back to gTTS after {self.name} failed."
-            )
-            return None
-        self.fallback_count += 1
-        gtts_provider = GTTSProvider(self.config)
-        return gtts_provider.synthesize(text, filename)
+    def _fallback_to_floor(self, text: str, filename: str) -> str | None:
+        """Fall back to the local voice floor, unless strict mode forbids it."""
+        return _fallback_to_floor(self, text, filename)
 
 
 class ElevenLabsTTSProvider(TTSProvider):
@@ -830,21 +877,14 @@ class ElevenLabsTTSProvider(TTSProvider):
 
         except ImportError:
             err_console.print("  - ElevenLabs library not installed. Install with: pip install elevenlabs")
-            return self._fallback_to_gtts(text, filename)
+            return self._fallback_to_floor(text, filename)
         except Exception as e:
-            err_console.print(f"  - ElevenLabs error: {e}. Using gTTS fallback.")
-            return self._fallback_to_gtts(text, filename)
+            err_console.print(f"  - ElevenLabs error: {e}. Using the fallback voice.")
+            return self._fallback_to_floor(text, filename)
 
-    def _fallback_to_gtts(self, text: str, filename: str) -> str | None:
-        """Fallback to gTTS, unless strict mode disables fallbacks."""
-        if is_strict(self.config):
-            err_console.print(
-                f"  - Strict mode: not falling back to gTTS after {self.name} failed."
-            )
-            return None
-        self.fallback_count += 1
-        gtts_provider = GTTSProvider(self.config)
-        return gtts_provider.synthesize(text, filename)
+    def _fallback_to_floor(self, text: str, filename: str) -> str | None:
+        """Fall back to the local voice floor, unless strict mode forbids it."""
+        return _fallback_to_floor(self, text, filename)
 
 
 class OpenAICompatTTSProvider(TTSProvider):
@@ -908,21 +948,14 @@ class OpenAICompatTTSProvider(TTSProvider):
 
         except ImportError:
             err_console.print("  - OpenAI library not installed. Install with: pip install openai")
-            return self._fallback_to_gtts(text, filename)
+            return self._fallback_to_floor(text, filename)
         except Exception as e:
-            err_console.print(f"  - OpenAI-compatible TTS error: {e}. Using gTTS fallback.")
-            return self._fallback_to_gtts(text, filename)
+            err_console.print(f"  - OpenAI-compatible TTS error: {e}. Using the fallback voice.")
+            return self._fallback_to_floor(text, filename)
 
-    def _fallback_to_gtts(self, text: str, filename: str) -> str | None:
-        """Fallback to gTTS, unless strict mode disables fallbacks."""
-        if is_strict(self.config):
-            err_console.print(
-                f"  - Strict mode: not falling back to gTTS after {self.name} failed."
-            )
-            return None
-        self.fallback_count += 1
-        gtts_provider = GTTSProvider(self.config)
-        return gtts_provider.synthesize(text, filename)
+    def _fallback_to_floor(self, text: str, filename: str) -> str | None:
+        """Fall back to the local voice floor, unless strict mode forbids it."""
+        return _fallback_to_floor(self, text, filename)
 
 
 class OpenAITTSProvider(TTSProvider):
@@ -969,18 +1002,11 @@ class OpenAITTSProvider(TTSProvider):
 
         except ImportError:
             err_console.print("  - OpenAI library not installed. Install with: pip install openai")
-            return self._fallback_to_gtts(text, filename)
+            return self._fallback_to_floor(text, filename)
         except Exception as e:
-            err_console.print(f"  - OpenAI TTS error: {e}. Using gTTS fallback.")
-            return self._fallback_to_gtts(text, filename)
+            err_console.print(f"  - OpenAI TTS error: {e}. Using the fallback voice.")
+            return self._fallback_to_floor(text, filename)
 
-    def _fallback_to_gtts(self, text: str, filename: str) -> str | None:
-        """Fallback to gTTS, unless strict mode disables fallbacks."""
-        if is_strict(self.config):
-            err_console.print(
-                f"  - Strict mode: not falling back to gTTS after {self.name} failed."
-            )
-            return None
-        self.fallback_count += 1
-        gtts_provider = GTTSProvider(self.config)
-        return gtts_provider.synthesize(text, filename)
+    def _fallback_to_floor(self, text: str, filename: str) -> str | None:
+        """Fall back to the local voice floor, unless strict mode forbids it."""
+        return _fallback_to_floor(self, text, filename)

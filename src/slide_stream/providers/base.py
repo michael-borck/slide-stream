@@ -59,6 +59,9 @@ class TTSProvider(ABC):
         # CLI can warn the user afterwards that some slides do not use the
         # configured voice. Read via getattr(provider, "fallback_count", 0).
         self.fallback_count: int = 0
+        # The local voice floor used for those fallbacks (ADR-0012), created
+        # on first use and reused so Kokoro loads its model once per run.
+        self._floor_provider: TTSProvider | None = None
 
     @abstractmethod
     def synthesize(self, text: str, filename: str) -> str | None:

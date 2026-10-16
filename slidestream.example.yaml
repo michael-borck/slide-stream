@@ -34,7 +34,9 @@ providers:
     # steps: 20
 
   tts:
-    provider: elevenlabs   # gtts, kokoro, chatterbox, voicebox, elevenlabs, openai, openai-compatible
+    provider: elevenlabs   # auto, gtts, kokoro, chatterbox, voicebox, elevenlabs, openai, openai-compatible
+    # If this provider fails, narration falls back to Kokoro (offline) when
+    # installed, else gTTS. Kokoro's voice for that: kokoro_voice: af_sarah
     voice: rachel          # voice ID/name (provider-specific)
     # gtts free accents: accent: australian|british|american|canadian|indian|irish
     # self-hosted Voicebox studio (free, multi-engine):
@@ -201,3 +203,8 @@ settings:
   # Recommended when the exact voice matters (e.g. a cloned lecturer voice).
   # Can also be enabled per-run with: slide-stream create --strict ...
   strict: false
+
+  # The local voice used when no voice is configured or the chosen one fails
+  # (ADR-0012): auto = Kokoro if installed (offline), else gTTS. Force one
+  # with kokoro | gtts.
+  voice_floor: auto

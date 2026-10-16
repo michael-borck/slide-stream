@@ -33,7 +33,8 @@ DEFAULT_CONFIG = {
         "tts": {
             # Voicebox (self-hosted, multi-engine voice cloning) is the default.
             # It needs a base_url; with none configured, the factory falls back
-            # to free gTTS, so a bare install still works out of the box.
+            # to the local voice floor (Kokoro if installed, else free gTTS;
+            # ADR-0012), so a bare install still works out of the box.
             "provider": "voicebox",
             "voice": None,
             "engine": "kokoro",  # voicebox engine (kokoro|chatterbox|qwen|...)
@@ -319,14 +320,14 @@ def validate_config(config: dict[str, Any]) -> None:
 def create_starter_config() -> str:
     """A minimal, valid starter config — what ``slide-stream init`` writes.
 
-    As-is it renders a video with no API keys (text image cards, free gTTS
-    narration, no avatar). Every provider variation lives in the full reference
+    As-is it renders a video with no API keys (text image cards, the local
+    voice floor for narration, no avatar). Every provider variation lives in the full reference
     (``slide-stream init --full`` / ``slidestream.example.yaml``) and the docs,
     so this file stays short and hard to get wrong."""
     return """# SlideStream configuration
 #
-# This minimal file works as-is with no API keys: text-slide images, free gTTS
-# narration, no avatar. Switch a provider on below when you want more.
+# This minimal file works as-is with no API keys: text-slide images, a local
+# voice, no avatar. Switch a provider on below when you want more.
 #
 # Config is layered, later winning:
 #   1. built-in defaults
@@ -351,10 +352,12 @@ providers:
   images:
     provider: text
 
-  # Voice. `gtts` is free (needs internet). Offline: kokoro. Self-hosted/cloned:
-  # voicebox, chatterbox. Premium: elevenlabs, openai, openai-compatible.
+  # Voice. `auto` uses Kokoro if installed (offline, nothing leaves your
+  # machine), else free gTTS (needs internet). Pick one explicitly with
+  # kokoro | gtts. Self-hosted/cloned: voicebox, chatterbox. Premium:
+  # elevenlabs, openai, openai-compatible.
   tts:
-    provider: gtts
+    provider: auto
 
   # Talking-head overlay, off by default. Set a provider (static, puppet,
   # wan-s2v, sadtalker, wav2lip, d-id, ...) then enable per run with --avatar.
@@ -415,7 +418,9 @@ providers:
     # steps: 20
 
   tts:
-    provider: elevenlabs   # gtts, kokoro, chatterbox, voicebox, elevenlabs, openai, openai-compatible
+    provider: elevenlabs   # auto, gtts, kokoro, chatterbox, voicebox, elevenlabs, openai, openai-compatible
+    # If this provider fails, narration falls back to Kokoro (offline) when
+    # installed, else gTTS. Kokoro's voice for that: kokoro_voice: af_sarah
     voice: rachel          # voice ID/name (provider-specific)
     # gtts free accents: accent: australian|british|american|canadian|indian|irish
     # self-hosted Voicebox studio (free, multi-engine):
@@ -582,6 +587,11 @@ settings:
   # Recommended when the exact voice matters (e.g. a cloned lecturer voice).
   # Can also be enabled per-run with: slide-stream create --strict ...
   strict: false
+
+  # The local voice used when no voice is configured or the chosen one fails
+  # (ADR-0012): auto = Kokoro if installed (offline), else gTTS. Force one
+  # with kokoro | gtts.
+  voice_floor: auto
 """
 
 

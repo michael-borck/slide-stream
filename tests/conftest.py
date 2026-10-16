@@ -76,3 +76,8 @@ def _isolate_provider_env(request, monkeypatch):
         return
     for var in _PROVIDER_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
+    # The voice floor is Kokoro whenever its packages are installed (ADR-0012),
+    # which would load a ~340 MB model, or download it, mid-test. Pin the
+    # mocked suite to gTTS, which tests mock at its boundary; floor tests
+    # delete this variable to exercise the real choice.
+    monkeypatch.setenv("SLIDE_STREAM_VOICE_FLOOR", "gtts")

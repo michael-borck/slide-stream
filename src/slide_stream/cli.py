@@ -217,7 +217,7 @@ def create(
             "--strict",
             help=(
                 "Fail instead of silently falling back when a configured "
-                "provider is unusable or errors (e.g. elevenlabs -> gtts)."
+                "provider is unusable or errors (e.g. elevenlabs -> local voice)."
             ),
         ),
     ] = False,
@@ -294,7 +294,7 @@ def create(
         typer.Option(
             "--tts-provider",
             help=(
-                "TTS provider (voicebox, gtts, kokoro, chatterbox, elevenlabs, "
+                "TTS provider (auto, voicebox, gtts, kokoro, chatterbox, elevenlabs, "
                 "openai, openai-compatible), overriding the config file."
             ),
         ),
@@ -876,14 +876,15 @@ def create(
             summary += "  [dim](output is incomplete)[/dim]"
         console.print(summary)
 
-        # Surface silent voice degradation: some TTS providers fall back to
-        # gTTS per-slide on errors, which would otherwise produce a
-        # mixed-voice video that looks like a total success.
+        # Surface silent voice degradation: TTS providers fall back to the
+        # local voice floor (Kokoro, else gTTS) per slide on errors, which
+        # would otherwise produce a mixed-voice video that looks like a
+        # total success.
         fallback_count = getattr(tts_provider, "fallback_count", 0)
         if fallback_count:
             console.print(
                 f"[bold yellow]⚠ {fallback_count} slide(s) fell back to the "
-                "default gTTS voice due to provider errors.[/bold yellow]"
+                "local fallback voice due to provider errors.[/bold yellow]"
             )
 
         # If any provider degraded this run, nudge toward the preflight, which
