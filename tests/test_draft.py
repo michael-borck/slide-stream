@@ -171,3 +171,69 @@ def test_cli_draft_missing_source(tmp_path, monkeypatch):
     result = runner.invoke(app, ["draft", "nope.txt", "--llm-provider", "openai"])
     assert result.exit_code == 1
     assert "not found" in " ".join(result.output.split())
+
+
+# --- PDF and Word input (the `import` extra) ---------------------------------
+
+
+def _write_pdf(path, pages):
+    """A minimal valid PDF with one line of Helvetica text per page."""
+    objects = ["<< /Type /Catalog /Pages 2 0 R >>"]
+    kids = " ".join(f"{3 + 2 * i} 0 R" for i in range(len(pages)))
+    objects.append(f"<< /Type /Pages /Kids [{kids}] /Count {len(pages)} >>")
+    font_obj = 3 + 2 * len(pages)
+    for i, text in enumerate(pages):
+        stream = f"BT /F1 18 Tf 72 720 Td ({text}) Tj ET"
+        objects.append(
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            f"/Contents {4 + 2 * i} 0 R /Resources << /Font << /F1 {font_obj} 0 R >> >> >>"
+        )
+        objects.append(f"<< /Length {len(stream)} >>\nstream\n{stream}\nendstream")
+    objects.append("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    out, offsets = "%PDF-1.4\n", []
+    for n, body in enumerate(objects, 1):
+        offsets.append(len(out.encode()))
+        out += f"{n} 0 obj\n{body}\nendobj\n"
+    xref = len(out.encode())
+    out += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n"
+    out += "".join(f"{o:010d} 00000 n \n" for o in offsets)
+    out += f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n"
+    path.write_bytes(out.encode())
+    return path
+
+
+def test_extract_pdf_reads_every_page(tmp_path):
+    pytest.importorskip("pypdf")
+    pdf = _write_pdf(tmp_path / "report.pdf", ["Hash tables are fast", "Collisions happen"])
+    text = extract_source_text(pdf)
+    assert "Hash tables are fast" in text
+    assert "Collisions happen" in text
+    assert text.index("Hash tables") < text.index("Collisions")
+
+
+def test_extract_docx_keeps_paragraphs_and_skips_blank_ones(tmp_path):
+    docx = pytest.importorskip("docx")
+    doc = docx.Document()
+    doc.add_heading("Report title", level=1)
+    doc.add_paragraph("First finding.")
+    doc.add_paragraph("")
+    doc.add_paragraph("Second finding.")
+    path = tmp_path / "report.docx"
+    doc.save(str(path))
+    assert extract_source_text(path) == "Report title\nFirst finding.\nSecond finding."
+
+
+def test_extract_pdf_without_the_extra_explains_how_to_install(tmp_path, monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "pypdf", None)
+    with pytest.raises(DraftError, match=r"slide-stream\[import\]"):
+        extract_source_text(tmp_path / "x.pdf")
+
+
+def test_extract_docx_without_the_extra_explains_how_to_install(tmp_path, monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "docx", None)
+    with pytest.raises(DraftError, match=r"slide-stream\[import\]"):
+        extract_source_text(tmp_path / "x.docx")

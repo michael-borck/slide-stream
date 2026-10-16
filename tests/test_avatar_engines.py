@@ -1,0 +1,627 @@
+"""Tests for server-backed presenter engines: D-ID, SadTalker, Wav2Lip, the ComfyUI router, Wan2.2-S2V."""
+
+import copy
+import wave
+
+import pytest
+
+from slide_stream.config_loader import DEFAULT_CONFIG
+from slide_stream.providers.base import StrictModeError
+from slide_stream.providers.factory import ProviderFactory
+
+
+@pytest.fixture
+def config():
+    """A small/fast video config for encoding tests."""
+    cfg = copy.deepcopy(DEFAULT_CONFIG)
+    cfg["settings"]["video"]["resolution"] = [320, 180]
+    cfg["settings"]["video"]["fps"] = 8
+    cfg["settings"]["video"]["default_slide_duration"] = 1.0
+    return cfg
+
+
+def write_silent_wav(filename, seconds=0.4):
+    """A real, decodable audio file (WAV content behind any extension)."""
+    with wave.open(str(filename), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(22050)
+        w.writeframes(b"\x00\x00" * int(22050 * seconds))
+
+
+def _did_config(config, **avatar):
+    config["providers"]["avatar"] = {"provider": "d-id", **avatar}
+    return config
+
+
+def test_did_availability_needs_key_and_source(config, monkeypatch):
+    from slide_stream.providers.avatar import DIDAvatarProvider
+
+    monkeypatch.delenv("DID_API_KEY", raising=False)
+    _did_config(config)
+    assert DIDAvatarProvider(config).is_available() is False
+
+    _did_config(config, api_key="k")  # key but no source
+    assert DIDAvatarProvider(config).is_available() is False
+
+    _did_config(config, api_key="k", source_image="/tmp/face.jpg")
+    assert DIDAvatarProvider(config).is_available() is True
+
+
+def test_did_generate_full_flow(config, tmp_path, mocker):
+    """image upload -> audio upload -> create talk -> poll -> download."""
+    from slide_stream.providers.avatar import DIDAvatarProvider
+
+    face = tmp_path / "face.jpg"
+    face.write_bytes(b"jpegbytes")
+    audio = tmp_path / "slide_1.mp3"
+    audio.write_bytes(b"audiobytes")
+    _did_config(config, api_key="k", source_image=str(face), poll_interval=0)
+
+    img_up = mocker.MagicMock()
+    img_up.json.return_value = {"url": "https://d-id/img.jpg"}
+    aud_up = mocker.MagicMock()
+    aud_up.json.return_value = {"url": "https://d-id/aud.mp3"}
+    create = mocker.MagicMock()
+    create.json.return_value = {"id": "talk-1"}
+    post = mocker.patch(
+        "slide_stream.providers.avatar.requests.post",
+        side_effect=[img_up, aud_up, create],
+    )
+
+    pending = mocker.MagicMock()
+    pending.json.return_value = {"status": "started"}
+    done = mocker.MagicMock()
+    done.json.return_value = {"status": "done", "result_url": "https://d-id/out.mp4"}
+    clip = mocker.MagicMock(content=b"MP4DATA")
+    get = mocker.patch(
+        "slide_stream.providers.avatar.requests.get",
+        side_effect=[pending, done, clip],
+    )
+    mocker.patch("slide_stream.providers.avatar.time.sleep")
+
+    out = tmp_path / "head_1.mp4"
+    result = DIDAvatarProvider(config).generate(str(audio), str(out), 1)
+
+    assert result == str(out)
+    assert out.read_bytes() == b"MP4DATA"
+    # Talk was created with the uploaded image + audio URLs.
+    talk_body = post.call_args_list[2][1]["json"]
+    assert talk_body["source_url"] == "https://d-id/img.jpg"
+    assert talk_body["script"] == {"type": "audio", "audio_url": "https://d-id/aud.mp3"}
+    assert get.call_args_list[-1][0][0] == "https://d-id/out.mp4"
+
+
+def test_did_source_image_uploaded_once_per_run(config, tmp_path, mocker):
+    from slide_stream.providers.avatar import DIDAvatarProvider
+
+    face = tmp_path / "face.jpg"
+    face.write_bytes(b"jpg")
+    audio = tmp_path / "a.mp3"
+    audio.write_bytes(b"a")
+    _did_config(config, api_key="k", source_image=str(face), poll_interval=0)
+
+    def fake_post(url, **kwargs):
+        r = mocker.MagicMock()
+        if url.endswith("/images"):
+            r.json.return_value = {"url": "https://d-id/img.jpg"}
+        elif url.endswith("/audios"):
+            r.json.return_value = {"url": "https://d-id/aud.mp3"}
+        else:
+            r.json.return_value = {"id": "t"}
+        return r
+
+    post = mocker.patch("slide_stream.providers.avatar.requests.post", side_effect=fake_post)
+    done = mocker.MagicMock()
+    done.json.return_value = {"status": "done", "result_url": "https://d-id/out.mp4"}
+    mocker.patch("slide_stream.providers.avatar.requests.get",
+                 return_value=mocker.MagicMock(content=b"x", **{"json.return_value": {"status": "done", "result_url": "u"}}))
+    mocker.patch("slide_stream.providers.avatar.time.sleep")
+
+    provider = DIDAvatarProvider(config)
+    provider.generate(str(audio), str(tmp_path / "h1.mp4"), 1)
+    provider.generate(str(audio), str(tmp_path / "h2.mp4"), 2)
+
+    image_uploads = [c for c in post.call_args_list if c[0][0].endswith("/images")]
+    assert len(image_uploads) == 1  # uploaded once, reused for slide 2
+
+
+def test_did_error_returns_none(config, tmp_path, mocker):
+    from slide_stream.providers.avatar import DIDAvatarProvider
+
+    face = tmp_path / "face.jpg"
+    face.write_bytes(b"jpg")
+    audio = tmp_path / "a.mp3"
+    audio.write_bytes(b"a")
+    _did_config(config, api_key="k", source_image=str(face))
+    mocker.patch(
+        "slide_stream.providers.avatar.requests.post",
+        side_effect=RuntimeError("api down"),
+    )
+    assert DIDAvatarProvider(config).generate(str(audio), str(tmp_path / "o.mp4"), 1) is None
+
+
+def test_factory_registers_did_and_strict(config, tmp_path):
+
+    config["providers"]["avatar"] = {"provider": "d-id", "source_image": str(tmp_path / "x.jpg")}
+    config["settings"]["strict"] = True  # no key -> unusable -> strict raises
+    import pytest as _pytest
+    with _pytest.raises(StrictModeError):
+        ProviderFactory.create_avatar_provider(config)
+
+
+# --- SadTalker avatar provider (ComfyUI, network mocked) ---------------------
+
+
+def _sadtalker_config(config, **avatar):
+    config["providers"]["avatar"] = {"provider": "sadtalker", **avatar}
+    return config
+
+
+def test_sadtalker_availability_needs_url_and_source(config, monkeypatch):
+    from slide_stream.providers.avatar import SadTalkerAvatarProvider
+
+    monkeypatch.delenv("COMFYUI_BASE_URL", raising=False)
+    _sadtalker_config(config)
+    assert SadTalkerAvatarProvider(config).is_available() is False
+
+    _sadtalker_config(config, base_url="https://comfy.example.org")
+    assert SadTalkerAvatarProvider(config).is_available() is False
+
+    _sadtalker_config(config, base_url="https://comfy.example.org", source_image="/tmp/f.png")
+    assert SadTalkerAvatarProvider(config).is_available() is True
+
+
+def test_sadtalker_generate_flow(config, tmp_path, mocker, monkeypatch):
+    from slide_stream.providers.avatar import SadTalkerAvatarProvider
+
+    face = tmp_path / "face.png"
+    face.write_bytes(b"png")
+    audio = tmp_path / "a.wav"
+    audio.write_bytes(b"wav")
+    _sadtalker_config(
+        config, base_url="https://comfy.example.org", source_image=str(face),
+        preprocess="full", poll_interval=0,
+    )
+    # No ffmpeg in the test -> audio uploaded as-is.
+    monkeypatch.setattr("slide_stream.providers.avatar.ffmpeg_exe", lambda: None)
+
+    img_up = mocker.MagicMock()
+    img_up.json.return_value = {"name": "face.png"}
+    aud_up = mocker.MagicMock()
+    aud_up.json.return_value = {"name": "a.wav"}
+    submit = mocker.MagicMock()
+    submit.json.return_value = {"prompt_id": "pid-1"}
+    post = mocker.patch(
+        "slide_stream.providers.avatar.requests.post",
+        side_effect=[img_up, aud_up, submit],
+    )
+
+    pending = mocker.MagicMock()
+    pending.json.return_value = {"pid-1": {"status": {"status_str": "pending"}}}
+    done = mocker.MagicMock()
+    done.json.return_value = {
+        "pid-1": {
+            "status": {"status_str": "success"},
+            "outputs": {"4": {"show_video_path": ["/basedir/output/out.mp4"]}},
+        }
+    }
+    clip = mocker.MagicMock(content=b"MP4")
+    get = mocker.patch(
+        "slide_stream.providers.avatar.requests.get",
+        side_effect=[pending, done, clip],
+    )
+    mocker.patch("slide_stream.providers.avatar.time.sleep")
+
+    out = tmp_path / "head_1.mp4"
+    result = SadTalkerAvatarProvider(config).generate(str(audio), str(out), 1)
+
+    assert result == str(out)
+    assert out.read_bytes() == b"MP4"
+    # Workflow submitted with the uploaded filenames + configured preprocess.
+    wf = post.call_args_list[2][1]["json"]["prompt"]
+    assert wf["1"]["inputs"]["image"] == "face.png"
+    assert wf["2"]["inputs"]["audio"] == "a.wav"
+    assert wf["3"]["inputs"]["preprocess"] == "full"
+    # Result downloaded via /view by basename.
+    assert get.call_args_list[-1][1]["params"] == {"filename": "out.mp4", "type": "output"}
+
+
+def test_sadtalker_workflow_error_returns_none(config, tmp_path, mocker, monkeypatch):
+    from slide_stream.providers.avatar import SadTalkerAvatarProvider
+
+    face = tmp_path / "f.png"
+    face.write_bytes(b"p")
+    audio = tmp_path / "a.wav"
+    audio.write_bytes(b"w")
+    _sadtalker_config(config, base_url="https://c.org", source_image=str(face), poll_interval=0)
+    monkeypatch.setattr("slide_stream.providers.avatar.ffmpeg_exe", lambda: None)
+
+    img_up = mocker.MagicMock()
+    img_up.json.return_value = {"name": "f.png"}
+    aud_up = mocker.MagicMock()
+    aud_up.json.return_value = {"name": "a.wav"}
+    submit = mocker.MagicMock()
+    submit.json.return_value = {"prompt_id": "p"}
+    mocker.patch("slide_stream.providers.avatar.requests.post",
+                 side_effect=[img_up, aud_up, submit])
+    err = mocker.MagicMock()
+    err.json.return_value = {"p": {"status": {"status_str": "error"}}}
+    mocker.patch("slide_stream.providers.avatar.requests.get", return_value=err)
+    mocker.patch("slide_stream.providers.avatar.time.sleep")
+
+    result = SadTalkerAvatarProvider(config).generate(str(audio), str(tmp_path / "o.mp4"), 1)
+    assert result is None
+
+
+def test_find_output_path():
+    from slide_stream.providers.avatar import _find_output_path
+
+    # image kind -> ShowVideo node's show_video_path (no subfolder concept)
+    assert _find_output_path(
+        "image", {"4": {"show_video_path": ["/out/x.mp4"]}}
+    ) == ("/out/x.mp4", "")
+    assert _find_output_path("image", {"9": {"images": []}}) is None
+    # video kind -> VHS_VideoCombine's gifs filename (+ subfolder when set)
+    assert _find_output_path(
+        "video", {"4": {"gifs": [{"filename": "w.mp4", "fullpath": "/out/w.mp4"}]}}
+    ) == ("w.mp4", "")
+    assert _find_output_path(
+        "video",
+        {"4": {"gifs": [{"filename": "w.mp4", "subfolder": "wav2lip",
+                         "fullpath": "/out/wav2lip/w.mp4"}]}},
+    ) == ("w.mp4", "wav2lip")
+    # Core SaveVideo (Wan2.2-S2V): video under `images` + an `animated` flag.
+    assert _find_output_path(
+        "video",
+        {"14": {"images": [{"filename": "s2v_00001_.mp4", "subfolder": "",
+                            "type": "output"}], "animated": [True]}},
+    ) == ("s2v_00001_.mp4", "")
+    # A still SaveImage node (images, no animated, .png) is NOT taken as video.
+    assert _find_output_path(
+        "video", {"9": {"images": [{"filename": "x.png", "subfolder": ""}]}}
+    ) is None
+
+
+def test_factory_registers_sadtalker():
+    assert "sadtalker" in ProviderFactory.list_avatar_providers()
+
+
+# --- Wav2Lip (video) + ComfyUI auto-router -----------------------------------
+
+
+def test_source_kind_detects_video_vs_image():
+    from slide_stream.providers.avatar import _source_kind
+
+    assert _source_kind("/x/me.mp4") == "video"
+    assert _source_kind("/x/me.MOV") == "video"
+    assert _source_kind("/x/me.png") == "image"
+    assert _source_kind("/x/me.jpg") == "image"
+    assert _source_kind("bareword") == "image"  # default
+
+
+def test_wav2lip_uses_video_workflow(config, tmp_path, mocker, monkeypatch):
+    from slide_stream.providers.avatar import Wav2LipAvatarProvider
+
+    vid = tmp_path / "idle.mp4"
+    vid.write_bytes(b"vid")
+    audio = tmp_path / "a.wav"
+    audio.write_bytes(b"w")
+    config["providers"]["avatar"] = {
+        "provider": "wav2lip", "base_url": "https://c.org",
+        "source_video": str(vid), "poll_interval": 0,
+    }
+    monkeypatch.setattr("slide_stream.providers.avatar.ffmpeg_exe", lambda: None)
+
+    vid_up = mocker.MagicMock()
+    vid_up.json.return_value = {"name": "idle.mp4"}
+    aud_up = mocker.MagicMock()
+    aud_up.json.return_value = {"name": "a.wav"}
+    submit = mocker.MagicMock()
+    submit.json.return_value = {"prompt_id": "p"}
+    post = mocker.patch(
+        "slide_stream.providers.avatar.requests.post",
+        side_effect=[vid_up, aud_up, submit],
+    )
+    done = mocker.MagicMock()
+    done.json.return_value = {
+        "p": {
+            "status": {"status_str": "success"},
+            "outputs": {"4": {"gifs": [{"filename": "wav2lip_out.mp4",
+                                        "fullpath": "/out/wav2lip_out.mp4"}]}},
+        }
+    }
+    clip = mocker.MagicMock(content=b"MP4V")
+    get = mocker.patch(
+        "slide_stream.providers.avatar.requests.get", side_effect=[done, clip]
+    )
+    mocker.patch("slide_stream.providers.avatar.time.sleep")
+
+    out = tmp_path / "head.mp4"
+    result = Wav2LipAvatarProvider(config).generate(str(audio), str(out), 1)
+
+    assert result == str(out)
+    assert out.read_bytes() == b"MP4V"
+    # It used the Wav2Lip (VHS) workflow, not SadTalker.
+    wf = post.call_args_list[2][1]["json"]["prompt"]
+    assert wf["1"]["class_type"] == "VHS_LoadVideo"
+    assert wf["1"]["inputs"]["video"] == "idle.mp4"
+    assert wf["3"]["class_type"] == "Wav2Lip"
+    # Downloaded the gifs output by filename.
+    assert get.call_args_list[-1][1]["params"]["filename"] == "wav2lip_out.mp4"
+
+
+def test_comfyui_view_download_passes_subfolder(config, tmp_path, mocker, monkeypatch):
+    """When the history entry places the output in a subfolder, the /view
+    download must pass it through, or ComfyUI 404s the bare filename."""
+    from slide_stream.providers.avatar import Wav2LipAvatarProvider
+
+    vid = tmp_path / "idle.mp4"
+    vid.write_bytes(b"vid")
+    audio = tmp_path / "a.wav"
+    audio.write_bytes(b"w")
+    config["providers"]["avatar"] = {
+        "provider": "wav2lip", "base_url": "https://c.org",
+        "source_video": str(vid), "poll_interval": 0,
+    }
+    monkeypatch.setattr("slide_stream.providers.avatar.ffmpeg_exe", lambda: None)
+
+    vid_up = mocker.MagicMock()
+    vid_up.json.return_value = {"name": "idle.mp4"}
+    aud_up = mocker.MagicMock()
+    aud_up.json.return_value = {"name": "a.wav"}
+    submit = mocker.MagicMock()
+    submit.json.return_value = {"prompt_id": "p"}
+    mocker.patch(
+        "slide_stream.providers.avatar.requests.post",
+        side_effect=[vid_up, aud_up, submit],
+    )
+    done = mocker.MagicMock()
+    done.json.return_value = {
+        "p": {
+            "status": {"status_str": "success"},
+            "outputs": {"4": {"gifs": [{"filename": "out.mp4",
+                                        "subfolder": "wav2lip",
+                                        "fullpath": "/out/wav2lip/out.mp4"}]}},
+        }
+    }
+    clip = mocker.MagicMock(content=b"MP4V")
+    get = mocker.patch(
+        "slide_stream.providers.avatar.requests.get", side_effect=[done, clip]
+    )
+    mocker.patch("slide_stream.providers.avatar.time.sleep")
+
+    out = tmp_path / "head.mp4"
+    assert Wav2LipAvatarProvider(config).generate(str(audio), str(out), 1) == str(out)
+    assert get.call_args_list[-1][1]["params"] == {
+        "filename": "out.mp4", "type": "output", "subfolder": "wav2lip",
+    }
+
+
+def test_comfyui_router_picks_engine_by_source(config, tmp_path):
+    from slide_stream.providers.avatar import ComfyUIAvatarProvider
+
+    # A photo source -> image kind (SadTalker).
+    config["providers"]["avatar"] = {
+        "provider": "comfyui", "base_url": "https://c.org", "source": str(tmp_path / "me.png"),
+    }
+    assert ComfyUIAvatarProvider(config)._kind() == "image"
+    # A video source -> video kind (Wav2Lip).
+    config["providers"]["avatar"]["source"] = str(tmp_path / "me.mp4")
+    assert ComfyUIAvatarProvider(config)._kind() == "video"
+
+
+def test_comfyui_router_builds_matching_workflow(config, tmp_path):
+    from slide_stream.providers.avatar import ComfyUIAvatarProvider
+
+    config["providers"]["avatar"] = {"provider": "comfyui", "base_url": "https://c.org"}
+    p = ComfyUIAvatarProvider(config)
+    img_wf = p._build_workflow("image", "me.png", "a.wav")
+    assert img_wf["3"]["class_type"] == "SadTalker"
+    vid_wf = p._build_workflow("video", "me.mp4", "a.wav")
+    assert vid_wf["3"]["class_type"] == "Wav2Lip"
+    assert vid_wf["4"]["inputs"]["pingpong"] is True
+
+
+def test_factory_registers_wav2lip_and_comfyui():
+    names = ProviderFactory.list_avatar_providers()
+    assert "wav2lip" in names
+    assert "comfyui" in names
+
+
+# --- Wan2.2-S2V (still image + audio, no face detector) ----------------------
+
+
+def test_s2v_length_is_valid_4n_plus_1():
+    from slide_stream.providers.avatar import _s2v_length
+
+    # 16fps: 3s->49, 4s->65, 5s->81, all of the form 4n+1.
+    assert _s2v_length(3.0) == 49
+    assert _s2v_length(4.0) == 65
+    assert _s2v_length(5.0) == 81
+    # Sub-second audio still yields a minimal valid clip.
+    assert _s2v_length(0.05) == 5
+    for seconds in (0.4, 1.0, 2.3, 7.7, 30.0):
+        assert _s2v_length(seconds) % 4 == 1
+
+
+def test_avatar_prompt_describes_mouth_anatomy():
+    from slide_stream.avatars import DEFAULT_AVATAR_PROMPT, avatar_prompt
+
+    assert "beak" in avatar_prompt("owl")           # owl has a beak, not lips
+    assert "muzzle" in avatar_prompt("teddy")
+    # A file path / unknown name falls back to the generic talking prompt.
+    assert avatar_prompt("/photos/me.png") == DEFAULT_AVATAR_PROMPT
+    assert avatar_prompt(None) == DEFAULT_AVATAR_PROMPT
+
+
+def test_wan_s2v_availability_needs_url_and_source(config, monkeypatch):
+    from slide_stream.providers.avatar import WanS2VAvatarProvider
+
+    monkeypatch.delenv("COMFYUI_BASE_URL", raising=False)
+    config["providers"]["avatar"] = {"provider": "wan-s2v"}
+    assert WanS2VAvatarProvider(config).is_available() is False
+
+    config["providers"]["avatar"] = {"provider": "wan-s2v", "base_url": "https://c.org"}
+    assert WanS2VAvatarProvider(config).is_available() is False
+
+    config["providers"]["avatar"] = {
+        "provider": "wan-s2v", "base_url": "https://c.org", "source": "owl",
+    }
+    assert WanS2VAvatarProvider(config).is_available() is True
+
+
+def test_wan_s2v_build_workflow_short_and_full(config):
+    from slide_stream.providers.avatar import WanS2VAvatarProvider
+
+    config["providers"]["avatar"] = {
+        "provider": "wan-s2v", "base_url": "https://c.org", "source": "owl",
+        "clip_seconds": 3,
+    }
+    p = WanS2VAvatarProvider(config)
+    # Short mode caps at clip_seconds (3s -> 49) even for long narration.
+    wf = p._build_workflow("image", "owl.png", "a.wav", audio_seconds=30.0)
+    assert wf["10"]["class_type"] == "WanSoundImageToVideo"
+    assert wf["10"]["inputs"]["length"] == 49
+    assert wf["7"]["inputs"]["image"] == "owl.png"
+    assert wf["5"]["inputs"]["audio"] == "a.wav"
+    assert "beak" in wf["8"]["inputs"]["text"]        # owl-specific prompt
+    assert wf["14"]["class_type"] == "SaveVideo"
+    # batch_size is required on newer ComfyUI builds of the node.
+    assert wf["10"]["inputs"]["batch_size"] == 1
+
+    # Full-length mode sizes to the audio instead (5s -> 81).
+    config["providers"]["avatar"]["full_length"] = True
+    wf2 = WanS2VAvatarProvider(config)._build_workflow(
+        "image", "owl.png", "a.wav", audio_seconds=5.0
+    )
+    assert wf2["10"]["inputs"]["length"] == 81
+
+
+def test_wan_s2v_generate_frees_vram_and_reads_gifs(config, tmp_path, mocker, monkeypatch):
+    """Full S2V flow: /free before queueing, then upload -> submit -> gifs."""
+    from slide_stream.providers.avatar import WanS2VAvatarProvider
+
+    img = tmp_path / "owl.png"
+    img.write_bytes(b"png")
+    audio = tmp_path / "a.wav"
+    write_silent_wav(audio, seconds=0.4)
+    config["providers"]["avatar"] = {
+        "provider": "wan-s2v", "base_url": "https://c.org",
+        "source": str(img), "poll_interval": 0,
+    }
+    monkeypatch.setattr("slide_stream.providers.avatar.ffmpeg_exe", lambda: None)
+
+    img_up = mocker.MagicMock()
+    img_up.json.return_value = {"name": "owl.png"}
+    aud_up = mocker.MagicMock()
+    aud_up.json.return_value = {"name": "a.wav"}
+    free = mocker.MagicMock()
+    submit = mocker.MagicMock()
+    submit.json.return_value = {"prompt_id": "p"}
+    # Order: upload image, upload audio, POST /free, POST /prompt.
+    post = mocker.patch(
+        "slide_stream.providers.avatar.requests.post",
+        side_effect=[img_up, aud_up, free, submit],
+    )
+    done = mocker.MagicMock()
+    done.json.return_value = {
+        "p": {
+            "status": {"status_str": "success"},
+            "outputs": {"14": {"gifs": [{"filename": "s2v_out.mp4",
+                                         "fullpath": "/out/s2v_out.mp4"}]}},
+        }
+    }
+    clip = mocker.MagicMock(content=b"S2VMP4")
+    get = mocker.patch(
+        "slide_stream.providers.avatar.requests.get", side_effect=[done, clip]
+    )
+    mocker.patch("slide_stream.providers.avatar.time.sleep")
+
+    out = tmp_path / "head_1.mp4"
+    result = WanS2VAvatarProvider(config).generate(str(audio), str(out), 1)
+
+    assert result == str(out)
+    assert out.read_bytes() == b"S2VMP4"
+    # VRAM was freed before the graph was queued (the third POST, before /prompt).
+    free_call = post.call_args_list[2]
+    assert free_call[0][0].endswith("/free")
+    assert free_call[1]["json"] == {"unload_models": True, "free_memory": True}
+    # The queued graph is the S2V graph, sized to the (short) audio -> length 5.
+    wf = post.call_args_list[3][1]["json"]["prompt"]
+    assert wf["10"]["class_type"] == "WanSoundImageToVideo"
+    assert wf["10"]["inputs"]["length"] == 5
+    # Result pulled from the gifs output by filename.
+    assert get.call_args_list[-1][1]["params"]["filename"] == "s2v_out.mp4"
+
+
+def test_factory_registers_wan_s2v():
+    assert "wan-s2v" in ProviderFactory.list_avatar_providers()
+
+
+# --- wan-s2v / ComfyUI OOM retry hardening -----------------------------------
+
+
+def test_is_gpu_oom_detection():
+    from slide_stream.providers.avatar import _is_gpu_oom
+
+    assert _is_gpu_oom(ValueError(
+        "ComfyUI workflow error: {'exception_type': 'torch.OutOfMemoryError'}"
+    ))
+    assert _is_gpu_oom(RuntimeError("CUDA out of memory. Tried to allocate ..."))
+    assert _is_gpu_oom(ValueError("Allocation on device ..."))
+    assert not _is_gpu_oom(ValueError("render timed out"))
+    assert not _is_gpu_oom(ValueError("no video output found"))
+
+
+def _wan_provider(**avatar_extra):
+    from slide_stream.providers.avatar import WanS2VAvatarProvider
+
+    cfg = {"providers": {"avatar": {
+        "provider": "wan-s2v", "base_url": "http://x", "source": "wizard",
+        "oom_backoff": 0,  # no real sleep in tests
+        **avatar_extra,
+    }}}
+    return WanS2VAvatarProvider(cfg)
+
+
+def test_generate_retries_once_on_oom_then_succeeds(mocker):
+    p = _wan_provider()
+    calls = mocker.patch.object(
+        p, "_generate_once",
+        side_effect=[ValueError("torch.OutOfMemoryError"), "out.mp4"],
+    )
+    assert p.generate("a.wav", "out.mp4", 1) == "out.mp4"
+    assert calls.call_count == 2  # retried once
+
+
+def test_generate_does_not_retry_non_oom(mocker):
+    p = _wan_provider()
+    calls = mocker.patch.object(
+        p, "_generate_once", side_effect=ValueError("render timed out")
+    )
+    assert p.generate("a.wav", "out.mp4", 1) is None
+    assert calls.call_count == 1  # failed fast, no retry
+
+
+def test_generate_gives_up_after_exhausting_retries(mocker):
+    p = _wan_provider(oom_retries=2)  # 3 attempts total
+    calls = mocker.patch.object(
+        p, "_generate_once", side_effect=ValueError("CUDA out of memory")
+    )
+    assert p.generate("a.wav", "out.mp4", 1) is None
+    assert calls.call_count == 3
+
+
+def test_wan_s2v_has_longer_default_timeout():
+    from slide_stream.providers.avatar import (
+        SadTalkerAvatarProvider,
+        WanS2VAvatarProvider,
+    )
+
+    cfg = {"providers": {"avatar": {}}}
+    assert WanS2VAvatarProvider(cfg)._default_timeout() == 1800.0
+    assert SadTalkerAvatarProvider(cfg)._default_timeout() == 600.0
+
+
+# --- per-slide avatar selection + transitions --------------------------------

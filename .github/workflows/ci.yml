@@ -25,7 +25,7 @@ jobs:
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
-      - name: Install ffmpeg (video-encode e2e tests)
+      - name: Install ffmpeg (system copy; the bundled one is tested below)
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
       - name: Install dependencies
@@ -37,5 +37,49 @@ jobs:
       - name: Type check (basedpyright)
         run: uv run basedpyright
 
+      # The coverage floor is fail_under in pyproject.toml.
       - name: Test (pytest)
         run: uv run pytest --cov=slide_stream --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage report
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+
+  # SlideStream must work with no system ffmpeg, using the copy bundled with
+  # moviepy (imageio-ffmpeg). No apt install here.
+  bundled-ffmpeg:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --extra all-ai --group dev
+
+      - name: No ffmpeg on PATH
+        run: "! command -v ffmpeg"
+
+      - name: Test (pytest)
+        run: uv run pytest
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build the docs site (fails on broken links and pages missing from the nav)
+        run: |
+          pip install "mkdocs>=1.6,<2" "mkdocs-material>=9.5,<10"
+          mkdocs build --strict --site-dir _site
