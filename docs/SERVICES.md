@@ -51,6 +51,7 @@ is a convenience, not a requirement.
 | images | Local folder | core | `providers.images.provider: local` matches files by name. |
 | avatar | Static image, puppet mouth-flap, precomputed clips | core | No GPU. |
 | design | `basic` fixed layout | core | Today's renderer and `.pptx` exporter (ADR-0008). |
+| design | User's PowerPoint template (`--pptx-template`, planned, ADR-0014) | core (python-pptx); LibreOffice for video | New slides in the template's own layouts and style. |
 | design | Render a styled `.pptx` or user PDF to frames | `slide-stream[presenton]` ([pypdfium2](https://github.com/pypdfium2-team/pypdfium2), Apache-2.0/BSD-3) plus LibreOffice for `.pptx` | `--preserve-style`, `--slides-pdf` (ADR-0009). |
 | ingest | Built-in text extraction (`draft.py`) | core; `slide-stream[import]` for PDF and Word | The ingest floor. |
 

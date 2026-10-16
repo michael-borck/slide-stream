@@ -13,7 +13,7 @@ background music. Users choose how much to steer, from one command with no
 questions to reviewing and editing every step. Output ranges from a technical
 lecture deck to a creative explainer video.
 
-Three decisions shape how we get there:
+Four decisions shape how we get there:
 
 - **One tool for the user, many engines behind it.** SlideStream orchestrates
   local and cloud services through adapters and never bundles them
@@ -29,7 +29,24 @@ Three decisions shape how we get there:
   already does: Kokoro, then gTTS.
 
 The CLI stays the main product for power users. The web UI and the Tauri
-desktop app sit on the same engine.
+desktop app sit on the same engine. Who it is for, and what they need, is in
+[USER_STORIES.md](USER_STORIES.md).
+
+## Build order
+
+Phase numbers are stable names, so ADRs can refer to them; they are not the
+order of work. Planned order:
+
+| # | Phase | Why now | Release |
+|---|---|---|---|
+| 1 | 11: housekeeping | The PyPI page, docs and landing page describe 2.0, not 2.16 | 2.16.1 |
+| 2 | 12: captions, transcript, chapters, alt text | Cheap (narration text and timings exist), often required by institutions | 2.17 |
+| 3 | 2c: the user's PowerPoint template | Deterministic design with no service | 2.18 |
+| 4 | 14: lecture-quality narration | Bullets appear as spoken, pronunciation, video clips | 2.19 |
+| 5 | 13: more outputs | Handout PDF, vertical video, web presentation | 2.20 |
+| 6 | 15: richer content | Charts from tables, OCR and long documents | 2.21 |
+| 7 | 3, then 4, then 5 | Adapters, project folder, human control | 3.0 |
+| 8 | 6 to 10 | Design switch, music, presets, desktop, lens | after 3.0 |
 
 ## Phase 1: test Presenton against a live server
 
@@ -65,9 +82,9 @@ experimental option and Phase 6 leans on the `pptx-theme` backend.
       page rendering.
 - [ ] Add a live contract test for Presenton under `tests/live/`.
 - [x] Refresh `uv.lock`.
-- [ ] Bump the version in `pyproject.toml` and
-      `src/slide_stream/__init__.py`.
-- [ ] Release notes say Presenton is optional, external, experimental and
+- [x] Bump the version in `pyproject.toml` and
+      `src/slide_stream/__init__.py`. Released as 2.16.0 (16 Oct 2026).
+- [x] Release notes say Presenton is optional, external, experimental and
       CLI-only. `--preserve-style` and `--slides-pdf` ship regardless of the
       Phase 1 result; they work without Presenton.
 
@@ -123,6 +140,53 @@ which slides to fix).
 **Done when** the lecture deck shows its code, coloured and correctly
 indented, in both the video and the editable `.pptx`, and the fidelity
 report flags slides Presenton changed.
+
+## Phase 2c: design from the user's PowerPoint template (ADR-0014)
+
+New slides in the user's own style, from a `.pptx` they already maintain
+(a university template, a Quarto/pandoc `reference.pptx`). No service, no AI
+rewording. Pulled ahead of Phase 6 because it depends on nothing in
+Phases 3 to 5: python-pptx, the LibreOffice route and the code-slide
+helpers already exist.
+
+**Step 1: fill a template.**
+- [ ] `pptx_template.py`: open a `.pptx` or `.potx`, drop its example
+      slides, pick layouts by pandoc's names (Title Slide, Title and
+      Content, Section Header, Two Content, Title Only, Blank), with
+      fallbacks by placeholder type.
+- [ ] Fill placeholders: title, bullets, artwork, subtitle; narration in
+      the speaker notes.
+- [ ] Code slides (ADR-0013 code box, keeping the layout's background) and
+      tables (native, editable PowerPoint tables).
+- [ ] Overflow: estimate lines, shrink body text to a floor, report slides
+      that still overflow.
+- [ ] Tests with synthetic templates: standard names, renamed layouts,
+      missing layouts, `.potx`, 4:3 size.
+
+**Step 2: wire it in.**
+- [ ] `create --pptx-template FILE` and `settings.pptx_template`, for
+      `.pptx` output (python-pptx only) and `.mp4` output (LibreOffice →
+      PDF → frames, fitted to the video size with bars, never cropped).
+- [ ] `doctor` checks the template file and, for video, LibreOffice.
+
+**Step 3: the plain exporter catches up.**
+- [ ] `export_pptx.py` draws code slides and native tables the same way,
+      instead of turning code into a bullet.
+
+**Step 4: Quarto-style helpers.**
+- [ ] `slide-stream template init FILE`: a starter template with the
+      standard layout names (from python-pptx's MIT template, not pandoc's
+      file).
+- [ ] `slide-stream template check FILE`: layouts found, names missing and
+      what stands in, missing placeholders, signs of hand styling.
+
+**Then:** render the trial lecture with a real university template and a
+Quarto `reference.pptx`; record the result in `e2e/`.
+
+**Done when** `create lecture.md talk.mp4 --pptx-template uni.pptx` and the
+`.pptx` equivalent produce slides in the template's style, with code and
+tables intact, and `template check` explains any layout it had to
+substitute.
 
 ## Phase 3: adapters and service status (ADR-0010)
 
@@ -180,13 +244,13 @@ running `build` re-runs only audio, avatar and render.
 **Done when** the same project can run fully automatically or pause at any
 stage, from the CLI and from the UI.
 
-## Phase 6: design backends (ADR-0014, to write)
+## Phase 6: design backends (ADR-0017, to write)
 
-- [ ] Write ADR-0014: one `design` role with interchangeable backends.
+- [ ] Write ADR-0017: one `design` role with interchangeable backends,
+      chosen with `--design`; it replaces `--template` (Presenton) and
+      `--pptx-template`.
 - [ ] `basic`: today's fixed layout, kept as the floor.
-- [ ] `pptx-theme`: build slides from the layouts in a user-supplied `.potx`
-      or styled `.pptx` with python-pptx, then render frames through
-      LibreOffice. No second service.
+- [ ] `pptx-theme`: the Phase 2c template backend (ADR-0014).
 - [ ] `presenton`: the Phase 3 adapter.
 - [ ] `preserve`: today's `--preserve-style` and `--slides-pdf`.
 - [ ] Generalise the Phase 2b fidelity check so any design backend can
@@ -246,6 +310,151 @@ without reading a config file.
 
 **Done when** `build` can end with a check report in `build/`.
 
+## Phase 11: housekeeping (docs, landing page, tests)
+
+The 2026-10 audit found the user-facing material describing SlideStream 2.0.
+The README is also the PyPI page.
+
+**Docs.**
+- [ ] README: cut to about 200 lines (what it is, install, quick start, links
+      to the docs site); absolute URLs, since PyPI breaks relative links;
+      drop "What's New in 2.0" and the 2.0-era version history.
+- [ ] Add `CHANGELOG.md`, backfilled from the GitHub releases.
+- [ ] Remove every "FFmpeg required" claim (README, USER_GUIDE,
+      DEVELOPMENT_WORKFLOW, landing page, desktop README and its startup
+      warning, Dockerfile comment).
+- [ ] One provider reference per type (TTS, images, LLM, avatar), generated
+      from the factory's lists, with defaults and the voice floor marked.
+- [ ] Fix config docs: layers merge, `.yml` accepted; delete the
+      "discovery order" sections.
+- [ ] Standardise install advice on `pip install "slide-stream[all]"`
+      (quoted); `uv sync` for development, not `[dev]`.
+- [ ] USER_GUIDE: Presenton, code and tables, current model IDs; remove
+      content duplicated from README and USE_CASES (README: overview;
+      USE_CASES: recipes; USER_GUIDE: reference).
+- [ ] DEVELOPMENT_WORKFLOW and CLAUDE.md: current module tree, release steps,
+      live tests and `e2e/`.
+- [ ] Archive obsolete docs (`TYPING_IMPROVEMENTS.md`,
+      `avatar-feature-plan.md`, `liveportrait-api.md`) under `docs/archive/`;
+      regenerate or archive `TYPE_SAFETY.md`; merge `nonhuman-avatar-api.md`
+      into `wan-s2v-api.md`.
+- [ ] mkdocs: add Project (Roadmap, User stories, Services, Changelog) and
+      Decisions (all ADRs) to the nav; build with `--strict`; fix the link
+      that points outside `docs/`.
+- [ ] `deploy/README.md`: current image tags and engines.
+
+**Landing page.**
+- [ ] Confirm the domain (the old address redirects to
+      `slidestream.borck.education`); update `site_url`, links and CNAME.
+- [ ] Current features: offline Kokoro voice, mascots and wan-s2v,
+      PowerPoint output and notes, code slides, designed decks, `doctor`.
+- [ ] Link the docs site and PyPI; recommend `[all]`; no FFmpeg claim.
+- [ ] Accessibility: `<main>` and a skip link, hide decorative emoji from
+      screen readers, fix dark-mode contrast for the accent and links
+      (both fail WCAG AA), keep Docs visible on small screens.
+- [ ] Self-host the fonts (the page promises privacy).
+
+**Tests and CI.**
+- [ ] Split `test_providers.py` (factory, images, TTS floor, OpenAI TTS,
+      Chatterbox, Voicebox) and `test_serve.py` (core, demo, teaser, local
+      mode, jobs, projects), along their existing section headers.
+- [ ] Add tests for PDF and Word extraction in `draft` (untested today);
+      install the `import` extra in CI.
+- [ ] One CI job without system ffmpeg, to exercise the bundled binary.
+- [ ] Coverage: publish the report and set a floor at today's level, so it
+      can only rise.
+- [ ] Silence or fix the Starlette TestClient deprecation warning.
+- [ ] e2e: a code-and-tables scenario and a Kokoro scenario; no hard-coded
+      server URLs in committed scenarios.
+- [ ] Live tests for Presenton (Phase 2 leftover) and Kokoro.
+
+**Repo.**
+- [ ] `pyproject.toml`: keywords, Documentation and Changelog URLs, SPDX
+      licence field, remove the stale black comment.
+- [ ] `.gitignore`: remove duplicates and old output names; ignore `site/`.
+- [ ] Move `scripts/mascot_video_test.py` into `e2e/` or remove it.
+
+**Done when** the PyPI page, docs site and landing page all describe 2.16
+correctly, `mkdocs build --strict` passes, and no test file is over 800
+lines.
+
+## Phase 12: accessible outputs (ADR-0018, to write)
+
+Every video comes with what accessibility rules ask for. Narration text and
+per-slide timings already exist, so most of this is cheap.
+
+- [ ] Write ADR-0018: narration timing. Synthesise narration per segment
+      (sentence or bullet), so every segment has an exact start and end;
+      captions, chapters (here) and bullet reveal (Phase 14) all use it.
+- [ ] Captions: `.srt` and `.vtt` beside every video, one cue per sentence
+      or line-length chunk; `--burn-captions` draws them into the picture.
+- [ ] Transcript: a readable `.md` (and `.txt`) of the narration, slide by
+      slide, with slide titles as headings.
+- [ ] Chapters: per-slide chapter markers in the MP4 and a YouTube-style
+      chapter list.
+- [ ] Alt text: describe each picture in the `.pptx` with a vision model
+      (already used for picture-only slides); `--alt-text` to opt in.
+- [ ] Accessibility checks in `doctor`: text contrast on frames, smallest
+      font size against the frame height, missing alt text, captions off.
+      Reading level later through `document-analyser` (Phase 10).
+
+**Done when** `create deck.md talk.mp4` writes captions, a transcript and
+chapters by default, and `doctor` reports accessibility problems.
+
+## Phase 13: more outputs
+
+- [ ] Handout PDF: slides with their narration or notes, through the
+      LibreOffice route.
+- [ ] Vertical 9:16 video (`--aspect 9:16`) for shorts and reels: layouts
+      reflow for portrait; designed slides are letterboxed.
+- [ ] Self-contained web presentation: one HTML file with slides, audio and
+      captions that plays offline (only if users ask for it; keep it
+      simple, no framework).
+
+**Done when** one deck produces video, deck, handout and vertical video
+from the same narration.
+
+## Phase 14: lecture-quality narration
+
+- [ ] Bullets appear as they are spoken: each bullet is revealed when the
+      narration reaches it, using ADR-0018's segment timings. Applies to
+      SlideStream's own slides; designed slides stay static.
+- [ ] Pause markers: `[pause]` and `[pause 2s]` in notes or scripts become
+      real silence (part of segment synthesis; today they are stripped).
+- [ ] Pronunciation dictionary: `pronunciations:` in config and per project
+      (acronyms, names, symbols), applied before TTS. Built-in readings for
+      code symbols so code is not read character by character.
+- [ ] Video clips on slides: `![](demo.mp4)` plays a clip in the slide
+      instead of a still picture; the slide lasts at least as long as the
+      clip.
+
+**Done when** the trial lecture plays with bullets revealed in step with the
+voice, `hash()` is read naturally, and a slide can show a screen recording.
+
+## Phase 15: richer content
+
+- [ ] Charts from tables: a numeric Markdown table becomes a chart on
+      SlideStream's slides and a native chart in the `.pptx`; non-numeric
+      tables stay tables.
+- [ ] Long documents in `draft`: split by structure (headings, pages) and
+      summarise in chunks instead of truncating the source.
+- [ ] OCR for scanned PDFs in `draft`, through a local engine (adapter),
+      with `document-analyser` as an option.
+
+**Done when** `draft` turns a long or scanned report into a sensible deck,
+and a numeric table shows as a chart.
+
+## Future work
+
+Wanted, but not scheduled:
+
+- **Several languages from one deck:** translate the narration and voice
+  it per language in one run, with captions per language.
+- **Batch mode:** a folder of decks to a folder of videos, with one report;
+  suits a whole course and CI.
+- **MCP server:** tools for agents to start renders, follow progress and
+  fetch results, on top of `serve`.
+
 ## Requests to other projects
 
 | Project | Request | Why |
@@ -257,6 +466,8 @@ without reading a config file.
 
 ## Not planned
 
+- Converting a user's PowerPoint template into a SlideStream style format;
+  the `.pptx` itself is the template (ADR-0014).
 - Vendoring or forking Presenton code, or depending on the `presenton` PyPI
   placeholder.
 - SlideStream starting and stopping Docker containers by default.

@@ -19,6 +19,7 @@ and the git history (the repo's visible history starts in the 2.15.x era).
 | [0011](0011-project-folder-pipeline-state.md) | A project folder holds the pipeline's state | Proposed |
 | [0012](0012-three-level-fallback-kokoro-floor.md) | Three-level fallback; Kokoro is the voice floor | Accepted |
 | [0013](0013-faithful-designed-decks.md) | Designed decks stay faithful: fidelity check and code slides | Accepted |
+| [0014](0014-powerpoint-template-design.md) | Design new slides from the user's own PowerPoint template | Accepted (not yet implemented) |
 
 ## Format
 

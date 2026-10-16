@@ -107,6 +107,7 @@ Also: `deploy/` (Docker), `desktop/` (Tauri app), `landing/` (website), `contrib
 - **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)**: Comprehensive user guide with examples
 - **[docs/DEVELOPMENT_WORKFLOW.md](docs/DEVELOPMENT_WORKFLOW.md)**: Development workflow and release process
 - **[docs/adr/](docs/adr/)**: Architecture Decision Records (backfilled; read before changing provider/config/test design)
+- **[docs/USER_STORIES.md](docs/USER_STORIES.md)**: Personas and stories with status; every story belongs to a roadmap phase or future work
 - **[docs/ROADMAP.md](docs/ROADMAP.md)**: Phased plan. New features must be a pipeline stage (ADR-0011) or a service adapter (ADR-0010)
 - **[docs/SERVICES.md](docs/SERVICES.md)**: Every external engine, its probe, tested version and licence; update it when adding an adapter
 - **[docs/TYPE_SAFETY.md](docs/TYPE_SAFETY.md)**: Type safety documentation
