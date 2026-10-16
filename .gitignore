@@ -78,24 +78,18 @@ temp_files/
 *.tmp
 *.temp
 
-# Local test files
-test_input.md
-output_video.mp4
-test_output.mp4
-test_pptx_output.mp4
-fragment_*TEMP_MPY_wvf_snd.mp4
+# Docs site build output
+site/
+_site/
 
-# Local config (personal, never commit)
+# Local config and secrets (personal, never commit)
 slidestream.yml
 slidestream.yaml
 .slidestream.yaml
 
 # Claude cache
 .claude/
-# local secrets & per-machine provider config
-.env
-slidestream.yml
-slidestream.yaml
+
 # local diagnostics
 run.log
 mascot-test/

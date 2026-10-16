@@ -1,10 +1,11 @@
-# Full pipeline, two slides: SwarmUI artwork, LLM narration, speaches voice,
-# and a lip-synced panda (wan-s2v via ComfyUI). reuse_clip renders ONE head
+# Full pipeline, two slides: artwork, LLM narration and voice from your home
+# config, and a lip-synced panda (wan-s2v via ComfyUI). Needs
+# COMFYUI_BASE_URL (and COMFYUI_TOKEN if your server checks one). reuse_clip renders ONE head
 # clip and loops it under both slides — a single GPU render for the run.
 providers:
   avatar:
     provider: wan-s2v
-    base_url: https://comfyui.locopuente.org
+    base_url: "${COMFYUI_BASE_URL}"
     api_key: "${COMFYUI_TOKEN}"
     source: panda
 settings:

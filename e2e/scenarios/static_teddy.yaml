@@ -1,4 +1,4 @@
-# Static mascot: SwarmUI artwork + narration with a still teddy in the
+# Static mascot: artwork from your image provider + narration with a still teddy in the
 # corner. No animation, no GPU work for the avatar.
 providers:
   avatar:

@@ -1,0 +1,14 @@
+# Offline voice: text cards and the Kokoro voice floor, no LLM, no servers.
+# Checks the zero-setup path a new user gets (ADR-0012). The first run
+# downloads the Kokoro model (about 340 MB).
+providers:
+  llm:
+    provider: none
+  images:
+    provider: text
+  tts:
+    provider: auto
+  avatar:
+    provider: none
+settings:
+  voice_floor: kokoro

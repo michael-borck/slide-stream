@@ -3,7 +3,7 @@
 
 Run from the repo root (tokens must be in your shell):
     export OLLAMA_TOKEN=... CHATTERBOX_TOKEN=... COMFYUI_TOKEN=...
-    uv run python scripts/mascot_video_test.py 2>&1 | tee mascot-test/run.log
+    uv run python e2e/mascot_video_test.py 2>&1 | tee mascot-test/run.log
 
 Stage 1 enriches the deck (SwarmUI images + Ollama speaker notes).
 Stage 2 creates a video from the ENRICHED deck with teddy lip-syncing
