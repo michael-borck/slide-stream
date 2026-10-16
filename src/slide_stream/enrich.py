@@ -142,6 +142,7 @@ def enrich_deck(
                     "index": i,
                     "title": title,
                     "content": [str(c).strip() for c in slide.get("content", []) if str(c).strip()],
+                    "markdown": slide.get("markdown"),
                     "image": img_path.name,
                     "matched": matched,
                     "notes": notes,
@@ -175,7 +176,13 @@ def _build_markdown(slides: list[dict[str, Any]]) -> str:
         lines.append("")
         if slide.get("matched", True):
             lines.append(f"![{slide['title']}](images/{slide['image']})")
-        if slide["content"]:
+        body = slide.get("markdown")
+        if isinstance(body, str) and body.strip():
+            # A Markdown deck's own body: keeps code blocks, tables and
+            # sub-headings intact through the round trip.
+            lines.append("")
+            lines.append(body.strip("\n"))
+        elif slide["content"]:
             lines.append("")
             for item in slide["content"]:
                 lines.append(f"- {item}")

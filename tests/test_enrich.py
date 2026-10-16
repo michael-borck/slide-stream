@@ -137,6 +137,27 @@ def test_enrich_output_round_trips_without_image_markdown(tmp_path):
     assert parsed[1]["content"] == ["Stars"]
 
 
+def test_enrich_round_trips_code_and_tables_from_a_markdown_deck(tmp_path):
+    """Enriching a Markdown deck keeps its code blocks and tables as written,
+    and the enriched deck parses back to the same slides."""
+    from slide_stream.parser import parse_markdown
+
+    source = (
+        "# Code\n\n```python\n# comment\nx = 1\n```\n\n"
+        "# Table\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"
+    )
+    slides = parse_markdown(source)
+    out = tmp_path / "out"
+    enrich_deck(slides, LocalImageProvider(config_with_folder(tmp_path)), out, "deck")
+
+    md = (out / "deck.md").read_text()
+    assert "```python\n# comment\nx = 1\n```" in md
+    assert "| a | b |\n|---|---|\n| 1 | 2 |" in md
+    parsed = parse_markdown(md)
+    assert [s["title"] for s in parsed] == ["Code", "Table"]
+    assert [s["content"] for s in parsed] == [s["content"] for s in slides]
+
+
 def test_enrich_deck_writes_pptx(tmp_path):
     make_image(tmp_path / "topic.png")
     cfg = config_with_folder(tmp_path)

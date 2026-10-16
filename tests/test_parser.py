@@ -285,3 +285,132 @@ def test_separator_style_captures_slide_image():
 def test_image_not_captured_when_absent():
     slides = parse_markdown("# Only\n\n- a\n")
     assert "image_path" not in slides[0]
+
+
+# --- Code blocks, tables and the per-slide Markdown body --------------------
+
+CODE_DECK = (
+    "# Code\n\n"
+    "```python\n"
+    "# a comment, not a slide\n"
+    "x = 1\n"
+    "\n"
+    "---\n"
+    "y = 2\n"
+    "```\n\n"
+    "- after the code\n\n"
+    "# Next\n\n"
+    "- b\n"
+)
+
+
+def test_hash_comment_inside_fenced_code_does_not_start_a_slide():
+    """Before fenced_code was enabled, `# a comment` became its own slide and
+    shifted every later narration block out of alignment."""
+    slides = parse_markdown(CODE_DECK)
+    assert [s["title"] for s in slides] == ["Code", "Next"]
+    code = slides[0]["content"][0]
+    assert code.startswith("# a comment, not a slide\nx = 1")
+    assert "y = 2" in code
+    assert slides[0]["content"][1] == "after the code"
+
+
+def test_fenced_code_markdown_body_is_verbatim():
+    body = parse_markdown(CODE_DECK)[0]["markdown"]
+    assert body.startswith("```python\n# a comment, not a slide\nx = 1\n")
+    assert "\n---\ny = 2\n```" in body  # a --- inside code is kept
+    assert body.endswith("- after the code")
+
+
+def test_table_becomes_readable_rows_and_keeps_its_markdown():
+    md = (
+        "# Costs\n\n"
+        "| Operation | List | Hash |\n"
+        "|---|---|---|\n"
+        "| Look up | O(n) | O(1) |\n"
+    )
+    (slide,) = parse_markdown(md)
+    assert slide["content"] == ["Operation | List | Hash\nLook up | O(n) | O(1)"]
+    assert slide["markdown"] == (
+        "| Operation | List | Hash |\n|---|---|---|\n| Look up | O(n) | O(1) |"
+    )
+
+
+def test_markdown_body_keeps_subheadings_and_inline_formatting():
+    md = "# Topic\n\n## Part A\n\n- **bold** and `code`\n\n# Two\n\n- b\n"
+    slides = parse_markdown(md)
+    assert slides[0]["content"] == ["Part A", "bold and code"]
+    assert slides[0]["markdown"] == "## Part A\n\n- **bold** and `code`"
+    assert slides[1]["markdown"] == "- b"
+
+
+def test_markdown_body_drops_images_and_bare_rules():
+    md = "# One\n\n![](images/slide_1.png)\n\n- a\n\n---\n\n# Two\n\n- b\n\n# Three\n"
+    slides = parse_markdown(md)
+    assert slides[0]["markdown"] == "- a"
+    assert slides[2]["markdown"] == ""
+
+
+def test_setext_headings_parse_without_a_markdown_body():
+    """The line split only knows `# ` headings; when it disagrees with
+    Python-Markdown, slides carry no body and callers fall back to content."""
+    slides = parse_markdown("One\n===\n\n- a\n\nTwo\n===\n\n- b\n")
+    assert [s["title"] for s in slides] == ["One", "Two"]
+    assert all("markdown" not in s for s in slides)
+
+
+def test_separator_style_keeps_code_block_as_one_item():
+    md = (
+        "# One\n\n```\n- not a bullet\n# not a title\n```\n\n- a\n"
+        "---\n"
+        "# Two\n- b\n"
+    )
+    slides = parse_markdown(md)
+    assert [s["title"] for s in slides] == ["One", "Two"]
+    assert slides[0]["content"] == ["- not a bullet\n# not a title", "a"]
+    assert slides[0]["markdown"] == "```\n- not a bullet\n# not a title\n```\n\n- a"
+
+
+def test_separator_inside_code_does_not_split_a_separator_deck():
+    md = "# One\n```\nx\n---\ny\n```\n---\n# Two\n- b\n"
+    slides = parse_markdown(md)
+    assert [s["title"] for s in slides] == ["One", "Two"]
+    assert slides[0]["content"] == ["x\n---\ny"]
+
+
+def test_separator_style_promoted_title_is_not_repeated_in_body():
+    slides = parse_markdown("---\n- opening bullet\n- another\n---\n# Two\n- b\n")
+    assert slides[0]["title"] == "opening bullet"
+    assert slides[0]["markdown"] == "- another"
+
+
+def test_separator_style_table_matches_heading_style():
+    table = "| a | b |\n|:--|--:|\n| 1 | 2 |\n"
+    heading = parse_markdown("# T\n\n" + table)[0]["content"]
+    separator = parse_markdown("# T\n" + table + "---\n# U\n- x\n")[0]["content"]
+    assert heading == separator == ["a | b\n1 | 2"]
+
+
+# --- Structured code blocks and tables (ADR-0013) ----------------------------
+
+
+def test_code_blocks_keep_language_in_both_styles():
+    heading = parse_markdown("# A\n\n```python\nx = 1\n```\n\n# B\n\n- b\n")
+    assert heading[0]["code_blocks"] == [{"lang": "python", "code": "x = 1"}]
+    assert "code_blocks" not in heading[1]
+    separator = parse_markdown("# A\n```js\nx()\n```\n---\n# B\n- b\n")
+    assert separator[0]["code_blocks"] == [{"lang": "js", "code": "x()"}]
+
+
+def test_code_block_without_language_and_indented_code():
+    (slide,) = parse_markdown("# A\n\n```\nplain\n```\n")
+    assert slide["code_blocks"] == [{"lang": None, "code": "plain"}]
+    (slide,) = parse_markdown("# I\n\n    first()\n        nested()\n")
+    assert slide["code_blocks"][0]["code"] == "first()\n    nested()"
+
+
+def test_tables_kept_as_cells_in_both_styles():
+    table = "| a | b |\n|---|---|\n| 1 | 2 |\n"
+    heading = parse_markdown("# T\n\n" + table)[0]
+    separator = parse_markdown("# T\n" + table + "---\n# U\n- x\n")[0]
+    assert heading["tables"] == separator["tables"] == [[["a", "b"], ["1", "2"]]]
