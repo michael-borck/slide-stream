@@ -198,3 +198,35 @@ def test_cli_doctor_command_reports(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert "Deck check" in result.output
     assert "1 slide(s)" in result.output
+
+
+# --- LLM call estimate ---------------------------------------------------------
+
+
+def _llm_estimate(report):
+    return [e for e in report.estimates if e.startswith("LLM:")]
+
+
+def test_llm_estimate_counts_every_slide_without_a_script():
+    c = cfg()
+    c["providers"]["llm"] = {"provider": "ollama"}
+    slides = [{"title": "A", "content": ["x"]}, {"title": "B", "content": ["y"]}]
+    assert _llm_estimate(run_doctor(slides, c, opts())) == [
+        "LLM: ~2 narration call(s) via ollama"
+    ]
+
+
+def test_llm_estimate_skips_scripted_and_verbatim_slides():
+    c = cfg()
+    c["providers"]["llm"] = {"provider": "ollama"}
+    slides = [{"title": t, "content": ["x"]} for t in "ABC"]
+    # A script covering every slide (a blank block included) needs no LLM.
+    report = run_doctor(slides, c, opts(script_blocks=["one", "", "three"]))
+    assert _llm_estimate(report) == []
+    # A short script leaves the remaining slides to the LLM, as in create.
+    report = run_doctor(slides, c, opts(script_blocks=["one"]))
+    assert _llm_estimate(report) == ["LLM: ~2 narration call(s) via ollama"]
+    # --verbatim-notes: only the slide without notes needs the LLM.
+    noted = [{**s, "notes": "Spoken words."} for s in slides[:2]] + [slides[2]]
+    report = run_doctor(noted, c, opts(verbatim_notes=True))
+    assert _llm_estimate(report) == ["LLM: ~1 narration call(s) via ollama"]

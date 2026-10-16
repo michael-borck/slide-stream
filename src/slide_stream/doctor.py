@@ -174,8 +174,27 @@ def run_doctor(
     if video_output:
         _check_avatar(report, providers, options)
     _check_providers_env(report, providers, settings, options)
-    _estimates(report, slides, providers, per_slide, video, video_output)
+    _estimates(report, slides, providers, per_slide, video, video_output,
+               llm_calls=_llm_narration_calls(slides, options))
     return report
+
+
+def _llm_narration_calls(slides: list[dict[str, Any]], options: dict[str, Any]) -> int:
+    """Slides whose narration ``create`` would ask the LLM to write.
+
+    Mirrors ``create``: a slide with a ``--script`` block (even a blank one)
+    or, under ``--verbatim-notes``, with notes, never calls the LLM.
+    """
+    script_blocks = options.get("script_blocks")
+    verbatim = options.get("verbatim_notes")
+    calls = 0
+    for i, slide in enumerate(slides):
+        if script_blocks is not None and i < len(script_blocks):
+            continue
+        if verbatim and str(slide.get("notes", "")).strip():
+            continue
+        calls += 1
+    return calls
 
 
 def _check_deck(report: DoctorReport, slides: list[dict[str, Any]], options: dict[str, Any]) -> None:
@@ -420,7 +439,8 @@ def _check_providers_env(report, providers, settings, options) -> None:
         report.add("Providers & environment", OK, "strict mode on — no silent provider fallbacks")
 
 
-def _estimates(report, slides, providers, per_slide, video, video_output=True) -> None:
+def _estimates(report, slides, providers, per_slide, video, video_output=True,
+               llm_calls=None) -> None:
     pad = float(video.get("slide_duration_padding", 1.0) or 0)
     total = sum(per_slide) + pad * len(slides)
     if video_output:
@@ -433,8 +453,9 @@ def _estimates(report, slides, providers, per_slide, video, video_output=True) -
             f"Images ~${per_img * len(slides):.2f} ({img_provider}, ~${per_img:.2f}/slide)")
 
     llm = providers.get("llm", {}).get("provider", "none")
-    if llm != "none":
-        report.estimates.append(f"LLM: ~{len(slides)} narration call(s) via {llm}")
+    calls = len(slides) if llm_calls is None else llm_calls
+    if llm != "none" and calls:
+        report.estimates.append(f"LLM: ~{calls} narration call(s) via {llm}")
 
     avatar = providers.get("avatar", {})
     if video_output and avatar.get("provider", "none") != "none":
