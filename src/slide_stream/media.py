@@ -16,7 +16,15 @@ from moviepy.video.fx import Loop
 from PIL import Image, ImageDraw
 from rich.console import Console
 
-from .providers.images import load_font
+from .code_render import (
+    draw_code_lines,
+    find_code_block,
+    highlight_lines,
+    is_dark,
+    to_rgb,
+    wrap_runs,
+)
+from .providers.images import content_lines, load_font, load_mono_font
 
 # Note: Configuration now comes from config parameter
 
@@ -29,9 +37,13 @@ def compose_slide_with_bullets(
     bullets: list[str],
     output_path: str,
     config: dict,
+    code_blocks: list[dict] | None = None,
 ) -> str:
     """Render a video slide with the educator's bullet points beside the
     generated artwork.
+
+    Items that are one of ``code_blocks`` (from the parser) are drawn
+    syntax-highlighted in a monospace font.
 
     Bullets are the core of the slide (mirroring the enhanced-deck layout):
     the educator's text on the left, artwork on the right. Used when an image
@@ -65,12 +77,31 @@ def compose_slide_with_bullets(
             y += int(title_size * 1.25)
         y += int(height * 0.04)
 
+    block_size = int(body_size * 0.72)
+    block_font = load_mono_font(block_size)
+    dark = is_dark(bg_color)
     for item in bullets:
-        for line in textwrap.wrap(f"• {item}", width=wrap_cols) or [f"• {item}"]:
+        block = find_code_block(item, code_blocks)
+        if block is not None:
+            code_lines = wrap_runs(
+                highlight_lines(str(block["code"]), block.get("lang"),
+                                dark=dark, fg=to_rgb(font_color)),
+                int(wrap_cols * 1.4),
+            )
+            y = int(draw_code_lines(
+                draw, margin, y, code_lines, block_font, block_size * 1.3,
+                max_y=height * 0.84,
+            )) + int(height * 0.022)
+            continue
+        lines, is_block = content_lines(
+            item, int(wrap_cols * 1.4) if "\n" in item else wrap_cols
+        )
+        font, size = (block_font, block_size) if is_block else (body_font, body_size)
+        for line in lines:
             if y > height * 0.84:  # keep clear of the presenter circle below
                 break
-            draw.text((margin, y), line, font=body_font, fill=font_color)
-            y += int(body_size * 1.45)
+            draw.text((margin, y), line, font=font, fill=font_color)
+            y += int(size * (1.3 if is_block else 1.45))
         y += int(height * 0.022)
 
     # Artwork on the right: scaled to fit its region, centered vertically.

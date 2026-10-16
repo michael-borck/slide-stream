@@ -816,6 +816,7 @@ def create(
                             bullets,
                             str(composed_path),
                             config,
+                            code_blocks=slide.get("code_blocks"),
                         )
                         img_path = composed_path
                     except Exception as e:  # fall back to art-only

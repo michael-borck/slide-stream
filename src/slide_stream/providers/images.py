@@ -12,6 +12,14 @@ import requests
 from PIL import Image, ImageDraw, ImageFont
 from rich.console import Console
 
+from ..code_render import (
+    draw_code_lines,
+    find_code_block,
+    highlight_lines,
+    is_dark,
+    to_rgb,
+    wrap_runs,
+)
 from .base import ImageProvider, StrictModeError, is_strict
 
 console = Console()
@@ -57,6 +65,68 @@ def load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     return ImageFont.load_default(size=size)
 
 
+BOLD_FONT_CANDIDATES = [
+    "arialbd.ttf",  # Windows
+    "Arial Bold.ttf",
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",  # macOS
+    "DejaVuSans-Bold.ttf",  # Linux
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+]
+
+
+def load_bold_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    """A bold font for titles; the normal font if none exists."""
+    for candidate in BOLD_FONT_CANDIDATES:
+        try:
+            return ImageFont.truetype(candidate, size)
+        except OSError:
+            continue
+    return load_font(size)
+
+
+MONO_FONT_CANDIDATES = [
+    "/System/Library/Fonts/Menlo.ttc",  # macOS
+    "consola.ttf",  # Windows
+    "cour.ttf",  # Windows
+    "DejaVuSansMono.ttf",  # Linux
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+]
+
+
+def load_mono_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    """A monospace font for code and tables; the normal font if none exists."""
+    for candidate in MONO_FONT_CANDIDATES:
+        try:
+            return ImageFont.truetype(candidate, size)
+        except OSError:
+            continue
+    return load_font(size)
+
+
+def content_lines(item: str, width: int) -> tuple[list[str], bool]:
+    """Lines to draw for one slide content item, and whether it is a block.
+
+    A single-line item is a bullet, word-wrapped to ``width``. A multi-line
+    item (a code block or a table from the parser) is a block: its own line
+    breaks and indentation are kept, over-long lines are wrapped with the
+    same indent, and it gets no bullet. Draw blocks in a monospace font.
+    """
+    if "\n" not in item:
+        return textwrap.wrap(f"• {item}", width=width) or [f"• {item}"], False
+    lines: list[str] = []
+    for raw in item.expandtabs(4).splitlines():
+        if len(raw) <= width:
+            lines.append(raw)
+            continue
+        indent = " " * (len(raw) - len(raw.lstrip(" ")))
+        lines.extend(
+            textwrap.wrap(raw, width=width, subsequent_indent=indent + "  ",
+                          drop_whitespace=False, replace_whitespace=False)
+            or [raw]
+        )
+    return lines, True
+
+
 class TextImageProvider(ImageProvider):
     """Generate text-based images for slides."""
 
@@ -91,6 +161,8 @@ class TextImageProvider(ImageProvider):
 
         title_font = load_font(title_font_size)
         content_font = load_font(content_font_size)
+        block_font_size = int(content_font_size * 0.75)
+        block_font = load_mono_font(block_font_size)
 
         if slide is not None:
             title = (slide.get("title") or "").strip() or "Slide"
@@ -114,17 +186,39 @@ class TextImageProvider(ImageProvider):
             )
             y_pos += title_font_size + 20
 
-        # Draw the content bullets (wrapped to fit).
+        # Draw the content bullets (wrapped to fit). Code blocks are
+        # syntax-highlighted in a monospace font (ADR-0013).
         y_pos += 40
+        code_blocks = (slide or {}).get("code_blocks")
+        dark = is_dark(bg_color)
+        x_pos = resolution[0] * 0.1
         for item in content_items:
-            for line in textwrap.wrap(f"• {item}", width=max_line_width):
+            block = find_code_block(item, code_blocks)
+            if block is not None:
+                code_lines = wrap_runs(
+                    highlight_lines(
+                        str(block["code"]), block.get("lang"), dark=dark,
+                        fg=to_rgb(font_color),
+                    ),
+                    int(max_line_width * 1.3),
+                )
+                y_pos = draw_code_lines(
+                    draw, x_pos, y_pos, code_lines, block_font, block_font_size + 12
+                ) + 20
+                continue
+            lines, is_block = content_lines(
+                item, int(max_line_width * 1.3) if "\n" in item else max_line_width
+            )
+            font = block_font if is_block else content_font
+            size = block_font_size if is_block else content_font_size
+            for line in lines:
                 draw.text(
                     (resolution[0] * 0.1, y_pos),
                     line,
-                    font=content_font,
+                    font=font,
                     fill=font_color,
                 )
-                y_pos += content_font_size + 20
+                y_pos += size + (12 if is_block else 20)
             y_pos += 20
 
         img.save(filename)
