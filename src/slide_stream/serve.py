@@ -2084,8 +2084,8 @@ footer a:hover{color:var(--accent)}
  <strong>your own cloned voice</strong>, <strong>your own headshot or video as the presenter</strong>,
  unlimited slides, drafting from documents, your own AI providers — with full privacy.
  <a id="dlBanner" href="https://github.com/michael-borck/slide-stream/releases/latest">⬇ Get the desktop app</a> &middot;
- <code>pip install slide-stream</code> &middot;
- <a href="https://slidestream.eduserver.au">learn more</a>
+ <code>pip install "slide-stream[all]"</code> &middot;
+ <a href="https://slidestream.borck.education">learn more</a>
  <span class="muted" id="limits" style="display:block"></span>
  <span class="muted" style="display:block">Everything you see — images, voice, animated presenter — is generated on one
  modest self-hosted machine. Slower than a cloud render farm, and proof of
@@ -2274,8 +2274,8 @@ footer a:hover{color:var(--accent)}
 </div>
 
 <footer>
- <a href="https://slidestream.eduserver.au">About</a>
- <a href="https://github.com/michael-borck/slide-stream/blob/main/docs/USER_GUIDE.md">Docs</a>
+ <a href="https://slidestream.borck.education">About</a>
+ <a href="https://slidestream.borck.education/docs/">Docs</a>
  <a href="https://pypi.org/project/slide-stream/">pip install slide-stream</a>
  <a href="https://github.com/michael-borck/slide-stream">GitHub</a>
  <span class="muted" id="appVersion"></span>

@@ -3,46 +3,49 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SlideStream — turn slides into narrated videos in your own voice</title>
-  <meta name="description" content="Turn Markdown or PowerPoint decks into narrated video presentations — in your own cloned voice, with AI images and an optional talking-head avatar. Self-hosted or run locally. Open source.">
-  <meta property="og:title" content="SlideStream — slides to narrated video, in your voice">
-  <meta property="og:description" content="Markdown/PowerPoint → narrated video, with your cloned voice, AI images, and a talking-head avatar. Open source, self-hostable.">
+  <title>SlideStream: turn slides into narrated videos</title>
+  <meta name="description" content="Turn Markdown, PowerPoint or a document into a narrated video or an editable PowerPoint. Offline voice by default, your own cloned voice, pictures and a presenter. Open source, runs on your machine.">
+  <link rel="canonical" href="https://slidestream.borck.education/">
+  <meta property="og:title" content="SlideStream: slides to narrated video">
+  <meta property="og:description" content="Markdown, PowerPoint or a document into a narrated video or an editable deck. Offline voice, your own cloned voice, pictures and a presenter. Open source.">
   <meta property="og:type" content="website">
+  <meta property="og:url" content="https://slidestream.borck.education/">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <nav class="nav">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <nav class="nav" aria-label="Main">
     <div class="container nav-inner">
-      <a class="wordmark" href="#top">🎬 SlideStream</a>
+      <a class="wordmark" href="#top"><span aria-hidden="true">🎬 </span>SlideStream</a>
       <div class="nav-links">
-        <a href="#how">How it works</a>
-        <a href="#features">Features</a>
-        <a href="#get">Get it</a>
-        <a href="https://github.com/michael-borck/slide-stream/blob/main/docs/USER_GUIDE.md">Docs</a>
+        <a class="nav-page" href="#how">How it works</a>
+        <a class="nav-page" href="#features">Features</a>
+        <a class="nav-page" href="#get">Get it</a>
+        <a href="https://slidestream.borck.education/docs/">Docs</a>
         <a href="https://github.com/michael-borck/slide-stream">GitHub</a>
       </div>
     </div>
   </nav>
 
+  <main id="main">
   <header class="hero" id="top">
     <div class="container hero-grid">
       <div class="hero-copy">
         <p class="eyebrow">Narrate · Illustrate · Present</p>
         <h1>Turn your slides into a video <em>that speaks in your voice.</em></h1>
         <p class="sub">
-          SlideStream turns a Markdown or PowerPoint deck into a narrated video
-          presentation — written as real spoken narration (not read-aloud
-          bullets), voiced by a clone of your own voice, illustrated with AI
-          images, and optionally fronted by a talking-head avatar of you.
+          SlideStream turns a Markdown file, a PowerPoint deck or a document
+          into a narrated video, an editable PowerPoint, or both. It writes
+          what a presenter would say rather than reading the bullets, voices
+          it offline or in a clone of your own voice, and can add pictures and
+          a presenter in the corner.
         </p>
         <div class="cta-row">
-          <a class="btn btn-primary" id="dlHero" href="#get">⬇ Download the app</a>
-          <a class="btn btn-ghost" href="https://app.slidestream.eduserver.au">▶ Try it in the browser</a>
+          <a class="btn btn-primary" id="dlHero" href="#get"><span aria-hidden="true">⬇ </span>Download the app</a>
+          <a class="btn btn-ghost" href="https://app.slidestream.borck.education"><span aria-hidden="true">▶ </span>Try it in the browser</a>
         </div>
-        <p class="privacy-tag">Open source. Self-host it, run it on your laptop, or bring your own AI keys — your decks and your voice stay yours.</p>
+        <p class="privacy-tag">Open source and free. No account and no keys needed: the voice runs on your machine, and every AI service is optional.</p>
       </div>
 
       <div class="hero-visual" aria-hidden="true">
@@ -51,7 +54,7 @@
           <div class="slide-body">
             <h3>Photosynthesis</h3>
             <ul><li>Light reactions</li><li>The Calvin cycle</li><li>Chloroplasts</li></ul>
-            <div class="avatar-bubble">🗣️</div>
+            <div class="avatar-bubble">🦉</div>
           </div>
           <div class="waveform"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
         </div>
@@ -63,23 +66,26 @@
     <div class="container">
       <h2>From deck to video in one step</h2>
       <div class="steps">
-        <div class="step"><div class="step-n">1</div><h3>Bring a deck</h3><p>A Markdown file or a PowerPoint <code>.pptx</code> — speaker notes become the narration source when present.</p></div>
-        <div class="step"><div class="step-n">2</div><h3>Add your voice &amp; face</h3><p>A 20-second voice sample and a photo (both optional). Used once per render, never stored.</p></div>
-        <div class="step"><div class="step-n">3</div><h3>Get a video</h3><p>Presenter-style narration, AI or stock images per slide, and an optional talking head — rendered to MP4.</p></div>
+        <div class="step"><div class="step-n" aria-hidden="true">1</div><h3>Bring your content</h3><p>A Markdown file, a PowerPoint <code>.pptx</code> with speaker notes, or a Word or PDF document that SlideStream drafts into a deck.</p></div>
+        <div class="step"><div class="step-n" aria-hidden="true">2</div><h3>Choose a voice and presenter</h3><p>The offline voice works straight away. Add 10 to 30 seconds of your own voice, and a mascot or photo, if you like. Samples are used for one render and deleted.</p></div>
+        <div class="step"><div class="step-n" aria-hidden="true">3</div><h3>Get a video or a deck</h3><p>An MP4 with narration, pictures and a presenter, or an editable PowerPoint with the narration in the speaker notes.</p></div>
       </div>
     </div>
   </section>
 
   <section class="section alt" id="features">
     <div class="container">
-      <h2>Everything is swappable — and yours</h2>
+      <h2>Everything is swappable, and yours</h2>
       <div class="feature-grid">
-        <div class="feature"><h3>🗣️ Your own voice</h3><p>Self-hosted Chatterbox voice cloning from a short sample, offline Kokoro, or bring your own ElevenLabs / OpenAI key. Never reads the slides aloud — it writes real narration.</p></div>
-        <div class="feature"><h3>🖼️ Images that fit</h3><p>Local folder, self-hosted SwarmUI/FLUX, Google Imagen, DALL·E, or free Pexels/Unsplash stock — matched to each slide.</p></div>
-        <div class="feature"><h3>🎭 Talking-head avatar</h3><p>A lip-synced head of you in the corner — self-hosted SadTalker, or hosted D-ID. Optional, off by default.</p></div>
-        <div class="feature"><h3>📝 Narration you control</h3><p>Presenter-style from notes or content, a length target per slide, verbatim speaker notes, or your own exact script.</p></div>
-        <div class="feature"><h3>🔒 Privacy-first</h3><p>Runs on your machine or your server. Voice samples and photos are used per-render and deleted — no biometric data at rest.</p></div>
-        <div class="feature"><h3>🧩 Two outputs, one deck</h3><p><code>enrich</code> a deck with images (Markdown or PPTX), or <code>create</code> the full narrated video.</p></div>
+        <div class="feature"><h3><span aria-hidden="true">🗣️ </span>A voice that works offline</h3><p>Kokoro speaks on your machine with no keys. Clone your own voice on a self-hosted Voicebox or Chatterbox server, or use ElevenLabs or OpenAI.</p></div>
+        <div class="feature"><h3><span aria-hidden="true">📝 </span>Narration, not read-aloud</h3><p>An LLM of your choice (local Ollama or a cloud model) writes what a presenter would say, fitted to a length. Or speak your notes or your own script exactly.</p></div>
+        <div class="feature"><h3><span aria-hidden="true">🖼️ </span>Pictures that fit</h3><p>Clean text slides, your own picture folder, free stock photos, or AI images from a local SwarmUI server, Google Imagen or DALL·E.</p></div>
+        <div class="feature"><h3><span aria-hidden="true">🦉 </span>A presenter in the corner</h3><p>Six built-in mascots or your photo: held still, a cartoon mouth that moves with the voice, or full lip-sync on your own GPU with Wan2.2-S2V.</p></div>
+        <div class="feature"><h3><span aria-hidden="true">💻 </span>Code and tables done right</h3><p>Code blocks keep their indentation with syntax colouring, and tables keep their rows, in the video and the deck.</p></div>
+        <div class="feature"><h3><span aria-hidden="true">🎨 </span>Designed slides</h3><p>Keep your own PowerPoint's look in the video, or have a self-hosted Presenton design the deck, with a check that the design kept your content (experimental).</p></div>
+        <div class="feature"><h3><span aria-hidden="true">📊 </span>Two outputs, one deck</h3><p>A narrated MP4, or an editable PowerPoint with AI speaker notes to present live. Both come from the same narration.</p></div>
+        <div class="feature"><h3><span aria-hidden="true">🩺 </span>Check before you render</h3><p><code>slide-stream doctor</code> estimates length, cost and render time, and warns about problems before a slow render starts.</p></div>
+        <div class="feature"><h3><span aria-hidden="true">🔒 </span>Private by design</h3><p>Runs on your machine or your own servers. Voice samples and photos are used per render and deleted, with no biometric data kept.</p></div>
       </div>
     </div>
   </section>
@@ -88,45 +94,49 @@
     <div class="container get-grid">
       <div>
         <h2>Get it</h2>
-        <p class="sub">Free and open source. The desktop app runs everything on your machine — no account, no terminal.<span id="dlVer"></span></p>
+        <p class="sub">Free and open source. The desktop app runs everything on your machine, with no account and no terminal.<span id="dlVer"></span></p>
         <div class="cta-row">
-          <a class="btn btn-primary" id="dlMain" href="https://github.com/michael-borck/slide-stream/releases/download/desktop-v0.1.27/SlideStream-macos-apple-silicon.dmg">⬇ Download the desktop app</a>
-          <a class="btn btn-ghost" href="https://app.slidestream.eduserver.au">▶ Try the hosted app</a>
+          <a class="btn btn-primary" id="dlMain" href="https://github.com/michael-borck/slide-stream/releases/download/desktop-v0.1.27/SlideStream-macos-apple-silicon.dmg"><span aria-hidden="true">⬇ </span>Download the desktop app</a>
+          <a class="btn btn-ghost" href="https://app.slidestream.borck.education"><span aria-hidden="true">▶ </span>Try the hosted app</a>
         </div>
         <p class="dl-others" id="dlOthers"></p>
-        <p class="muted-note">macOS: the build is unsigned for now — first launch via right-click → Open.
-        Prefer the terminal? The pip install is on the right. <a href="https://github.com/michael-borck/slide-stream">View source</a>.</p>
+        <p class="muted-note">The desktop builds are not yet signed: on macOS open the app the first time with right-click → Open; on Windows choose "More info", then "Run anyway".
+        <a href="https://github.com/michael-borck/slide-stream/releases">All releases</a>.</p>
       </div>
       <div class="install-card">
         <div class="install-head">Install with pip</div>
-        <pre><code># everything, including the web UI
-pip install "slide-stream[all-ai,serve]"
+        <pre><code># everything: AI providers, offline voice, web UI
+pip install "slide-stream[all]"
 
-# make a video
-slide-stream create deck.md out.mp4
+# make a video, or an editable deck
+slide-stream create deck.md talk.mp4
+slide-stream create deck.md deck.pptx
 
 # or open the web UI in your browser
 slide-stream serve</code></pre>
-        <p class="muted">Python 3.10+ and FFmpeg required. Provider keys are optional and read from your environment.</p>
+        <p class="muted">Python 3.10 or newer. FFmpeg is included. AI provider keys are optional.
+        <a href="https://pypi.org/project/slide-stream/">PyPI</a> ·
+        <a href="https://slidestream.borck.education/docs/">Documentation</a></p>
       </div>
     </div>
   </section>
+  </main>
 
   <footer class="footer">
     <div class="container footer-inner">
-      <span>🎬 SlideStream — open source, MIT licensed.</span>
-      <a href="https://github.com/michael-borck/slide-stream/blob/main/docs/USER_GUIDE.md">User guide</a>
-      <a href="https://github.com/michael-borck/slide-stream">github.com/michael-borck/slide-stream</a>
+      <span><span aria-hidden="true">🎬 </span>SlideStream: open source, MIT licensed.</span>
+      <a href="https://slidestream.borck.education/docs/">Documentation</a>
+      <a href="https://slidestream.borck.education/docs/CHANGELOG/">Changelog</a>
+      <a href="https://github.com/michael-borck/slide-stream">GitHub</a>
     </div>
   </footer>
 
   <script>
   // Platform-detected desktop downloads. The desktop app ships under its own
-  // `desktop-*` tags, which are NOT the repo's marked "Latest" release (that's
-  // the pip package). So we can't use /releases/latest/download; instead we
-  // link to a specific desktop tag and auto-upgrade it to the newest desktop
-  // release found via the API. FALLBACK_TAG keeps every link working before the
-  // API resolves and if it's rate-limited — bump it whenever a desktop build ships.
+  // `desktop-*` tags, which are not the repo's "Latest" release (that is the
+  // pip package), so /releases/latest/download cannot be used. Links point at
+  // FALLBACK_TAG and are upgraded to the newest desktop release found via the
+  // GitHub API. Bump FALLBACK_TAG whenever a desktop build ships.
   (function () {
     var REPO = "michael-borck/slide-stream";
     var FALLBACK_TAG = "desktop-v0.1.27";
@@ -152,12 +162,13 @@ slide-stream serve</code></pre>
     // than downloading blind; only the Get-it button deep-links the installer.
     var main = document.getElementById("dlMain"), hero = document.getElementById("dlHero");
     var pick = detect();
+    var arrow = '<span aria-hidden="true">⬇ </span>';
     function render() {
       if (pick) {
         main.href = DL(ALL[pick].file);
-        main.textContent = "⬇ Download for " + ALL[pick].label;
-        hero.textContent = "⬇ Download for " +
-          ALL[pick].label.replace(/ \((Apple Silicon|AppImage)\)/, "") + " — and more";
+        main.innerHTML = arrow + "Download for " + ALL[pick].label;
+        hero.innerHTML = arrow + "Download for " +
+          ALL[pick].label.replace(/ \((Apple Silicon|AppImage)\)/, "") + ", and more";
       }
       var others = Object.keys(ALL).filter(function (k) { return k !== pick; })
         .map(function (k) { return '<a href="' + DL(ALL[k].file) + '">' + ALL[k].label + "</a>"; });
