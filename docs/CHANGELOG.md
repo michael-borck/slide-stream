@@ -6,6 +6,14 @@ Versions follow [semantic versioning](https://semver.org). The desktop app
 (`desktop-v*` tags) installs the newest engine from PyPI, so it is not listed
 here.
 
+## 2.16.2 — unreleased
+
+- **Fix:** `--llm-provider` on `create` and `draft` no longer reuses the
+  configured provider's model, server URL, token or `think` setting. For
+  example, `--llm-provider claude` over an Ollama config sent Claude the
+  Ollama model name and failed.
+- Live tests for Presenton and the Kokoro voice.
+
 ## 2.16.1 — 2026-10-17
 
 Documentation, website and test-suite housekeeping (roadmap Phase 11). No

@@ -39,7 +39,7 @@ order of work. Planned order:
 
 | # | Phase | Why now | Release |
 |---|---|---|---|
-| 1 | 11: housekeeping (done, except two live tests) | The PyPI page, docs and landing page describe 2.0, not 2.16 | 2.16.1, released |
+| 1 | 11: housekeeping (done) | The PyPI page, docs and landing page describe 2.0, not 2.16 | 2.16.1, released |
 | 2 | 12: captions, transcript, chapters, alt text | Cheap (narration text and timings exist), often required by institutions | 2.17 |
 | 3 | 2c: the user's PowerPoint template | Deterministic design with no service | 2.18 |
 | 4 | 14: lecture-quality narration | Bullets appear as spoken, pronunciation, video clips | 2.19 |
@@ -80,7 +80,7 @@ experimental option and Phase 6 leans on the `pptx-theme` backend.
 
 - [x] Replace PyMuPDF (AGPL-3.0) with pypdfium2 (Apache-2.0/BSD-3) for PDF
       page rendering.
-- [ ] Add a live contract test for Presenton under `tests/live/`.
+- [x] Add a live contract test for Presenton under `tests/live/`.
 - [x] Refresh `uv.lock`.
 - [x] Bump the version in `pyproject.toml` and
       `src/slide_stream/__init__.py`. Released as 2.16.0 (16 Oct 2026).
@@ -297,6 +297,10 @@ switching frameworks.
       what is live and how to enable the rest.
 - [ ] Ollama detection and model download.
 - [ ] API keys in the OS keychain instead of `~/.slidestream.yaml`.
+- [ ] Change the bundle identifier from `au.eduserver.slidestream` to
+      `education.borck.slidestream` before the first signed build (signing
+      and notarisation are tied to it; the app stores nothing under it, so
+      only Windows users may need to uninstall the old entry once).
 - [ ] Code signing and notarisation (builds are unsigned today).
 
 **Done when** a non-technical user can see which engines are available
@@ -365,7 +369,7 @@ The README is also the PyPI page.
 - [x] Silence or fix the Starlette TestClient deprecation warning.
 - [x] e2e: a code-and-tables scenario and a Kokoro scenario; no hard-coded
       server URLs in committed scenarios.
-- [ ] Live tests for Presenton (Phase 2 leftover) and Kokoro.
+- [x] Live tests for Presenton (Phase 2 leftover) and Kokoro.
 
 **Repo.**
 - [x] `pyproject.toml`: keywords, Documentation and Changelog URLs, SPDX
