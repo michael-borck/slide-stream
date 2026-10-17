@@ -233,6 +233,31 @@ def _report_design_review(
         raise typer.Exit(code=1)
 
 
+# Settings that belong to one LLM provider and mean nothing (or the wrong
+# thing) to another: a model name, a server URL and its token, `think`.
+_LLM_PROVIDER_SPECIFIC = ("model", "base_url", "api_key", "think")
+
+
+def _override_llm(
+    config: dict[str, Any], provider: str | None, model: str | None
+) -> None:
+    """Apply --llm-provider / --llm-model to the config.
+
+    Switching to a different provider drops the configured provider's model,
+    server URL, token and ``think`` setting, so ``--llm-provider claude`` over
+    an Ollama config doesn't send Claude an Ollama model name. The provider's
+    own default model then applies unless ``--llm-model`` is given.
+    """
+    llm = config["providers"]["llm"]
+    if provider and provider != llm.get("provider"):
+        for key in _LLM_PROVIDER_SPECIFIC:
+            llm.pop(key, None)
+        llm["provider"] = provider
+        llm["model"] = None
+    if model:
+        llm["model"] = model
+
+
 def _slide_query(title: str, content: list[Any]) -> str:
     """Choose a meaningful image/search query for a slide.
 
@@ -499,10 +524,7 @@ def create(
     if strict:
         config["settings"]["strict"] = True
 
-    if llm_provider:
-        config["providers"]["llm"]["provider"] = llm_provider
-    if llm_model_option:
-        config["providers"]["llm"]["model"] = llm_model_option
+    _override_llm(config, llm_provider, llm_model_option)
     if narration_seconds is not None:
         config["settings"].setdefault("narration", {})["target_seconds"] = narration_seconds
     if tts_provider_option:
@@ -1619,10 +1641,7 @@ def draft(
         err_console.print(f"Configuration Error: {e}")
         raise typer.Exit(code=1)
 
-    if llm_provider:
-        config["providers"]["llm"]["provider"] = llm_provider
-    if llm_model_option:
-        config["providers"]["llm"]["model"] = llm_model_option
+    _override_llm(config, llm_provider, llm_model_option)
 
     provider = config["providers"]["llm"]["provider"]
     model = config["providers"]["llm"]["model"]

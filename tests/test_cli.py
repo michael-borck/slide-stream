@@ -416,3 +416,49 @@ def test_cli_scan_dry_run_matches_apply(runner, tmp_path, mocker):
     assert (tmp_path / "zebra.png").exists()
     assert (tmp_path / "a.png").exists()  # b.png took the vacated name
     assert not (tmp_path / "b.png").exists()
+
+
+# --- --llm-provider must not inherit another provider's settings ----------
+
+
+def test_llm_override_drops_the_old_providers_model_and_server():
+    """`--llm-provider claude` over an Ollama config used to send the Ollama
+    model name to Claude (404), along with Ollama's URL and token."""
+    from slide_stream.cli import _override_llm
+
+    cfg = {"providers": {"llm": {
+        "provider": "ollama", "model": "granite4.2:3b", "think": False,
+        "base_url": "http://box:11434", "api_key": "ollama-token",
+    }}}
+    _override_llm(cfg, "claude", None)
+    assert cfg["providers"]["llm"] == {"provider": "claude", "model": None}
+
+
+def test_llm_override_keeps_settings_for_the_same_provider_and_explicit_model():
+    from slide_stream.cli import _override_llm
+
+    same = {"providers": {"llm": {"provider": "ollama", "model": "m", "base_url": "u"}}}
+    _override_llm(same, "ollama", None)
+    assert same["providers"]["llm"] == {"provider": "ollama", "model": "m", "base_url": "u"}
+
+    other = {"providers": {"llm": {"provider": "ollama", "model": "m", "base_url": "u"}}}
+    _override_llm(other, "claude", "claude-haiku-5-5")
+    assert other["providers"]["llm"] == {"provider": "claude", "model": "claude-haiku-5-5"}
+
+    model_only = {"providers": {"llm": {"provider": "ollama", "model": "m"}}}
+    _override_llm(model_only, None, "qwen3:4b")
+    assert model_only["providers"]["llm"] == {"provider": "ollama", "model": "qwen3:4b"}
+
+
+def test_cli_draft_llm_provider_flag_does_not_reuse_config_model(tmp_path, monkeypatch, mocker):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "slidestream.yaml").write_text(
+        "providers:\n  llm:\n    provider: ollama\n    model: granite4.2:3b\n"
+    )
+    (tmp_path / "src.txt").write_text("Hash tables find values without searching.")
+    mocker.patch("slide_stream.cli.get_llm_client", return_value=object())
+    query = mocker.patch("slide_stream.cli.query_llm", return_value="# A\n\n- b\n")
+    result = CliRunner().invoke(app, ["draft", "src.txt", "out.md", "--llm-provider", "claude"])
+    assert result.exit_code == 0, result.output
+    args, kwargs = query.call_args
+    assert "granite4.2:3b" not in [*args, *kwargs.values()]
