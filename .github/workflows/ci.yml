@@ -37,9 +37,12 @@ jobs:
       - name: Type check (basedpyright)
         run: uv run basedpyright
 
-      # The coverage floor is fail_under in pyproject.toml.
+      # The coverage floor is fail_under in pyproject.toml. The config path is
+      # absolute because some tests start subprocesses in temporary folders;
+      # with a relative path they miss branch=true and their data cannot be
+      # combined ("Can't combine statement coverage data with branch data").
       - name: Test (pytest)
-        run: uv run pytest --cov=slide_stream --cov-report=term-missing --cov-report=xml
+        run: uv run pytest --cov=slide_stream --cov-config="$PWD/pyproject.toml" --cov-report=term-missing --cov-report=xml
 
       - name: Upload coverage report
         if: matrix.python-version == '3.12'

@@ -98,7 +98,7 @@ docs/               This site (MkDocs)
 ```bash
 uv run pytest                          # mocked suite
 uv run pytest tests/test_parser.py -q  # one file
-uv run pytest --cov=slide_stream       # with coverage
+uv run pytest --cov=slide_stream --cov-config="$PWD/pyproject.toml"  # with coverage
 uv run pytest --run-live tests/live    # real services from ~/.slidestream.yaml
 e2e/run.sh fast                        # render matrix against your stack
 ```
