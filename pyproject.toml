@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "slide-stream"
-version = "2.18.0"
+version = "2.18.1"
 description = "Turn Markdown, PowerPoint or a document into a narrated video or an editable deck, with your own voice, pictures and a presenter"
 readme = "README.md"
 license = "MIT"
