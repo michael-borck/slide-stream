@@ -799,7 +799,9 @@ def create(
                     full_slide_images = pdf_to_slide_images(
                         slides_pdf, temp_dir / "slides_pdf", width=width
                     )
-                elif resolved_template is not None:
+                elif resolved_template is not None and not pptx_mode:
+                    # For .pptx output the deck is built at export time; the
+                    # frame pipeline here is video-only.
                     console.print(
                         f"\n[bold]Building slides in template "
                         f"'{Path(str(resolved_template)).name}'...[/bold]"
@@ -882,7 +884,7 @@ def create(
                     full_slide_images = pdf_to_slide_images(
                         temp_pdf, temp_dir / "presenton_slides", width=width
                     )
-                else:  # --preserve-style
+                elif preserve_style:  # --preserve-style
                     if file_extension != ".pptx":
                         err_console.print(
                             "--preserve-style only applies to .pptx input; "
@@ -896,10 +898,15 @@ def create(
                     full_slide_images = pdf_to_slide_images(
                         rendered_pdf, temp_dir / "preserved_slides", width=width
                     )
+                elif resolved_template is not None:
+                    pass  # .pptx output: the deck is built at export time
             except (PresentonError, SlideRenderError) as e:
                 err_console.print(str(e))
                 raise typer.Exit(code=1)
-            if len(full_slide_images) != len(slides):
+            if full_slide_images is None:
+                # The template backend for .pptx output builds nothing here.
+                pass
+            elif len(full_slide_images) != len(slides):
                 err_console.print(
                     f"The designed deck has {len(full_slide_images)} slide(s) "
                     f"but the source has {len(slides)}; the count does not "
@@ -910,7 +917,8 @@ def create(
             # ADR-0013: check the designed deck against the source and swap in
             # SlideStream code slides (video frame and .pptx) where Presenton
             # dropped the code. Strict mode stops here, before rendering.
-            if presenton_settings is not None and presenton_temp_pptx is not None:
+            if presenton_settings is not None and presenton_temp_pptx is not None \
+                    and full_slide_images:
                 with Image.open(full_slide_images[0]) as first_frame:
                     frame_size = first_frame.size
                 review = review_designed_deck(
