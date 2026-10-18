@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.17.0 — unreleased
+## 2.17.0 — 2026-10-17
 
 Accessible outputs (roadmap Phase 12; ADR-0018):
 
