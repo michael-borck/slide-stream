@@ -717,12 +717,20 @@ def test_cli_dry_run_reports_the_template(tmp_path, monkeypatch):
     (tmp_path / "deck.md").write_text("# A\n\n- b\n")
     config_file = tmp_path / "config.yaml"
     config_file.write_text(FAST_VIDEO_CONFIG)
+    # .pptx output: the template check runs without needing LibreOffice.
     result = CliRunner().invoke(app, [
-        "create", "deck.md", "out.mp4", "--config", str(config_file),
+        "create", "deck.md", "out.pptx", "--config", str(config_file),
         "--pptx-template", str(tpl), "--dry-run",
     ])
     assert result.exit_code == 0, result.output
     assert "template layouts found" in result.output
+    # Video output is also told about LibreOffice when it is missing.
+    if not (Path("/usr/bin/soffice").exists() or Path("/opt/homebrew/bin/soffice").exists()):
+        video = CliRunner().invoke(app, [
+            "create", "deck.md", "out.mp4", "--config", str(config_file),
+            "--pptx-template", str(tpl), "--dry-run",
+        ])
+        assert "LibreOffice" in video.output
 
 
 def _pngs(tmp_path, count):
