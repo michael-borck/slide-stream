@@ -9,6 +9,7 @@ import wave
 from pathlib import Path
 
 import pytest
+from PIL import Image
 from pptx import Presentation
 from typer.testing import CliRunner
 
@@ -742,3 +743,145 @@ def _pngs(tmp_path, count):
         Image.new("RGB", (320, 180), (10 * (i + 1), 0, 0)).save(p)
         paths.append(p)
     return paths
+
+
+# --- Template decks carry provider artwork (ADR-0014) ------------------------
+
+
+class _ArtProvider:
+    """A picture provider that writes a real image and counts fallbacks."""
+
+    name = "swarmui"
+    fallback_count = 0
+
+    def __init__(self, folder: Path):
+        self.folder = folder
+        self.calls = 0
+
+    def generate_image(self, query, filename, slide=None):
+        self.calls += 1
+        Image.new("RGB", (200, 120), (30, 120, 90)).save(filename)
+        return str(filename)
+
+
+def test_cli_pptx_template_includes_provider_artwork(tmp_path, mocker, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    tpl = _template_file(tmp_path)
+    (tmp_path / "deck.md").write_text(
+        "# Intro\n\n- welcome\n\n# Data\n\n- the numbers\n"
+    )
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(FAST_VIDEO_CONFIG)
+    mocker.patch("slide_stream.cli.ProviderFactory.create_image_provider",
+                 return_value=_ArtProvider(tmp_path))
+
+    output = tmp_path / "out.pptx"
+    result = CliRunner().invoke(app, [
+        "create", "deck.md", str(output), "--config", str(config_file),
+        "--pptx-template", str(tpl),
+    ])
+    assert result.exit_code == 0, result.output
+
+    from pptx import Presentation
+
+    prs = Presentation(str(output))
+    pictures = [
+        sh for s in prs.slides for sh in s.shapes
+        if getattr(sh, "shape_type", None) == 13
+    ]
+    # Slide 1 is the title slide (no content region); slide 2 carries art.
+    assert len(pictures) == 1
+    assert prs.slides[1].slide_layout.name == "Two Content"
+
+
+def test_cli_pptx_template_text_cards_are_not_artwork(tmp_path, monkeypatch):
+    """With the `text` provider there is no artwork; the slides stay clean."""
+    monkeypatch.chdir(tmp_path)
+    tpl = _template_file(tmp_path)
+    (tmp_path / "deck.md").write_text("# Intro\n\n- welcome\n")
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(FAST_VIDEO_CONFIG)
+    output = tmp_path / "out.pptx"
+    result = CliRunner().invoke(app, [
+        "create", "deck.md", str(output), "--config", str(config_file),
+        "--pptx-template", str(tpl),
+    ])
+    assert result.exit_code == 0, result.output
+    from pptx import Presentation
+
+    prs = Presentation(str(output))
+    pictures = [
+        sh for s in prs.slides for sh in s.shapes
+        if getattr(sh, "shape_type", None) == 13
+    ]
+    assert pictures == []
+
+
+def test_cli_pptx_template_video_pre_generates_artwork(tmp_path, mocker, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    tpl = _template_file(tmp_path)
+    (tmp_path / "deck.md").write_text("# Intro\n\n- welcome\n\n# Data\n\n- the numbers\n")
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(FAST_VIDEO_CONFIG)
+    provider = _ArtProvider(tmp_path)
+    mocker.patch("slide_stream.cli.ProviderFactory.create_image_provider",
+                 return_value=provider)
+    monkeypatch.setattr("slide_stream.cli.pptx_to_pdf",
+                        lambda *a, **k: tmp_path / "t.pdf")
+    monkeypatch.setattr("slide_stream.cli.pdf_to_slide_images",
+                        lambda *a, **k: _pngs(tmp_path, 2))
+    fake_tts = mocker.MagicMock()
+    fake_tts.save.side_effect = _write_silent_wav
+    mocker.patch("gtts.gTTS", return_value=fake_tts)
+
+    output = tmp_path / "talk.mp4"
+    result = CliRunner().invoke(app, [
+        "create", "deck.md", str(output), "--config", str(config_file),
+        "--pptx-template", str(tpl),
+    ])
+    assert result.exit_code == 0, result.output
+    assert provider.calls == 1  # artwork generated before the deck was built
+    from pptx import Presentation
+
+    prs = Presentation(str(tmp_path / "talk.pptx"))
+    pictures = [
+        sh for s in prs.slides for sh in s.shapes
+        if getattr(sh, "shape_type", None) == 13
+    ]
+    assert len(pictures) == 1  # the artwork is in the saved deck
+
+
+def test_cli_pptx_template_fallback_cards_are_not_artwork(tmp_path, mocker, monkeypatch):
+    """A provider fallback renders a text card; in template mode it must be
+    dropped instead of placed on the slide (it duplicates the bullets)."""
+    monkeypatch.chdir(tmp_path)
+    tpl = _template_file(tmp_path)
+    (tmp_path / "deck.md").write_text("# Intro\n\n- welcome\n")
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(FAST_VIDEO_CONFIG)
+
+    class _FallingProvider(_ArtProvider):
+        fallback_count = 0
+
+        def generate_image(self, query, filename, slide=None):
+            self.calls += 1
+            self.fallback_count += 1
+            Image.new("RGB", (320, 180), "black").save(filename)
+            return str(filename)
+
+    mocker.patch("slide_stream.cli.ProviderFactory.create_image_provider",
+                 return_value=_FallingProvider(tmp_path))
+    output = tmp_path / "out.pptx"
+    result = CliRunner().invoke(app, [
+        "create", "deck.md", str(output), "--config", str(config_file),
+        "--pptx-template", str(tpl),
+    ])
+    assert result.exit_code == 0, result.output
+    from pptx import Presentation
+
+    prs = Presentation(str(output))
+    pictures = [
+        sh for s in prs.slides for sh in s.shapes
+        if getattr(sh, "shape_type", None) == 13
+    ]
+    assert pictures == []

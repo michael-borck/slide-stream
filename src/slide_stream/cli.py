@@ -60,6 +60,7 @@ from .narration import (
 )
 from .parser import parse_markdown
 from .powerpoint import format_powerpoint_content_for_llm, parse_powerpoint
+from .pptx_template import _classify as _classify_slide
 from .pptx_template import build_deck as build_template_deck
 from .pptx_template import check_template as check_template_file
 from .presenton import (
@@ -831,6 +832,55 @@ def create(
                         }
                         for slide in slides
                     ]
+                    # A picture provider's artwork lands on the slides (Two
+                    # Content): generate it up front, before the deck is
+                    # rendered to frames. A slide whose image falls back to a
+                    # text card is left text-only — the card would only
+                    # duplicate the bullets (ADR-0014).
+                    if image_provider.name != "text":
+                        console.print(
+                            f"\n[bold]Generating artwork for "
+                            f"{len(entries)} slide(s) via "
+                            f"{image_provider.name}...[/bold]"
+                        )
+                        for i, (entry, slide) in enumerate(zip(entries, slides, strict=False), 1):
+                            if entry["image_path"] is not None:
+                                continue
+                            # Title, code and table slides have no picture
+                            # region; don't spend a generation on them.
+                            if _classify_slide(i - 1, slide) not in (
+                                "two_content", "title_content"
+                            ):
+                                continue
+                            art = temp_dir / f"template_art_{i}.png"
+                            before = getattr(image_provider, "fallback_count", 0)
+                            try:
+                                image_provider.generate_image(
+                                    _slide_query(
+                                        str(slide["title"]),
+                                        list(slide.get("content", [])),
+                                    ),
+                                    str(art),
+                                    slide=slide,
+                                )
+                            except StrictModeError as e:
+                                err_console.print(f"Slide {i}: {e}")
+                                _doctor_nudge(input_path.name)
+                                raise typer.Exit(code=1)
+                            except Exception as e:
+                                err_console.print(
+                                    f"  - Slide {i}: image failed ({e}); "
+                                    "the slide is left text-only."
+                                )
+                                continue
+                            fell_back = (
+                                getattr(image_provider, "fallback_count", before)
+                                > before
+                            )
+                            if fell_back:
+                                art.unlink(missing_ok=True)
+                            elif art.exists():
+                                entry["image_path"] = str(art)
                     temp_pptx = temp_dir / "template_deck.pptx"
                     template_report = build_template_deck(
                         entries, resolved_template, temp_pptx
@@ -1115,12 +1165,14 @@ def create(
                 # Designed full-frame slide first, then a pre-made image the
                 # deck already references (e.g. from `enrich`), else generate
                 # one via the provider.
+                art_fell_back = False
                 prebuilt = _prebuilt_slide_image(slide, input_path.parent)
                 if full_slide_images is not None:
                     shutil.copyfile(full_slide_images[i], img_path)
                 elif prebuilt is not None:
                     shutil.copyfile(prebuilt, img_path)
                 else:
+                    art_fb_before = getattr(image_provider, "fallback_count", 0)
                     try:
                         image_provider.generate_image(
                             search_query, str(img_path), slide=slide
@@ -1129,15 +1181,35 @@ def create(
                         err_console.print(f"Slide {slide_num}: {e}")
                         _doctor_nudge(input_path.name)
                         raise typer.Exit(code=1)
+                    art_fell_back = (
+                        getattr(image_provider, "fallback_count", art_fb_before)
+                        > art_fb_before
+                    )
 
                 if pptx_mode:
                     # Deck export stops here: the artwork exists and the
                     # narration text is final — audio and compositing below
                     # are video-only steps.
                     # In template mode a generated text card is not artwork
-                    # (it would duplicate the content); only a picture the
-                    # deck already referenced (enrich) belongs on the slide.
+                    # (it would duplicate the content). A real provider image
+                    # or a picture the deck already referenced (enrich)
+                    # belongs on the slide.
                     prebuilt = _prebuilt_slide_image(slide, input_path.parent)
+                    if resolved_template:
+                        deck_image = (
+                            str(prebuilt)
+                            if prebuilt
+                            else (
+                                str(img_path)
+                                if image_provider.name != "text"
+                                and not art_fell_back
+                                else None
+                            )
+                        )
+                    else:
+                        deck_image = str(img_path)
+                    if deck_image and not Path(deck_image).is_file():
+                        deck_image = None
                     entry: dict[str, Any] = {
                         "title": effective_title or str(slide["title"]),
                         "content": [
@@ -1145,11 +1217,7 @@ def create(
                             for c in slide.get("content", [])
                             if str(c).strip()
                         ],
-                        "image_path": (
-                            str(prebuilt)
-                            if resolved_template and prebuilt
-                            else (None if resolved_template else str(img_path))
-                        ),
+                        "image_path": deck_image,
                         "notes": speech_text,
                         "code_blocks": slide.get("code_blocks"),
                         "tables": slide.get("tables"),
