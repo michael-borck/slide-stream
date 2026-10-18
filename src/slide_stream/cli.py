@@ -60,6 +60,8 @@ from .narration import (
 )
 from .parser import parse_markdown
 from .powerpoint import format_powerpoint_content_for_llm, parse_powerpoint
+from .pptx_template import build_deck as build_template_deck
+from .pptx_template import check_template as check_template_file
 from .presenton import (
     DEFAULT_PRESENTON_INSTRUCTIONS,
     DesignReview,
@@ -507,6 +509,15 @@ def create(
             ),
         ),
     ] = None,
+    pptx_template: Annotated[
+        Path | None,
+        typer.Option(
+            "--pptx-template",
+            help="Design the new slides with this PowerPoint template (.pptx or "
+            ".potx): its masters and layouts style the deck and the video "
+            "(ADR-0014). Or set settings.pptx_template.",
+        ),
+    ] = None,
     alt_text: Annotated[
         bool,
         typer.Option(
@@ -563,12 +574,16 @@ def create(
 
     # Designed-slide modes produce video frames, so they sit on the video
     # pipeline only. Deck-only design is the `presenton` command's job.
+    resolved_template = pptx_template or config["settings"].get("pptx_template")
+    if pptx_template is None and config["settings"].get("pptx_template"):
+        resolved_template = Path(str(config["settings"]["pptx_template"]))
     design_modes = [
         name
         for name, chosen in (
             ("--template", template_name is not None),
             ("--slides-pdf", slides_pdf is not None),
             ("--preserve-style", preserve_style),
+            ("--pptx-template", resolved_template is not None),
         )
         if chosen
     ]
@@ -577,7 +592,9 @@ def create(
             f"Choose one designed-slide source, not several: {', '.join(design_modes)}."
         )
         raise typer.Exit(code=1)
-    if design_modes and pptx_mode:
+    # A user template works for .pptx output too (python-pptx only); the
+    # other designed-slide modes exist to become video frames.
+    if design_modes and pptx_mode and design_modes != ["--pptx-template"]:
         err_console.print(
             f"{design_modes[0]} designs slides for video output. For a "
             "designed deck only, use: slide-stream presenton <deck> "
@@ -758,6 +775,9 @@ def create(
                     "avatar_enabled": avatar_enabled,
                     "narration_seconds": narration_seconds,
                     "output_path": output_filename,
+                    "pptx_template": (
+                        str(resolved_template) if resolved_template else None
+                    ),
                 },
             )
             render_report(report, console, f"Dry run — {input_path.name}")
@@ -778,6 +798,64 @@ def create(
                     console.print("\n[bold]Rendering designed slides from PDF...[/bold]")
                     full_slide_images = pdf_to_slide_images(
                         slides_pdf, temp_dir / "slides_pdf", width=width
+                    )
+                elif resolved_template is not None:
+                    console.print(
+                        f"\n[bold]Building slides in template "
+                        f"'{Path(str(resolved_template)).name}'...[/bold]"
+                    )
+                    try:
+                        check_template_file(resolved_template)
+                    except Exception as e:
+                        err_console.print(f"Template not usable: {e}")
+                        raise typer.Exit(code=1)
+                    entries = [
+                        {
+                            "title": str(slide["title"]),
+                            "content": [
+                                str(c).strip()
+                                for c in slide.get("content", [])
+                                if str(c).strip()
+                            ],
+                            "image_path": (
+                                str(slide["image_path"])
+                                if slide.get("image_path")
+                                and Path(str(slide["image_path"])).is_file()
+                                else None
+                            ),
+                            "code_blocks": slide.get("code_blocks"),
+                            "tables": slide.get("tables"),
+                            "notes": "",
+                        }
+                        for slide in slides
+                    ]
+                    temp_pptx = temp_dir / "template_deck.pptx"
+                    template_report = build_template_deck(
+                        entries, resolved_template, temp_pptx
+                    )
+                    console.print(
+                        "  Layouts: "
+                        + ", ".join(
+                            f"{role} -> {name}"
+                            for role, name in template_report.layouts.items()
+                        )
+                    )
+                    for role in template_report.missing:
+                        err_console.print(
+                            f"  - No '{role}' layout in the template; a similar "
+                            "layout stands in."
+                        )
+                    for note in template_report.overflow:
+                        err_console.print(f"  - {note}")
+                    presenton_temp_pptx = temp_pptx
+                    presenton_deck_dest = (
+                        Path(str(output_filename)).with_suffix(".pptx")
+                    )
+                    rendered_pdf = pptx_to_pdf(
+                        temp_pptx, temp_dir / "template"
+                    )
+                    full_slide_images = pdf_to_slide_images(
+                        rendered_pdf, temp_dir / "template_slides", width=width
                     )
                 elif template_name is not None:
                     settings = resolve_presenton_settings(
@@ -1048,6 +1126,10 @@ def create(
                     # Deck export stops here: the artwork exists and the
                     # narration text is final — audio and compositing below
                     # are video-only steps.
+                    # In template mode a generated text card is not artwork
+                    # (it would duplicate the content); only a picture the
+                    # deck already referenced (enrich) belongs on the slide.
+                    prebuilt = _prebuilt_slide_image(slide, input_path.parent)
                     entry: dict[str, Any] = {
                         "title": effective_title or str(slide["title"]),
                         "content": [
@@ -1055,8 +1137,14 @@ def create(
                             for c in slide.get("content", [])
                             if str(c).strip()
                         ],
-                        "image_path": str(img_path),
+                        "image_path": (
+                            str(prebuilt)
+                            if resolved_template and prebuilt
+                            else (None if resolved_template else str(img_path))
+                        ),
                         "notes": speech_text,
+                        "code_blocks": slide.get("code_blocks"),
+                        "tables": slide.get("tables"),
                     }
                     if want_alt_text:
                         from .llm import describe_image_alt
@@ -1200,7 +1288,20 @@ def create(
         # audio/video tail of the pipeline.
         if pptx_mode:
             try:
-                export_pptx(pptx_slides, Path(str(output_filename)))
+                if resolved_template is not None:
+                    template_report = build_template_deck(
+                        pptx_slides, resolved_template,
+                        Path(str(output_filename)),
+                    )
+                    for role in template_report.missing:
+                        err_console.print(
+                            f"  - No '{role}' layout in the template; a "
+                            "similar layout stands in."
+                        )
+                    for note in template_report.overflow:
+                        err_console.print(f"  - {note}")
+                else:
+                    export_pptx(pptx_slides, Path(str(output_filename)))
             except Exception as e:
                 err_console.print(f"Error writing PowerPoint deck: {e}")
                 raise typer.Exit(code=1)
@@ -1852,6 +1953,80 @@ def draft(
             expand=False,
         )
     )
+
+
+@app.command("template")
+def template_cmd(
+    action: Annotated[
+        str,
+        typer.Argument(help="What to do: 'init' (write a starter template) or "
+        "'check' (inspect a template)."),
+    ],
+    path: Annotated[
+        Path,
+        typer.Argument(help="The template file (.pptx or .potx)."),
+    ],
+    force: Annotated[
+        bool,
+        typer.Option("--force", "-f", help="Overwrite the file if it exists."),
+    ] = False,
+) -> None:
+    """Prepare or inspect a PowerPoint template for --pptx-template (ADR-0014).
+
+    'init' writes a starter template whose layouts carry the standard names
+    (Title Slide, Title and Content, Section Header, Two Content, Title Only,
+    Blank); restyle it in PowerPoint and use it with --pptx-template.
+    'check' lists which layouts a template offers, which standard names are
+    missing and what stands in for them.
+    """
+    action = action.strip().lower()
+    if action == "init":
+        from pptx import Presentation
+
+        if path.exists() and not force:
+            err_console.print(f"{path} already exists. Re-run with --force to overwrite it.")
+            raise typer.Exit(code=1)
+        Presentation().save(str(path))
+        console.print(
+            Panel(
+                f"[bold green]Starter template written: {path}[/bold green]\n\n"
+                "Open it in PowerPoint and restyle the slide master and layouts\n"
+                "(fonts, colours, background, logo). Keep the layout names -\n"
+                "they are the standard ones --pptx-template looks for.\n\n"
+                f"Use it: slide-stream create deck.md talk.mp4 --pptx-template {path}",
+                border_style="green",
+                expand=False,
+            )
+        )
+        return
+    if action == "check":
+        try:
+            report = check_template_file(path)
+        except Exception as e:
+            err_console.print(f"Template not usable: {e}")
+            raise typer.Exit(code=1)
+        table = Table(title=f"{path} ({report.template_kind})", title_justify="left")
+        table.add_column("Role")
+        table.add_column("Layout that serves it")
+        for role, name in report.layouts.items():
+            marker = "" if role not in report.missing else "  (stand-in)"
+            table.add_row(role, name + marker)
+        console.print(table)
+        if report.missing:
+            console.print(
+                "[yellow]Standard layout names missing: "
+                + ", ".join(report.missing)
+                + " — similar layouts stand in. Rename the layouts in "
+                "PowerPoint to the standard names for exact matching.[/yellow]"
+            )
+        console.print(
+            "[dim]Only styling in the slide master and layouts carries over to "
+            "new slides; formatting applied to the template's example slides "
+            "does not (those slides are removed when a deck is built).[/dim]"
+        )
+        return
+    err_console.print("Action must be 'init' or 'check'.")
+    raise typer.Exit(code=2)
 
 
 @app.command()

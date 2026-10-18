@@ -98,6 +98,10 @@ DEFAULT_CONFIG = {
         # Accessible outputs (ADR-0018), timed from the narration segments:
         # captions beside the video, optionally burned into it, a Markdown
         # transcript, and chapter markers in the MP4 + a chapters.txt.
+        # Design new slides with this PowerPoint template (.pptx/.potx);
+        # its masters and layouts style the deck and the video (ADR-0014).
+        # Per run: create --pptx-template FILE
+        "pptx_template": None,
         "accessibility": {
             "captions": "both",   # both | srt | vtt | none
             "burn": False,        # draw the captions into the picture
@@ -634,6 +638,14 @@ settings:
   # (ADR-0012): auto = Kokoro if installed (offline), else gTTS. Force one
   # with kokoro | gtts.
   voice_floor: auto
+
+  # Accessible outputs with every video (ADR-0018), timed from the narration
+  # segments: caption files beside the video, captions drawn into the
+  # picture, a Markdown transcript, and chapter markers in the MP4 plus a
+  # Design new slides with this PowerPoint template (.pptx/.potx); its
+  # masters and layouts style the deck and the video (ADR-0014). Per run:
+  # create --pptx-template FILE
+  # pptx_template: uni-template.pptx
 
   # Accessible outputs with every video (ADR-0018), timed from the narration
   # segments: caption files beside the video, captions drawn into the

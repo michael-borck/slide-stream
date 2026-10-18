@@ -9,6 +9,7 @@ time or money. Powers ``create --dry-run`` and the ``doctor`` command.
 import importlib.util
 import os
 import re
+import shutil
 import wave
 from dataclasses import dataclass, field
 from io import BytesIO
@@ -25,7 +26,8 @@ OK, WARN, BLOCKER = "ok", "warn", "blocker"
 _ICON = {OK: "✅", WARN: "⚠️ ", BLOCKER: "❌"}
 
 # Group order in the report.
-GROUPS = ["Deck", "Narration", "Voice", "Images", "Avatar", "Providers & environment"]
+GROUPS = ["Deck", "Narration", "Voice", "Images", "Avatar", "Accessibility",
+           "Providers & environment"]
 
 # Speaker-note fragments that are stage directions, not spoken prose.
 _STAGE_DIRECTION = re.compile(
@@ -235,6 +237,28 @@ def _check_accessibility(
             f"({body / height:.0%}) — viewers on phones will squint; "
             "raise settings.image.content_font_size"
         )
+    template = options.get("pptx_template")
+    if template:
+        from .pptx_template import check_template
+
+        try:
+            found = check_template(template)
+        except Exception as e:
+            report.add("Accessibility", BLOCKER, f"pptx_template not usable: {e}")
+        else:
+            missing = ", ".join(found.missing) if found.missing else "none"
+            report.add(
+                "Accessibility", OK,
+                f"template layouts found; standard names missing: {missing}"
+            )
+            if options.get("mode", "create") == "create" and not shutil.which("soffice") \
+                    and not shutil.which("libreoffice"):
+                report.add(
+                    "Accessibility", BLOCKER,
+                    "rendering a templated video needs LibreOffice (soffice) "
+                    "on your PATH; a .pptx output does not"
+                )
+
     if options.get("mode", "create") == "create":
         captions = settings.get("accessibility", {}).get("captions", "both")
         if captions == "none":

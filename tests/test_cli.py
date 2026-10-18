@@ -467,6 +467,16 @@ def test_cli_draft_llm_provider_flag_does_not_reuse_config_model(tmp_path, monke
 # --- Accessible outputs (ADR-0018) -------------------------------------------
 
 
+def _write_silent_wav(filename, seconds=0.3):
+    import wave
+
+    with wave.open(str(filename), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(22050)
+        w.writeframes(b"\x00\x00" * int(22050 * seconds))
+
+
 def _speaking_tts(mocker):
     """A TTS provider that writes a real 1s WAV per synthesize call."""
     import wave
@@ -604,3 +614,123 @@ def test_create_burned_captions_render(tmp_path, mocker, monkeypatch):
         # The caption band darkens the bottom of the frame.
         band = frame[int(clip.h * 0.94):, :].mean()
         assert band < 255
+
+
+# --- --pptx-template: slides in the user's own style (ADR-0014) ---------------
+
+
+def _template_file(tmp_path):
+    from pptx import Presentation
+
+    tpl = tmp_path / "uni.pptx"
+    Presentation().save(str(tpl))
+    return tpl
+
+
+def test_cli_pptx_template_output_uses_the_template(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    tpl = _template_file(tmp_path)
+    (tmp_path / "deck.md").write_text(
+        "# Intro\n\n- welcome\n\n# A Function\n\n```python\nx = hash(1)\n```\n"
+    )
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(FAST_VIDEO_CONFIG)
+    output = tmp_path / "out.pptx"
+    result = CliRunner().invoke(app, [
+        "create", "deck.md", str(output), "--config", str(config_file),
+        "--pptx-template", str(tpl),
+    ])
+    assert result.exit_code == 0, result.output
+    from pptx import Presentation
+
+    prs = Presentation(str(output))
+    assert len(prs.slides) == 2
+    assert prs.slides[0].slide_layout.name == "Title Slide"
+    notes = prs.slides[0].notes_slide.notes_text_frame.text
+    assert "Intro" in notes
+    assert any("hash" in sh.text_frame.text
+               for sh in prs.slides[1].shapes if sh.has_text_frame)
+
+
+def test_cli_pptx_template_video_uses_rendered_frames(tmp_path, mocker, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    tpl = _template_file(tmp_path)
+    (tmp_path / "deck.md").write_text("# Intro\n\n- welcome\n")
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(FAST_VIDEO_CONFIG)
+    full = _pngs(tmp_path, 1)
+    monkeypatch.setattr(
+        "slide_stream.cli.pptx_to_pdf",
+        lambda *a, **k: tmp_path / "template.pdf",
+    )
+    monkeypatch.setattr(
+        "slide_stream.cli.pdf_to_slide_images", lambda *a, **k: full
+    )
+    fake_tts = mocker.MagicMock()
+    fake_tts.save.side_effect = _write_silent_wav
+    mocker.patch("gtts.gTTS", return_value=fake_tts)
+
+    output = tmp_path / "talk.mp4"
+    result = CliRunner().invoke(app, [
+        "create", "deck.md", str(output), "--config", str(config_file),
+        "--pptx-template", str(tpl),
+    ])
+    assert result.exit_code == 0, result.output
+    assert output.exists()
+    # The filled deck is saved beside the video, with narration in the notes.
+    deck = tmp_path / "talk.pptx"
+    assert deck.exists()
+    from pptx import Presentation
+
+    notes = Presentation(str(deck)).slides[0].notes_slide.notes_text_frame.text
+    assert "welcome" in notes
+
+
+def test_cli_pptx_template_rejects_other_design_modes(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    tpl = _template_file(tmp_path)
+    (tmp_path / "deck.md").write_text("# A\n\n- b\n")
+    result = CliRunner().invoke(app, [
+        "create", "deck.md", "out.mp4",
+        "--pptx-template", str(tpl), "--preserve-style",
+    ])
+    assert result.exit_code != 0
+    assert "Choose one designed-slide source" in result.output
+
+
+def test_cli_template_command_init_and_check(tmp_path):
+    runner = CliRunner()
+    tpl = tmp_path / "starter.pptx"
+    result = runner.invoke(app, ["template", "init", str(tpl)])
+    assert result.exit_code == 0, result.output
+    assert tpl.exists()
+    # Refuses to overwrite without --force.
+    assert runner.invoke(app, ["template", "init", str(tpl)]).exit_code != 0
+    result = runner.invoke(app, ["template", "check", str(tpl)])
+    assert result.exit_code == 0, result.output
+    assert "Title Slide" in result.output
+
+
+def test_cli_dry_run_reports_the_template(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    tpl = _template_file(tmp_path)
+    (tmp_path / "deck.md").write_text("# A\n\n- b\n")
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(FAST_VIDEO_CONFIG)
+    result = CliRunner().invoke(app, [
+        "create", "deck.md", "out.mp4", "--config", str(config_file),
+        "--pptx-template", str(tpl), "--dry-run",
+    ])
+    assert result.exit_code == 0, result.output
+    assert "template layouts found" in result.output
+
+
+def _pngs(tmp_path, count):
+    from PIL import Image
+
+    paths = []
+    for i in range(count):
+        p = tmp_path / f"full_{i + 1}.png"
+        Image.new("RGB", (320, 180), (10 * (i + 1), 0, 0)).save(p)
+        paths.append(p)
+    return paths
