@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.18.0 — unreleased
+## 2.18.0 — 2026-10-18
 
 Slides in your own PowerPoint template (roadmap Phase 2c; ADR-0014):
 
