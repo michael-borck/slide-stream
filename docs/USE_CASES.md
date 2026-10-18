@@ -24,6 +24,9 @@ No account, no keys. The voice is Kokoro, which runs offline (or free gTTS if Ko
 slide-stream create deck.md talk.mp4
 ```
 
+Every video also gets **captions** (`.srt`/`.vtt`), a **transcript** and
+**chapters** in the MP4 — no extra flags
+([details](USER_GUIDE.md#captions-transcript-and-chapters)).
 - `--narration-seconds 30` — aim for ~30s of speech per slide.
 - `--llm-provider gemini` (or `openai`/`claude`/`groq`) — write presenter-style
   narration instead of reading the bullets. Needs that provider's API key.

@@ -95,6 +95,15 @@ DEFAULT_CONFIG = {
             # (one GPU render for the whole deck; lip-sync becomes approximate).
             "reuse_clip": False
         },
+        # Accessible outputs (ADR-0018), timed from the narration segments:
+        # captions beside the video, optionally burned into it, a Markdown
+        # transcript, and chapter markers in the MP4 + a chapters.txt.
+        "accessibility": {
+            "captions": "both",   # both | srt | vtt | none
+            "burn": False,        # draw the captions into the picture
+            "transcript": True,   # <output>.transcript.md
+            "chapters": True,     # MP4 chapters + <output>.chapters.txt
+        },
         "temp_dir": "temp_files",
         "cleanup": True,
         # Strict mode: fail the run when a configured provider is unusable or
@@ -625,6 +634,16 @@ settings:
   # (ADR-0012): auto = Kokoro if installed (offline), else gTTS. Force one
   # with kokoro | gtts.
   voice_floor: auto
+
+  # Accessible outputs with every video (ADR-0018), timed from the narration
+  # segments: caption files beside the video, captions drawn into the
+  # picture, a Markdown transcript, and chapter markers in the MP4 plus a
+  # chapters.txt list.
+  accessibility:
+    captions: both    # both | srt | vtt | none
+    burn: false
+    transcript: true
+    chapters: true
 """
 
 

@@ -86,6 +86,14 @@ controls the output:
 | `avatar.slides` | `all` | Which slides show the presenter (`--avatar-slides`) |
 | `avatar.reuse_clip` | `false` | Render one presenter clip and loop it (`--reuse-avatar`) |
 | `voice_floor` | `auto` | Local fallback voice: `auto`, `kokoro` or `gtts` |
+| `accessibility.captions` | `both` | Caption files beside the video: `both`, `srt`, `vtt` or `none` |
+| `accessibility.burn` | `false` | Draw the captions into the picture |
+| `accessibility.transcript` | `true` | Write `<output>.transcript.md` |
+| `accessibility.chapters` | `true` | MP4 chapter markers + `<output>.chapters.txt` |
+| `accessibility.captions` | `both` | Caption files beside the video: `both`, `srt`, `vtt` or `none` |
+| `accessibility.burn` | `false` | Draw the captions into the picture |
+| `accessibility.transcript` | `true` | Write `<output>.transcript.md` |
+| `accessibility.chapters` | `true` | MP4 chapter markers + `<output>.chapters.txt` |
 | `strict` | `false` | Fail instead of falling back when a chosen provider fails (`--strict`) |
 | `temp_dir`, `cleanup` | `temp_files`, `true` | Working folder, and whether to delete it afterwards |
 
@@ -191,6 +199,53 @@ Renders a deck. The output's extension picks the mode:
 | `--slides-pdf FILE` | Use a PDF's pages as the video frames |
 | `--template NAME` | Designed slides from Presenton (experimental) |
 | `--presenton-url`, `--presenton-api-key`, `--save-deck` | Presenton connection and where to save its deck |
+| `--alt-text` | Describe pictures with a vision LLM (`.pptx` output) |
+
+## Captions, transcript and chapters
+
+By default every video (`.mp4`) comes with accessibility files beside it
+([ADR-0018](adr/0018-segmented-narration-timing.md)):
+
+- `talk.srt` and `talk.vtt`: captions, one cue per spoken sentence.
+- `talk.transcript.md`: the narration in readable form, slide by slide.
+- `talk.chapters.txt`: a YouTube-style chapter list; chapter markers are
+  also embedded in the MP4, so players show and skip sections.
+
+Timings are exact: the narration is synthesised sentence by sentence and the
+joined sentences are the audio you hear, so captions can never drift from
+the voice. Turn any of it off, or burn the captions into the picture, under
+`settings.accessibility` (see the settings table above). A `--script` file
+or `--verbatim-notes` is captioned the same way.
+
+## Alt text
+
+`create deck.md deck.pptx --alt-text` and `enrich deck.md out/ --alt-text`
+describe each picture with a vision LLM (claude, openai, gemini) and write
+the description as the picture's alt text in the PowerPoint, and as the
+image text in the enriched Markdown. Needs an LLM provider with vision.
+
+## Captions, transcript and chapters
+
+By default every video (`.mp4`) comes with accessibility files beside it
+([ADR-0018](adr/0018-segmented-narration-timing.md)):
+
+- `talk.srt` and `talk.vtt`: captions, one cue per spoken sentence.
+- `talk.transcript.md`: the narration in readable form, slide by slide.
+- `talk.chapters.txt`: a YouTube-style chapter list; chapter markers are
+  also embedded in the MP4, so players show and skip sections.
+
+Timings are exact: the narration is synthesised sentence by sentence and the
+joined sentences are the audio you hear, so captions can never drift from
+the voice. Turn any of it off, or burn the captions into the picture, under
+`settings.accessibility` (see the settings table above). A `--script` file
+or `--verbatim-notes` is captioned the same way.
+
+## Alt text
+
+`create deck.md deck.pptx --alt-text` and `enrich deck.md out/ --alt-text`
+describe each picture with a vision LLM (claude, openai, gemini) and write
+the description as the picture's alt text in the PowerPoint, and as the
+image text in the enriched Markdown. Needs an LLM provider with vision.
 
 ### `doctor IN`
 

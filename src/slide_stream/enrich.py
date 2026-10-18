@@ -64,6 +64,7 @@ def enrich_deck(
     also_zip: bool = False,
     notes_mode: str | None = None,
     llm: dict[str, Any] | None = None,
+    alt_text: bool = False,
 ) -> Path:
     """Write an enriched Markdown deck (and optional PPTX) into output_dir.
 
@@ -77,9 +78,13 @@ def enrich_deck(
       - ``fill``: keep a slide's existing speaker notes; AI-write notes only
         for slides that have none.
       - ``all``: AI-write notes for every slide, replacing any existing ones.
+
+    ``alt_text`` describes each picture with a vision model (requires an
+    ``llm`` context) and writes it as the picture's alt text in the
+    PowerPoint and as the Markdown image text (ADR-0018).
     """
-    if notes_mode and llm is None:
-        raise ValueError("notes_mode requires an 'llm' context")
+    if (notes_mode or alt_text) and llm is None:
+        raise ValueError("notes_mode and alt_text require an 'llm' context")
 
     images_dir = output_dir / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
@@ -125,6 +130,14 @@ def enrich_deck(
             matched = (
                 getattr(image_provider, "matched_last", True) and not fell_back
             )
+            alt = ""
+            if alt_text and matched:
+                from .llm import describe_image_alt
+
+                alt = (describe_image_alt(
+                    (llm or {}).get("client"), str((llm or {}).get("provider")),
+                    str(img_path), (llm or {}).get("model"),
+                ) or "").strip()
             if fell_back:
                 img_path.unlink(missing_ok=True)
                 console.print("  - Image generation failed — slide left text-only")
@@ -144,6 +157,7 @@ def enrich_deck(
                     "content": [str(c).strip() for c in slide.get("content", []) if str(c).strip()],
                     "markdown": slide.get("markdown"),
                     "image": img_path.name,
+                    "alt": alt,
                     "matched": matched,
                     "notes": notes,
                 }
@@ -175,7 +189,8 @@ def _build_markdown(slides: list[dict[str, Any]]) -> str:
         lines = [f"# {slide['title']}" if slide["title"] else f"# Slide {slide['index']}"]
         lines.append("")
         if slide.get("matched", True):
-            lines.append(f"![{slide['title']}](images/{slide['image']})")
+            alt = str(slide.get("alt") or "").strip() or slide["title"]
+            lines.append(f"![{alt}](images/{slide['image']})")
         body = slide.get("markdown")
         if isinstance(body, str) and body.strip():
             # A Markdown deck's own body: keeps code blocks, tables and
@@ -244,7 +259,10 @@ def _write_pptx(slides: list[dict[str, Any]], images_dir: Path, out_path: Path) 
         # keeps the source aspect ratio.
         img = images_dir / slide["image"]
         if img.is_file():
-            s.shapes.add_picture(str(img), Inches(5.4), Inches(1.9), width=Inches(4.1))
+            pic = s.shapes.add_picture(str(img), Inches(5.4), Inches(1.9), width=Inches(4.1))
+            alt = str(slide.get("alt") or "").strip()
+            if alt:
+                pic._element.nvPicPr.cNvPr.set("descr", alt)  # type: ignore[attr-defined]
 
         # Presenter notes (added by --notes). create reads these back as the
         # narration source, so an enriched .pptx round-trips into a video.

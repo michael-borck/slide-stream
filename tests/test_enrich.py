@@ -2,6 +2,7 @@
 
 import copy
 from pathlib import Path
+from typing import Any
 
 from PIL import Image
 from typer.testing import CliRunner
@@ -439,3 +440,42 @@ def test_enrich_skips_text_card_on_image_failure(tmp_path):
                        if str(sh.shape_type).startswith("PICTURE")]
     assert slide1_pictures == []  # no text-card PNG in the editable deck
     assert len(slide2_pictures) == 1
+
+
+# --- Alt text (ADR-0018) ------------------------------------------------------
+
+
+def test_enrich_alt_text_writes_markdown_and_pptx_descriptions(tmp_path, mocker):
+    make_image(tmp_path / "neurons.png")
+    provider = LocalImageProvider(config_with_folder(tmp_path))
+    slides = [{"title": "Neurons", "content": ["Axons"]}]
+    mocker.patch(
+        "slide_stream.llm.describe_image_alt", return_value="A neuron diagram."
+    )
+    llm = {"client": object(), "provider": "claude", "model": None}
+    out = enrich_deck(slides, provider, tmp_path / "out", "deck",
+                      also_pptx=True, llm=llm, alt_text=True)
+    md = (out / "deck.md").read_text()
+    assert "![A neuron diagram.](images/slide_1.png)" in md
+    from pptx import Presentation
+
+    prs = Presentation(str(out / "deck.pptx"))
+    descs = []
+    for s in prs.slides:
+        for sh in s.shapes:
+            if getattr(sh, "shape_type", None) != 13:
+                continue
+            el: Any = sh._element
+            descr = el.nvPicPr.cNvPr.get("descr")
+            if descr:
+                descs.append(str(descr))
+    assert descs == ["A neuron diagram."]
+
+
+def test_enrich_alt_text_requires_llm():
+    import pytest as _pytest
+
+    from slide_stream.enrich import enrich_deck as _e
+    with _pytest.raises(ValueError, match="alt_text"):
+        _e([], LocalImageProvider(config_with_folder(Path("."))), Path("."), "d",
+           alt_text=True)

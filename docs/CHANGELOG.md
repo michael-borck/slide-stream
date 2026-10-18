@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.17.0 — unreleased
+
+Accessible outputs (roadmap Phase 12; ADR-0018):
+
+- Every video now gets **captions** (`.srt` and `.vtt`), a Markdown
+  **transcript** and **chapter markers** in the MP4 plus a
+  `chapters.txt` list, by default. `settings.accessibility` turns any of
+  them off or burns the captions into the picture.
+- Narration is synthesised per sentence so the timings are exact; the
+  joined sentences are the audio you hear. (Turning captions, transcript
+  and chapters all off restores one synthesis call per slide.)
+- `create deck.md deck.pptx --alt-text` and `enrich --alt-text` describe
+  pictures with a vision LLM and write the text as the picture's alt text.
+- `doctor` reports text contrast, text size and whether captions are on.
+
+
 Notable changes, newest first. Full notes for each release are on
 [GitHub Releases](https://github.com/michael-borck/slide-stream/releases).
 Versions follow [semantic versioning](https://semver.org). The desktop app

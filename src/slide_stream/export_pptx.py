@@ -44,6 +44,7 @@ def export_pptx(
     for entry in slides:
         slide = prs.slides.add_slide(blank_layout)
         title = str(entry.get("title") or "").strip() or "Slide"
+        alt = str(entry.get("alt") or "").strip()
         bullets = [
             str(c).strip() for c in (entry.get("content") or []) if str(c).strip()
         ]
@@ -53,7 +54,7 @@ def export_pptx(
         image_path = entry.get("image_path")
         has_image = bool(image_path) and Path(str(image_path)).is_file()
         if has_image:
-            _add_picture_fit(slide, str(image_path))
+            _add_picture_fit(slide, str(image_path), alt=alt or None)
         _add_bullets(slide, bullets, full_width=not has_image)
 
         if notes:
@@ -106,7 +107,7 @@ def _add_bullets(slide: Any, bullets: list[str], full_width: bool) -> None:
         run.font.color.rgb = _INK
 
 
-def _add_picture_fit(slide: Any, image_path: str) -> None:
+def _add_picture_fit(slide: Any, image_path: str, alt: str | None = None) -> None:
     """Place the artwork in the right half, scaled to fit and centred."""
     box_left = SLIDE_WIDTH_EMU // 2
     box_top = _MARGIN + _TITLE_BAND
@@ -119,4 +120,9 @@ def _add_picture_fit(slide: Any, image_path: str) -> None:
     draw_w, draw_h = int(image_w * scale), int(image_h * scale)
     left = box_left + (box_width - draw_w) // 2
     top = box_top + (box_height - draw_h) // 2
-    slide.shapes.add_picture(image_path, Emu(left), Emu(top), Emu(draw_w), Emu(draw_h))
+    picture = slide.shapes.add_picture(
+        image_path, Emu(left), Emu(top), Emu(draw_w), Emu(draw_h)
+    )
+    if alt:
+        # Screen readers read this as the picture's description.
+        picture._element.nvPicPr.cNvPr.set("descr", alt)  # type: ignore[attr-defined]

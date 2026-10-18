@@ -216,15 +216,48 @@ def _build_head_overlay(
         raise
 
 
+def _caption_clip(text: str, width: int, height: int):
+    """A translucent caption band for one cue, as an ImageClip positioned at
+    the bottom of the frame (burned captions; ADR-0018)."""
+    from .providers.images import load_font
+
+    band_h = int(height * 0.12)
+    img = Image.new("RGBA", (width, band_h), (0, 0, 0, 170))
+    draw = ImageDraw.Draw(img)
+    size = int(height * 0.038)
+    font = load_font(size)
+    # Two lines at most: wrap by measured width.
+    words, lines, current = text.split(), [], ""
+    for word in words:
+        trial = f"{current} {word}".strip()
+        if current and draw.textlength(trial, font=font) > width * 0.9:
+            lines.append(current)
+            current = word
+        else:
+            current = trial
+    lines.append(current)
+    lines = lines[-2:]  # never push text out of the band
+    y = (band_h - len(lines) * int(size * 1.3)) // 2
+    for line in lines:
+        w = draw.textlength(line, font=font)
+        draw.text(((width - w) / 2, y), line, font=font, fill=(255, 255, 255, 255))
+        y += int(size * 1.3)
+    from moviepy import ImageClip
+
+    return ImageClip(np.array(img)).with_position(("center", "bottom"))
+
+
 def create_video_fragment(
     image_path: str,
     audio_path: str | None,
     output_path: str,
     config: dict,
     head_video: str | None = None,
+    captions: list[tuple[float, float, str]] | None = None,
 ) -> str | None:
     """Create video fragment from image and audio, optionally with a
-    talking-head overlay."""
+    talking-head overlay and burned captions (``captions`` is
+    ``[(start, end, text), ...]`` relative to the slide's audio)."""
     try:
         # Get settings from config
         video_settings = config["settings"]["video"]
@@ -277,6 +310,12 @@ def create_video_fragment(
             layers = [background, image_clip.with_position("center")]  # type: ignore[attr-defined]
             if head_clip is not None:
                 layers.append(head_clip)
+            if captions:
+                for start, end, text in captions:
+                    band = _caption_clip(text, width, height).with_start(
+                        max(0.0, start)
+                    ).with_duration(max(0.1, end - start))
+                    layers.append(band)
             image_clip = CompositeVideoClip(
                 layers,
                 size=(width, height),

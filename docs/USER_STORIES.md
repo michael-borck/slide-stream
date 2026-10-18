@@ -88,15 +88,15 @@ in the [roadmap](ROADMAP.md). For step-by-step recipes see
 ### Accessibility
 
 - As a **viewer** who is deaf or hard of hearing, I want captions on every
-  video. **Phase 12**.
+  video. **Done** (2.17).
 - As a **viewer**, I want a transcript I can read, search and translate.
-  **Phase 12**.
+  **Done** (2.17).
 - As a **viewer**, I want chapters so I can jump to the part I need.
-  **Phase 12**.
+  **Done** (2.17).
 - As a **viewer** using a screen reader, I want pictures in the deck to
-  have alt text. **Phase 12**.
+  have alt text. **Done** (2.17, `--alt-text`).
 - As a **lecturer**, I want to be warned about low contrast and small text
-  before I publish. **Phase 12**.
+  before I publish. **Done** (2.17, `doctor`).
 
 ### Outputs and sharing
 

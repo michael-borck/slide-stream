@@ -462,3 +462,145 @@ def test_cli_draft_llm_provider_flag_does_not_reuse_config_model(tmp_path, monke
     assert result.exit_code == 0, result.output
     args, kwargs = query.call_args
     assert "granite4.2:3b" not in [*args, *kwargs.values()]
+
+
+# --- Accessible outputs (ADR-0018) -------------------------------------------
+
+
+def _speaking_tts(mocker):
+    """A TTS provider that writes a real 1s WAV per synthesize call."""
+    import wave
+
+    def speak(text, filename):
+        with wave.open(str(filename), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(16000)
+            w.writeframes(b"\x00\x00" * 16000)
+        return filename
+
+    tts = mocker.MagicMock()
+    tts.name = "fake"
+    tts.synthesize.side_effect = speak
+    return tts
+
+
+DECK = tmp_deck = (
+    "# Intro\n\n- welcome to the show\n\n# Details\n\n- here is the detail\n"
+)
+
+
+def test_create_writes_captions_transcript_and_chapters(tmp_path, mocker, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "deck.md").write_text(DECK)
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(FAST_VIDEO_CONFIG)
+    mocker.patch("slide_stream.cli.ProviderFactory.create_tts_provider",
+                 return_value=_speaking_tts(mocker))
+
+    output = tmp_path / "talk.mp4"
+    result = CliRunner().invoke(app, [
+        "create", "deck.md", str(output), "--config", str(config_file),
+    ])
+    assert result.exit_code == 0, result.output
+    srt = (tmp_path / "talk.srt").read_text()
+    assert "-->" in srt and "welcome to the show" in srt
+    assert (tmp_path / "talk.vtt").exists()
+    transcript = (tmp_path / "talk.transcript.md").read_text()
+    assert "## 1. Intro" in transcript and "## 2. Details" in transcript
+    chapters = (tmp_path / "talk.chapters.txt").read_text().splitlines()
+    assert chapters[0].endswith("Intro") and len(chapters) == 2
+
+
+def test_create_captions_off_reverts_to_single_call(tmp_path, mocker, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "deck.md").write_text(DECK)
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        FAST_VIDEO_CONFIG
+        + "settings:\n  accessibility:\n    captions: none\n"
+        "    transcript: false\n    chapters: false\n"
+    )
+    tts = _speaking_tts(mocker)
+    mocker.patch("slide_stream.cli.ProviderFactory.create_tts_provider",
+                 return_value=tts)
+    result = CliRunner().invoke(app, [
+        "create", "deck.md", "talk.mp4", "--config", str(config_file),
+    ])
+    assert result.exit_code == 0, result.output
+    assert tts.synthesize.call_count == 2  # one per slide, no segments
+    assert not (tmp_path / "talk.srt").exists()
+    assert not (tmp_path / "talk.transcript.md").exists()
+
+
+def test_create_alt_text_writes_descriptions(tmp_path, mocker, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "deck.md").write_text(DECK)
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "providers:\n  llm:\n    provider: claude\n  images:\n    provider: text\n"
+        + FAST_VIDEO_CONFIG
+    )
+    mocker.patch("slide_stream.cli.get_llm_client", return_value=object())
+    describe = mocker.patch(
+        "slide_stream.llm.describe_image_alt", return_value="A teal rectangle."
+    )
+    result = CliRunner().invoke(app, [
+        "create", "deck.md", "deck.pptx", "--config", str(config_file),
+        "--alt-text",
+    ])
+    assert result.exit_code == 0, result.output
+    assert describe.call_count == 2
+
+    from pptx import Presentation
+
+    prs = Presentation(str(tmp_path / "deck.pptx"))
+    alts = []
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            descr = getattr(
+                getattr(getattr(shape, "_element", None), "nvPicPr", None),
+                "cNvPr", None,
+            )
+            if descr is not None and descr.get("descr"):
+                alts.append(descr.get("descr"))
+    assert alts == ["A teal rectangle.", "A teal rectangle."]
+
+
+def test_create_alt_text_needs_a_llm(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "deck.md").write_text(DECK)
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(FAST_VIDEO_CONFIG)
+    result = CliRunner().invoke(app, [
+        "create", "deck.md", "deck.pptx", "--config", str(config_file),
+        "--alt-text",
+    ])
+    assert result.exit_code == 1
+    assert "needs an LLM provider with vision" in result.output
+
+
+def test_create_burned_captions_render(tmp_path, mocker, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "deck.md").write_text(DECK)
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        FAST_VIDEO_CONFIG
+        + "settings:\n  accessibility:\n    burn: true\n"
+    )
+    mocker.patch("slide_stream.cli.ProviderFactory.create_tts_provider",
+                 return_value=_speaking_tts(mocker))
+    output = tmp_path / "talk.mp4"
+    result = CliRunner().invoke(app, [
+        "create", "deck.md", str(output), "--config", str(config_file),
+    ])
+    assert result.exit_code == 0, result.output
+    from moviepy import VideoFileClip
+
+    with VideoFileClip(str(output)) as clip:
+        assert clip.duration > 1.0
+        frame = clip.get_frame(0.2)
+        assert frame is not None
+        # The caption band darkens the bottom of the frame.
+        band = frame[int(clip.h * 0.94):, :].mean()
+        assert band < 255

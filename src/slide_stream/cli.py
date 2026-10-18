@@ -16,6 +16,18 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
 from . import __version__
+from .captions import (
+    Cue,
+    caption_cues,
+    embed_chapters,
+    slide_starts,
+    synthesize_segments,
+    write_chapter_list,
+    write_ffmetadata,
+    write_srt,
+    write_transcript,
+    write_vtt,
+)
 from .config_loader import (
     ConfigurationError,
     load_config,
@@ -495,6 +507,15 @@ def create(
             ),
         ),
     ] = None,
+    alt_text: Annotated[
+        bool,
+        typer.Option(
+            "--alt-text",
+            help="For .pptx output: describe each picture with a vision LLM and "
+            "write it as the picture's alt text. Needs a vision LLM provider "
+            "(claude, openai, gemini).",
+        ),
+    ] = False,
     save_deck: Annotated[
         str | None,
         typer.Option(
@@ -649,6 +670,31 @@ def create(
                 _doctor_nudge(input_path.name)
                 raise typer.Exit(code=1)
 
+        # Alt text describes pictures with a vision model; it needs an LLM,
+        # even when the narration itself comes from a script or notes.
+        want_alt_text = bool(alt_text)
+        if want_alt_text and not pptx_mode:
+            err_console.print(
+                "--alt-text applies to .pptx output only; ignoring it."
+            )
+            want_alt_text = False
+        if want_alt_text and llm_client is None:
+            if llm_provider_name == "none":
+                err_console.print(
+                    "--alt-text needs an LLM provider with vision "
+                    "(claude, openai, gemini) in providers.llm."
+                )
+                raise typer.Exit(code=1)
+            try:
+                llm_client = get_llm_client(
+                    llm_provider_name,
+                    base_url=llm_base_url,
+                    api_key=config["providers"]["llm"].get("api_key"),
+                )
+            except (ImportError, ValueError) as e:
+                err_console.print(f"Error initializing LLM: {e}")
+                raise typer.Exit(code=1)
+
         # Parse the input file
         if file_extension == ".md":
             console.print("\n[bold]1. Parsing Markdown...[/bold]")
@@ -800,8 +846,25 @@ def create(
                     Path(str(output_filename)).with_suffix(".fidelity.json"),
                 )
 
+        # Accessibility outputs (ADR-0018): segment-level narration timing
+        # feeds captions, the transcript and chapters. Everything off means
+        # one synthesis call per slide, as before.
+        a11y = dict(config["settings"].get("accessibility", {}) or {})
+        a11y.setdefault("captions", "both")
+        a11y.setdefault("burn", False)
+        a11y.setdefault("transcript", True)
+        a11y.setdefault("chapters", True)
+        segments_enabled = any(
+            a11y[key] for key in ("captions", "transcript", "chapters")
+            if a11y[key] != "none"
+        ) and not pptx_mode
+        if a11y.get("captions") == "none" and a11y.get("burn"):
+            a11y["burn"] = False  # nothing to burn
+        burn_captions = bool(a11y.get("burn")) and segments_enabled
+
         # Process each slide with Rich progress bar
         video_fragments = []
+        all_slide_cues: list[list[Cue]] = []
         pptx_slides: list[dict[str, Any]] = []
         # Final narration per slide, in order: written into the Presenton
         # deck's speaker notes after the loop (one narration path, ADR-0008).
@@ -985,18 +1048,24 @@ def create(
                     # Deck export stops here: the artwork exists and the
                     # narration text is final — audio and compositing below
                     # are video-only steps.
-                    pptx_slides.append(
-                        {
-                            "title": effective_title or str(slide["title"]),
-                            "content": [
-                                str(c).strip()
-                                for c in slide.get("content", [])
-                                if str(c).strip()
-                            ],
-                            "image_path": str(img_path),
-                            "notes": speech_text,
-                        }
-                    )
+                    entry: dict[str, Any] = {
+                        "title": effective_title or str(slide["title"]),
+                        "content": [
+                            str(c).strip()
+                            for c in slide.get("content", [])
+                            if str(c).strip()
+                        ],
+                        "image_path": str(img_path),
+                        "notes": speech_text,
+                    }
+                    if want_alt_text:
+                        from .llm import describe_image_alt
+
+                        alt = describe_image_alt(
+                            llm_client, llm_provider_name, str(img_path), llm_model
+                        )
+                        entry["alt"] = (alt or "").strip()
+                    pptx_slides.append(entry)
                     progress.update(process_task, advance=1)
                     continue
 
@@ -1012,9 +1081,17 @@ def create(
                     audio_file = None
                 else:
                     assert tts_provider is not None  # video-only branch
-                    audio_file = tts_provider.synthesize(
-                        speech_text, str(audio_path)
-                    )
+                    slide_cues: list[Cue] = []
+                    if segments_enabled:
+                        audio_file, slide_cues = synthesize_segments(
+                            tts_provider,  # type: ignore[arg-type]
+                            speech_text, temp_dir, f"slide_{slide_num}",
+                        )
+                    else:
+                        audio_file = tts_provider.synthesize(
+                            speech_text, str(audio_path)
+                        )
+
                     if audio_file is None:
                         if strict_mode:
                             err_console.print(
@@ -1024,6 +1101,12 @@ def create(
                             _doctor_nudge(input_path.name)
                             raise typer.Exit(code=1)
                         audio_failed += 1
+
+                if segments_enabled:
+                    # One cue list per slide (possibly empty), aligned by index.
+                    all_slide_cues.append(
+                        caption_cues(slide_cues) if slide_cues else []
+                    )
 
                 # Talking-head overlay, on the selected slides only (narration
                 # still plays everywhere). With reuse_clip, render once and
@@ -1087,12 +1170,19 @@ def create(
                             "using the artwork alone."
                         )
 
+                burn: list[tuple[float, float, str]] | None = None
+                if burn_captions and all_slide_cues and all_slide_cues[-1]:
+                    burn = [
+                        (cue.start, cue.end, cue.text)
+                        for cue in all_slide_cues[-1]
+                    ]
                 fragment_file = create_video_fragment(
                     str(img_path),
                     str(audio_path) if audio_file else None,
                     str(fragment_path),
                     config,
                     head_video=head_path,
+                    captions=burn,
                 )
 
                 if fragment_file:
@@ -1202,6 +1292,34 @@ def create(
                     audio_codec=video_settings["audio_codec"],
                     logger=None,
                 )
+
+                # Accessibility sidecars (ADR-0018), timed from the segments
+                # that were spoken. Slide starts apply the same crossfade
+                # overlap the assembler used.
+                starts = slide_starts(
+                    [c.duration for c in clips],
+                    float(video_settings.get("transition_seconds", 0) or 0),
+                )
+                base = Path(str(output_filename)).with_suffix("")
+                flat = [
+                    Cue(cue.text, cue.start + starts[i], cue.end + starts[i])
+                    for i, cues in enumerate(all_slide_cues) for cue in cues
+                ]
+                mode = a11y.get("captions", "both")
+                if flat and mode in ("both", "srt"):
+                    write_srt(flat, base.with_suffix(".srt"))
+                if flat and mode in ("both", "vtt"):
+                    write_vtt(flat, base.with_suffix(".vtt"))
+                if a11y.get("transcript") and any(cues for cues in all_slide_cues):
+                    write_transcript(slides, all_slide_cues, base.with_suffix(".transcript.md"))
+                if a11y.get("chapters"):
+                    write_chapter_list(slides, starts, base.with_suffix(".chapters.txt"))
+                    meta = temp_dir / "chapters.ffmeta"
+                    write_ffmetadata(slides, starts, float(final_clip.duration), meta)
+                    try:
+                        embed_chapters(Path(str(output_filename)), meta)
+                    except Exception as e:
+                        err_console.print(f"  - Note: chapter embedding skipped ({e}).")
 
                 console.print(
                     Panel(
@@ -1376,6 +1494,15 @@ def enrich(
             "with none; 'all' AI-writes notes for every slide. Needs an LLM.",
         ),
     ] = None,
+    alt_text_opt: Annotated[
+        bool,
+        typer.Option(
+            "--alt-text",
+            help="Describe each picture with a vision LLM and write it as the "
+            "picture's alt text (in the .pptx and the Markdown). Needs an LLM "
+            "provider with vision (claude, openai, gemini).",
+        ),
+    ] = False,
     zip_output: Annotated[
         bool, typer.Option("--zip", help="Also write a .zip of the output folder.")
     ] = False,
@@ -1404,17 +1531,20 @@ def enrich(
     # the LLM context the note writer needs.
     notes_mode = notes.lower() if notes else None
     llm_ctx: dict[str, Any] | None = None
-    if notes_mode:
-        if notes_mode not in ("fill", "all"):
-            err_console.print("--notes must be 'fill' or 'all'.")
-            raise typer.Exit(code=1)
-        pptx = True  # notes live in the PowerPoint
+    if notes_mode and notes_mode not in ("fill", "all"):
+        err_console.print("--notes must be 'fill' or 'all'.")
+        raise typer.Exit(code=1)
+    if alt_text_opt:
+        pptx = True  # alt text lives in the PowerPoint
+    llm_ctx = None
+    if notes_mode or alt_text_opt:
         llm_cfg = config["providers"].get("llm", {})
         llm_provider = llm_cfg.get("provider", "none")
         if llm_provider == "none":
             err_console.print(
-                "--notes needs an LLM provider. Set providers.llm.provider "
-                "(gemini/openai/claude/groq/...) in your config."
+                "--notes/--alt-text need an LLM provider. Set "
+                "providers.llm.provider (gemini/openai/claude/groq/...) in "
+                "your config."
             )
             raise typer.Exit(code=1)
         narration_cfg = config["settings"].get("narration", {})
@@ -1435,6 +1565,13 @@ def enrich(
             "target_seconds": narration_cfg.get("target_seconds"),
             "wpm": narration_cfg.get("wpm", 150),
         }
+        if alt_text_opt and llm_provider not in (
+            "claude", "openai", "gemini", "openai-compatible",
+        ):
+            err_console.print(
+                f"Note: LLM provider '{llm_provider}' may not support vision; "
+                "alt text may be left empty."
+            )
 
     slides = _parse_deck(input_path)
     if not slides:
@@ -1459,6 +1596,7 @@ def enrich(
         also_zip=zip_output,
         notes_mode=notes_mode,
         llm=llm_ctx,
+        alt_text=alt_text_opt,
     )
     console.print(
         Panel(

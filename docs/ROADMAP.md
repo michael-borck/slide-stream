@@ -40,7 +40,7 @@ order of work. Planned order:
 | # | Phase | Why now | Release |
 |---|---|---|---|
 | 1 | 11: housekeeping (done) | The PyPI page, docs and landing page describe 2.0, not 2.16 | 2.16.1, released |
-| 2 | 12: captions, transcript, chapters, alt text | Cheap (narration text and timings exist), often required by institutions | 2.17 |
+| 2 | 12: captions, transcript, chapters, alt text (done) | Cheap (narration text and timings exist), often required by institutions | 2.17 |
 | 3 | 2c: the user's PowerPoint template | Deterministic design with no service | 2.18 |
 | 4 | 14: lecture-quality narration | Bullets appear as spoken, pronunciation, video clips | 2.19 |
 | 5 | 13: more outputs | Handout PDF, vertical video, web presentation | 2.20 |
@@ -386,18 +386,18 @@ lines.
 Every video comes with what accessibility rules ask for. Narration text and
 per-slide timings already exist, so most of this is cheap.
 
-- [ ] Write ADR-0018: narration timing. Synthesise narration per segment
+- [x] Write ADR-0018: narration timing. Synthesise narration per segment
       (sentence or bullet), so every segment has an exact start and end;
       captions, chapters (here) and bullet reveal (Phase 14) all use it.
-- [ ] Captions: `.srt` and `.vtt` beside every video, one cue per sentence
+- [x] Captions: `.srt` and `.vtt` beside every video, one cue per sentence
       or line-length chunk; `--burn-captions` draws them into the picture.
-- [ ] Transcript: a readable `.md` (and `.txt`) of the narration, slide by
+- [x] Transcript: a readable `.md` (and `.txt`) of the narration, slide by
       slide, with slide titles as headings.
-- [ ] Chapters: per-slide chapter markers in the MP4 and a YouTube-style
+- [x] Chapters: per-slide chapter markers in the MP4 and a YouTube-style
       chapter list.
-- [ ] Alt text: describe each picture in the `.pptx` with a vision model
+- [x] Alt text: describe each picture in the `.pptx` with a vision model
       (already used for picture-only slides); `--alt-text` to opt in.
-- [ ] Accessibility checks in `doctor`: text contrast on frames, smallest
+- [x] Accessibility checks in `doctor`: text contrast on frames, smallest
       font size against the frame height, missing alt text, captions off.
       Reading level later through `document-analyser` (Phase 10).
 

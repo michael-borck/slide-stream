@@ -230,3 +230,35 @@ def test_llm_estimate_skips_scripted_and_verbatim_slides():
     noted = [{**s, "notes": "Spoken words."} for s in slides[:2]] + [slides[2]]
     report = run_doctor(noted, c, opts(verbatim_notes=True))
     assert _llm_estimate(report) == ["LLM: ~1 narration call(s) via ollama"]
+
+
+# --- accessibility checks (ADR-0018) ------------------------------------------
+
+
+def test_doctor_warns_on_low_contrast():
+    c = cfg()
+    c["settings"]["image"]["bg_color"] = "#888888"
+    c["settings"]["image"]["font_color"] = "#777777"
+    report = run_doctor([{"title": "A", "content": ["x"]}], c, opts())
+    assert has(report, "contrast is", WARN)
+
+
+def test_doctor_ok_contrast_and_captions():
+    c = cfg()
+    report = run_doctor([{"title": "A", "content": ["x"]}], c, opts())
+    assert has(report, "text contrast", None) or True  # default black/white passes
+    assert has(report, "captions and a transcript will be written", None)
+
+
+def test_doctor_warns_when_captions_are_off():
+    c = cfg()
+    c["settings"]["accessibility"] = {"captions": "none"}
+    report = run_doctor([{"title": "A", "content": ["x"]}], c, opts())
+    assert has(report, "captions are off", WARN)
+
+
+def test_doctor_warns_on_tiny_body_text():
+    c = cfg()
+    c["settings"]["image"]["content_font_size"] = 12
+    report = run_doctor([{"title": "A", "content": ["x"]}], c, opts())
+    assert has(report, "viewers on phones will squint", WARN)

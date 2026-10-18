@@ -233,3 +233,13 @@ settings:
   # (ADR-0012): auto = Kokoro if installed (offline), else gTTS. Force one
   # with kokoro | gtts.
   voice_floor: auto
+
+  # Accessible outputs with every video (ADR-0018), timed from the narration
+  # segments: caption files beside the video, captions drawn into the
+  # picture, a Markdown transcript, and chapter markers in the MP4 plus a
+  # chapters.txt list.
+  accessibility:
+    captions: both    # both | srt | vtt | none
+    burn: false
+    transcript: true
+    chapters: true

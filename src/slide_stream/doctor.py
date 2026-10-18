@@ -174,10 +174,77 @@ def run_doctor(
     _check_images(report, slides, providers, video)
     if video_output:
         _check_avatar(report, providers, options)
+    _check_accessibility(report, providers, settings, options)
     _check_providers_env(report, providers, settings, options)
     _estimates(report, slides, providers, per_slide, video, video_output,
                llm_calls=_llm_narration_calls(slides, options))
     return report
+
+
+def _contrast_ratio(a: tuple[int, int, int], b: tuple[int, int, int]) -> float:
+    """WCAG contrast ratio between two RGB colours (1 to 21)."""
+    def channel(c: int) -> float:
+        v = c / 255
+        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+
+    def luminance(rgb: tuple[int, int, int]) -> float:
+        r, g, b = (channel(c) for c in rgb)
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+    hi, lo = sorted((luminance(a), luminance(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def _parse_colour(raw: Any) -> tuple[int, int, int] | None:
+    from PIL import ImageColor
+
+    try:
+        rgb = ImageColor.getrgb(str(raw))
+        return (rgb[0], rgb[1], rgb[2])
+    except ValueError:
+        return None
+
+
+def _check_accessibility(
+    report: DoctorReport, providers: dict[str, Any], settings: dict[str, Any],
+    options: dict[str, Any],
+) -> None:
+    """Readable slides and captioned videos (ADR-0018)."""
+    image = settings.get("image", {})
+    bg = _parse_colour(image.get("bg_color", "black"))
+    fg = _parse_colour(image.get("font_color", "white"))
+    if bg and fg:
+        ratio = _contrast_ratio(bg, fg)
+        if ratio < 4.5:
+            report.add(
+                "Accessibility", WARN,
+                f"text contrast is {ratio:.1f}:1 (WCAG AA asks for 4.5:1) — "
+                "lighten the text or darken the background"
+            )
+        else:
+            report.add(
+                "Accessibility", OK, f"text contrast {ratio:.1f}:1"
+            )
+    video = settings.get("video", {})
+    height = (video.get("resolution") or [1080])[1]
+    body = image.get("content_font_size", 60)
+    if height and body / height < 0.035:
+        report.add(
+            "Accessibility", WARN,
+            f"body text is {body}px on a {height}px-high frame "
+            f"({body / height:.0%}) — viewers on phones will squint; "
+            "raise settings.image.content_font_size"
+        )
+    if options.get("mode", "create") == "create":
+        captions = settings.get("accessibility", {}).get("captions", "both")
+        if captions == "none":
+            report.add(
+                "Accessibility", WARN,
+                "captions are off — videos will have no subtitles "
+                "(settings.accessibility.captions)"
+            )
+        else:
+            report.add("Accessibility", OK, "captions and a transcript will be written")
 
 
 def _llm_narration_calls(slides: list[dict[str, Any]], options: dict[str, Any]) -> int:

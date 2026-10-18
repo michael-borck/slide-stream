@@ -311,3 +311,31 @@ def query_llm_with_image(
     except Exception as e:
         err_console.print(f"  - LLM vision error: {e}")
         return None
+
+
+def describe_image_alt(
+    client: Any, provider: str, image_path: str, model: str | None = None
+) -> str | None:
+    """A one-sentence alt-text description of a picture, for accessibility.
+
+    Returns None when the provider has no vision path or the call fails;
+    callers just leave the alt text empty. (ADR-0018.)
+    """
+    import mimetypes
+    from pathlib import Path
+
+    path = Path(image_path)
+    media_type, _ = mimetypes.guess_type(path.name)
+    try:
+        return query_llm_with_image(
+            client,
+            provider,
+            "Describe this picture in one short sentence for a screen reader."
+            " Plain text only: no preamble, no quotes, no markdown.",
+            path.read_bytes(),
+            media_type or "image/png",
+            Console(stderr=True),
+            model,
+        )
+    except Exception:
+        return None
