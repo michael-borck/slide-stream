@@ -136,6 +136,21 @@ from those notes. `--notes` needs an LLM provider configured.
 **Web UI:** switch **Output** to *PowerPoint deck* and pick a notes option; you
 get a `.zip` (deck + images) to download.
 
+### Your own template instead (no service)
+
+Slides in your university's or company's PowerPoint style, with no AI
+rewriting and no second server:
+
+```bash
+slide-stream template init my-template.pptx    # starter, restyle in PowerPoint
+slide-stream create lecture.md lecture.pptx --pptx-template my-template.pptx
+slide-stream create lecture.md lecture.mp4  --pptx-template my-template.pptx
+```
+
+Code stays code and tables stay editable tables; `template check` reports
+any layout it had to substitute
+([ADR-0014](adr/0014-powerpoint-template-design.md)).
+
 ### Designed slides instead (Presenton)
 
 The decks above are plain on purpose. For designed, templated slides,

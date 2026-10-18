@@ -200,22 +200,7 @@ Renders a deck. The output's extension picks the mode:
 | `--template NAME` | Designed slides from Presenton (experimental) |
 | `--presenton-url`, `--presenton-api-key`, `--save-deck` | Presenton connection and where to save its deck |
 | `--alt-text` | Describe pictures with a vision LLM (`.pptx` output) |
-
-## Captions, transcript and chapters
-
-By default every video (`.mp4`) comes with accessibility files beside it
-([ADR-0018](adr/0018-segmented-narration-timing.md)):
-
-- `talk.srt` and `talk.vtt`: captions, one cue per spoken sentence.
-- `talk.transcript.md`: the narration in readable form, slide by slide.
-- `talk.chapters.txt`: a YouTube-style chapter list; chapter markers are
-  also embedded in the MP4, so players show and skip sections.
-
-Timings are exact: the narration is synthesised sentence by sentence and the
-joined sentences are the audio you hear, so captions can never drift from
-the voice. Turn any of it off, or burn the captions into the picture, under
-`settings.accessibility` (see the settings table above). A `--script` file
-or `--verbatim-notes` is captioned the same way.
+| `--pptx-template FILE` | Build the slides in this template's style (see above) |
 
 ## Alt text
 
@@ -223,6 +208,31 @@ or `--verbatim-notes` is captioned the same way.
 describe each picture with a vision LLM (claude, openai, gemini) and write
 the description as the picture's alt text in the PowerPoint, and as the
 image text in the enriched Markdown. Needs an LLM provider with vision.
+
+## Your own PowerPoint template
+
+`create deck.md talk.mp4 --pptx-template uni.pptx` builds the new slides in
+your template's layouts: its masters, fonts, colours and logos style both
+the deck and the video ([ADR-0014](adr/0014-powerpoint-template-design.md)).
+`settings.pptx_template` sets it permanently.
+
+- Layouts are matched by the standard names (Title Slide, Title and
+  Content, Section Header, Two Content, Title Only, Blank), so a Quarto or
+  pandoc reference deck works as is; a similar layout stands in when a name
+  is missing, and the run says so.
+- Only styling in the slide master and layouts carries over: formatting
+  applied to the template's example slides does not, and those slides are
+  removed.
+- Code keeps its syntax colouring, tables become native PowerPoint tables,
+  long text is shrunk to fit (and reported when it can't).
+- The video needs LibreOffice; the `.pptx` output does not.
+
+Helpers:
+
+```bash
+slide-stream template init my-template.pptx   # starter with the standard names
+slide-stream template check my-template.pptx  # what a template offers
+```
 
 ## Captions, transcript and chapters
 

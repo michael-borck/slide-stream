@@ -41,7 +41,7 @@ order of work. Planned order:
 |---|---|---|---|
 | 1 | 11: housekeeping (done) | The PyPI page, docs and landing page describe 2.0, not 2.16 | 2.16.1, released |
 | 2 | 12: captions, transcript, chapters, alt text (done) | Cheap (narration text and timings exist), often required by institutions | 2.17 |
-| 3 | 2c: the user's PowerPoint template | Deterministic design with no service | 2.18 |
+| 3 | 2c: the user's PowerPoint template (done) | Deterministic design with no service | 2.18, released |
 | 4 | 14: lecture-quality narration | Bullets appear as spoken, pronunciation, video clips | 2.19 |
 | 5 | 13: more outputs | Handout PDF, vertical video, web presentation | 2.20 |
 | 6 | 15: richer content | Charts from tables, OCR and long documents | 2.21 |
@@ -150,34 +150,34 @@ Phases 3 to 5: python-pptx, the LibreOffice route and the code-slide
 helpers already exist.
 
 **Step 1: fill a template.**
-- [ ] `pptx_template.py`: open a `.pptx` or `.potx`, drop its example
+- [x] `pptx_template.py`: open a `.pptx` or `.potx`, drop its example
       slides, pick layouts by pandoc's names (Title Slide, Title and
       Content, Section Header, Two Content, Title Only, Blank), with
       fallbacks by placeholder type.
-- [ ] Fill placeholders: title, bullets, artwork, subtitle; narration in
+- [x] Fill placeholders: title, bullets, artwork, subtitle; narration in
       the speaker notes.
-- [ ] Code slides (ADR-0013 code box, keeping the layout's background) and
+- [x] Code slides (ADR-0013 code box, keeping the layout's background) and
       tables (native, editable PowerPoint tables).
-- [ ] Overflow: estimate lines, shrink body text to a floor, report slides
+- [x] Overflow: estimate lines, shrink body text to a floor, report slides
       that still overflow.
-- [ ] Tests with synthetic templates: standard names, renamed layouts,
+- [x] Tests with synthetic templates: standard names, renamed layouts,
       missing layouts, `.potx`, 4:3 size.
 
 **Step 2: wire it in.**
-- [ ] `create --pptx-template FILE` and `settings.pptx_template`, for
+- [x] `create --pptx-template FILE` and `settings.pptx_template`, for
       `.pptx` output (python-pptx only) and `.mp4` output (LibreOffice →
       PDF → frames, fitted to the video size with bars, never cropped).
-- [ ] `doctor` checks the template file and, for video, LibreOffice.
+- [x] `doctor` checks the template file and, for video, LibreOffice.
 
 **Step 3: the plain exporter catches up.**
-- [ ] `export_pptx.py` draws code slides and native tables the same way,
+- [x] `export_pptx.py` draws code slides and native tables the same way,
       instead of turning code into a bullet.
 
 **Step 4: Quarto-style helpers.**
-- [ ] `slide-stream template init FILE`: a starter template with the
+- [x] `slide-stream template init FILE`: a starter template with the
       standard layout names (from python-pptx's MIT template, not pandoc's
       file).
-- [ ] `slide-stream template check FILE`: layouts found, names missing and
+- [x] `slide-stream template check FILE`: layouts found, names missing and
       what stands in, missing placeholders, signs of hand styling.
 
 **Then:** render the trial lecture with a real university template and a

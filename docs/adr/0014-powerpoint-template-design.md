@@ -1,6 +1,6 @@
 # 0014 — Design new slides from the user's own PowerPoint template
 
-- Status: Accepted (2026-10); not yet implemented (roadmap Phase 2c)
+- Status: Accepted (2026-10); implemented in 2.18.0
 - Drivers: users and institutions already maintain a styled PowerPoint
   (corporate or university template, a Quarto/pandoc `reference.pptx`).
   SlideStream's own deck output is a fixed plain layout (ADR-0008), and

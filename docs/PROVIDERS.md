@@ -127,6 +127,7 @@ optional.
 | Option | What it does | Needs |
 |---|---|---|
 | (default) | SlideStream's own slides: plain layout, code and tables drawn properly | nothing |
+| `--pptx-template FILE` | New slides in your own PowerPoint template ([ADR-0014](adr/0014-powerpoint-template-design.md)); `template init` / `template check` help | python-pptx (core); LibreOffice for video |
 | `--preserve-style` | Narrates a styled `.pptx` and keeps its look in the video | LibreOffice, `slide-stream[presenton]` |
 | `--slides-pdf FILE` | Uses a PDF you exported as the video frames | `slide-stream[presenton]` |
 | `--template NAME` | Designed slides from [Presenton](https://github.com/presenton/presenton) (experimental); see [USE_CASES](USE_CASES.md#designed-slides-instead-presenton) | a Presenton server, `slide-stream[presenton]` |

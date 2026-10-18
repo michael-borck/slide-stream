@@ -60,7 +60,7 @@ in the [roadmap](ROADMAP.md). For step-by-step recipes see
 ### Look and design
 
 - As a **lecturer**, I want new slides in my university's PowerPoint
-  template, so videos match my other teaching material. **Phase 2c**.
+  template, so videos match my other teaching material. **Done** (2.18).
 - As a **lecturer**, I want my already-styled deck to keep its look in the
   video. **Done** (`--preserve-style`).
 - As an **explainer maker**, I want a professionally designed deck from my

@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.18.0 — unreleased
+
+Slides in your own PowerPoint template (roadmap Phase 2c; ADR-0014):
+
+- `create --pptx-template FILE` (or `settings.pptx_template`): new slides
+  are built in the template's layouts, so its fonts, colours, backgrounds
+  and logos style both the `.pptx` and the video. Works with a
+  Quarto/pandoc `reference.pptx`; when a standard layout name is missing, a
+  similar layout stands in and the run says so.
+- Code keeps its syntax colouring and tables become native, editable
+  PowerPoint tables, in templated decks and in the plain `.pptx` export.
+- `slide-stream template init FILE` writes a starter template;
+  `slide-stream template check FILE` reports what a template offers.
+- `doctor` checks the template (and LibreOffice, for video) during
+  `--dry-run`.
+
+
 ## 2.17.0 — 2026-10-17
 
 Accessible outputs (roadmap Phase 12; ADR-0018):
