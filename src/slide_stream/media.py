@@ -2,6 +2,7 @@
 
 import os
 import textwrap
+from typing import Any
 
 import numpy as np
 from moviepy import (
@@ -254,10 +255,18 @@ def create_video_fragment(
     config: dict,
     head_video: str | None = None,
     captions: list[tuple[float, float, str]] | None = None,
+    reveal_frames: list[tuple[str, float]] | None = None,
+    clip_video: str | None = None,
 ) -> str | None:
     """Create video fragment from image and audio, optionally with a
-    talking-head overlay and burned captions (``captions`` is
-    ``[(start, end, text), ...]`` relative to the slide's audio)."""
+    talking-head overlay, burned captions (``captions`` is
+    ``[(start, end, text), ...]`` relative to the slide's audio), progressive
+    bullet reveal (``reveal_frames`` is ``[(path, duration), ...]``: the
+    slide image with 0..k bullets visible, switched in order; durations must
+    sum to the audio length) and a slide clip (``clip_video``: a video the
+    deck references, played in the picture area instead of the still; the
+    slide lasts at least as long as the clip, narration keeps playing, and
+    the clip's own audio is dropped)."""
     try:
         # Get settings from config
         video_settings = config["settings"]["video"]
@@ -272,26 +281,58 @@ def create_video_fragment(
             if audio_path and os.path.exists(audio_path):
                 audio_clip = AudioFileClip(audio_path)
 
-            # Determine duration
+            width, height = video_settings["resolution"]
+            clip_clip = None
+            clip_source = None
+            if clip_video and os.path.exists(clip_video):
+                clip_source = VideoFileClip(clip_video)
+                clip_clip: Any = clip_source.without_audio()
+                scale = min(width / clip_clip.w, height / clip_clip.h)
+                clip_clip = clip_clip.resized(scale)
+
+            # Determine duration: at least as long as the clip (ADR-0019).
             duration = (
                 audio_clip.duration + video_settings["slide_duration_padding"]
                 if audio_clip
                 else video_settings["default_slide_duration"]
             )
+            if clip_clip is not None and clip_clip.duration > duration:
+                duration = float(clip_clip.duration)
 
-            # Create image clip
-            image_clip = ImageClip(image_path, duration=duration)  # type: ignore[attr-defined]
+            # Create image clip: either a progressive-reveal sequence
+            # (ADR-0019) or a single still.
+            width, height = video_settings["resolution"]
+            if reveal_frames:
+                from moviepy import concatenate_videoclips
+
+                steps = []
+                for path, step_duration in reveal_frames:
+                    step = ImageClip(path, duration=max(0.05, step_duration))  # type: ignore[attr-defined]
+                    scale = min(width / step.w, height / step.h)
+                    scale = min(scale, 1.0)
+                    if scale != 1.0:
+                        step = step.resized(scale)
+                    steps.append(step)
+                # Hold the final (full) slide through the padding tail.
+                total = sum(d for _, d in reveal_frames)
+                if total < duration and reveal_frames:
+                    steps.append(
+                        ImageClip(reveal_frames[-1][0], duration=duration - total)  # type: ignore[attr-defined]
+                    )
+                image_clip = concatenate_videoclips(steps)
+            elif os.path.exists(image_path):
+                image_clip = ImageClip(image_path, duration=duration)  # type: ignore[attr-defined]
 
             # Normalize every fragment to the exact target resolution so that
             # concatenate_videoclips() receives uniformly-sized clips. We scale the
             # image to fit inside the frame (preserving aspect ratio) and center it
             # on a background canvas of the configured resolution.
             width, height = video_settings["resolution"]
-            scale = min(width / image_clip.w, height / image_clip.h)
-            # Avoid upscaling tiny images beyond their native size.
-            scale = min(scale, 1.0)
-            if scale != 1.0:
-                image_clip = image_clip.resized(scale)
+            if image_clip is not None:
+                # Avoid upscaling tiny images beyond their native size.
+                scale = min(width / image_clip.w, height / image_clip.h, 1.0)
+                if scale != 1.0:
+                    image_clip = image_clip.resized(scale)
 
             background = ColorClip(
                 size=(width, height),
@@ -307,7 +348,30 @@ def create_video_fragment(
                     config["settings"].get("avatar", {}),
                 )
 
-            layers = [background, image_clip.with_position("center")]  # type: ignore[attr-defined]
+            if clip_clip is not None:
+                if clip_clip.duration < duration:
+                    from moviepy.video.fx import Loop
+
+                    clip_clip = clip_clip.with_effects(
+                        [Loop(duration=duration)]
+                    )
+                else:
+                    clip_clip = clip_clip.subclipped(0, duration)
+                layers = [
+                    background,
+                    clip_clip.with_position("center"),
+                ]
+                if image_clip is not None:
+                    seq: Any = image_clip
+                    image_clip = seq.with_duration(duration)
+                    layers.insert(1, image_clip.with_position("center"))
+            elif image_clip is not None:
+                layers = [
+                    background,
+                    image_clip.with_position("center"),  # type: ignore[attr-defined]
+                ]
+            else:
+                layers = [background]
             if head_clip is not None:
                 layers.append(head_clip)
             if captions:
@@ -346,6 +410,10 @@ def create_video_fragment(
                 image_clip.close()
             if head_clip is not None:
                 head_clip.close()
+            if clip_source is not None:
+                # The derived clip_clip does not release the source's
+                # ffmpeg reader; close it explicitly.
+                clip_source.close()
             if head_source is not None:
                 # Closing the derived overlay does not release the source
                 # VideoFileClip's ffmpeg reader; close it explicitly.

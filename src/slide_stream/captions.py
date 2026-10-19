@@ -99,8 +99,6 @@ def synthesize_segments(
     failed-audio case). Pause directives (``[pause 2s]``) become real silence
     between segments (ADR-0019).
     """
-    from moviepy import AudioFileClip, concatenate_audioclips
-
     from .narration import split_pauses
 
     # Expand sentences into speak/pause items.
@@ -114,8 +112,26 @@ def synthesize_segments(
                 if items:
                     prev_text, prev_pause = items[-1]
                     items[-1] = (prev_text, prev_pause + pause)
+    return _synthesize_items(provider, items, work_dir, stem)
+
+
+def synthesize_parts(
+    provider: _Speaking, parts: list[str], work_dir: Path, stem: str
+) -> tuple[Path | None, list[Cue]]:
+    """Speak explicit parts (title, then each bullet) with a pause between
+    them, so each part's reveal time is known by construction (ADR-0019).
+    One cue per part, in order."""
+    items = [(part, SEGMENT_GAP) for part in parts if part.strip()]
     if not items:
         return None, []
+    return _synthesize_items(provider, items, work_dir, stem)
+
+
+def _synthesize_items(
+    provider: _Speaking, items: list[tuple[str, float]], work_dir: Path,
+    stem: str,
+) -> tuple[Path | None, list[Cue]]:
+    from moviepy import AudioFileClip, concatenate_audioclips
 
     paths: list[Path] = []
     clips: list[Any] = []
@@ -319,7 +335,12 @@ def embed_chapters(video: str | Path, metadata: str | Path) -> None:
     try:
         subprocess.run(
             [ffmpeg, "-y", "-loglevel", "error", "-i", str(video_path),
-             "-i", str(metadata), "-map", "0", "-map_metadata", "1",
+             "-i", str(metadata),
+             # Video and audio only: copying other streams (e.g. a bin_data
+             # track from a previous pass) would make the file unreadable by
+             # moviepy and some players.
+             "-map", "0:v:0", "-map", "0:a:0?",
+             "-map_metadata", "1", "-map_chapters", "1",
              "-codec", "copy", str(tmp_path)],
             check=True,
         )

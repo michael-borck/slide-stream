@@ -3,6 +3,7 @@
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Annotated, Any
@@ -21,6 +22,7 @@ from .captions import (
     caption_cues,
     embed_chapters,
     slide_starts,
+    synthesize_parts,
     synthesize_segments,
     write_chapter_list,
     write_ffmetadata,
@@ -154,6 +156,23 @@ def _clean_narration(title: str, content: list[Any], notes: str = "") -> str:
     return ". ".join(parts)
 
 
+VIDEO_EXTENSIONS = (".mp4", ".mov", ".webm", ".mkv", ".avi")
+
+
+def _prebuilt_slide_clip(slide: dict[str, Any], deck_dir: Path) -> Path | None:
+    """A video the deck references for this slide (``![](demo.mp4)``), if it
+    exists on disk. Slides that reference a clip play it in the picture area
+    (ADR-0019); narration keeps playing and the slide lasts at least as long
+    as the clip."""
+    src = str(slide.get("image_path", "")).strip()
+    if not src or src.lower().startswith(("http://", "https://", "data:")):
+        return None
+    if Path(src).suffix.lower() not in VIDEO_EXTENSIONS:
+        return None
+    candidate = (deck_dir / src).expanduser()
+    return candidate if candidate.is_file() else None
+
+
 def _prebuilt_slide_image(slide: dict[str, Any], deck_dir: Path) -> Path | None:
     """A pre-made image the deck already references for this slide, if it exists
     on disk (e.g. an enriched deck's ``images/slide_1.png``). Resolved relative
@@ -163,6 +182,8 @@ def _prebuilt_slide_image(slide: dict[str, Any], deck_dir: Path) -> Path | None:
     src = str(slide.get("image_path", "")).strip()
     if not src or src.lower().startswith(("http://", "https://", "data:")):
         return None
+    if Path(src).suffix.lower() in VIDEO_EXTENSIONS:
+        return None  # a clip, not a picture (ADR-0019)
     candidate = (deck_dir / src).expanduser()
     return candidate if candidate.is_file() else None
 
@@ -998,6 +1019,18 @@ def create(
         if a11y.get("captions") == "none" and a11y.get("burn"):
             a11y["burn"] = False  # nothing to burn
         burn_captions = bool(a11y.get("burn")) and segments_enabled
+        # YAML turns `off`/`on` into False/True; accept both spellings.
+        reveal_raw = config["settings"].get("reveal", "auto")
+        reveal_setting = (
+            "off" if reveal_raw in (False, "false", "off")
+            else "auto" if reveal_raw in (True, "true", "auto")
+            else str(reveal_raw).lower()
+        )
+        if reveal_setting not in ("auto", "off"):
+            err_console.print(
+                "settings.reveal must be 'auto' or 'off' — using 'auto'."
+            )
+            reveal_setting = "auto"
 
         # Process each slide with Rich progress bar
         video_fragments = []
@@ -1172,10 +1205,13 @@ def create(
                 # one via the provider.
                 art_fell_back = False
                 prebuilt = _prebuilt_slide_image(slide, input_path.parent)
+                slide_clip = _prebuilt_slide_clip(slide, input_path.parent)
                 if full_slide_images is not None:
                     shutil.copyfile(full_slide_images[i], img_path)
                 elif prebuilt is not None:
                     shutil.copyfile(prebuilt, img_path)
+                elif slide_clip is not None:
+                    pass  # the fragment plays the clip in the picture area
                 else:
                     art_fb_before = getattr(image_provider, "fallback_count", 0)
                     try:
@@ -1215,6 +1251,19 @@ def create(
                         deck_image = str(img_path)
                     if deck_image and not Path(deck_image).is_file():
                         deck_image = None
+                    if slide_clip is not None and deck_image is None:
+                        # The .pptx gets the clip's first frame as a poster.
+                        poster = temp_dir / f"poster_{slide_num}.png"
+                        ffmpeg = ffmpeg_exe()
+                        if ffmpeg:
+                            subprocess.run(
+                                [ffmpeg, "-y", "-loglevel", "error", "-i",
+                                 str(slide_clip), "-frames:v", "1",
+                                 str(poster)],
+                                check=False,
+                            )
+                        if poster.exists():
+                            deck_image = str(poster)
                     entry: dict[str, Any] = {
                         "title": effective_title or str(slide["title"]),
                         "content": [
@@ -1250,15 +1299,47 @@ def create(
                     audio_file = None
                 else:
                     assert tts_provider is not None  # video-only branch
+                    # Bullets appear as spoken (ADR-0019): when the narration
+                    # is built from the slide's own text, the segments ARE
+                    # the title and bullets, so each bullet's reveal time is
+                    # exact. Other sources (LLM, script, verbatim) can't be
+                    # attributed, so those slides stay static.
+                    reveal_bullets = (
+                        reveal_setting == "auto"
+                        and segments_enabled
+                        and full_slide_images is None
+                        and prebuilt is None
+                        and script_blocks is None
+                        and not verbatim_notes
+                        and llm_provider_name in ("none",)
+                        and bool(slide.get("content"))
+                        and slide.get("has_real_title", True)
+                    )
                     slide_cues: list[Cue] = []
-                    if segments_enabled:
+                    reveal_frames: list[tuple[str, float]] | None = None
+                    if not segments_enabled:
+                        audio_file = tts_provider.synthesize(
+                            speech_text, str(audio_path)
+                        )
+                    elif reveal_bullets:
+                        # One segment per part: title, then each bullet. The
+                        # cue per part gives the exact reveal time.
+                        parts = [
+                            effective_title or str(slide["title"]),
+                            *[str(c).strip() for c in slide.get("content", [])
+                              if str(c).strip()],
+                        ]
+                        audio_file, slide_cues = synthesize_parts(
+                            tts_provider,  # type: ignore[arg-type]
+                            parts, temp_dir, f"slide_{slide_num}",
+                        )
+                        if audio_file is None or len(slide_cues) != len(parts):
+                            # Attribution lost (a part failed): stay static.
+                            reveal_frames = None
+                    else:
                         audio_file, slide_cues = synthesize_segments(
                             tts_provider,  # type: ignore[arg-type]
                             speech_text, temp_dir, f"slide_{slide_num}",
-                        )
-                    else:
-                        audio_file = tts_provider.synthesize(
-                            speech_text, str(audio_path)
                         )
 
                     if audio_file is None:
@@ -1345,6 +1426,67 @@ def create(
                         (cue.start, cue.end, cue.text)
                         for cue in all_slide_cues[-1]
                     ]
+                # Progressive bullet reveal (ADR-0019): render the slide with
+                # 0..k bullets visible and switch frames at each part's cue.
+                if reveal_bullets and slide_cues and len(slide_cues) >= 2:
+                    try:
+                        variants: list[str] = []
+                        bullets_all = [
+                            str(c).strip() for c in slide.get("content", [])
+                            if str(c).strip()
+                        ]
+
+                        text_provider = (
+                            image_provider
+                            if image_provider.name == "text"
+                            else None
+                        )
+                        for k in range(len(slide_cues)):
+                            visible = bullets_all[:k]
+                            vpath = temp_dir / f"reveal_{slide_num}_{k}.png"
+                            if text_provider is not None:
+                                text_provider.generate_image(
+                                    "", str(vpath),
+                                    slide={
+                                        "title": effective_title
+                                        or str(slide["title"]),
+                                        "content": visible,
+                                    },
+                                )
+                            else:
+                                composed = (
+                                    temp_dir
+                                    / f"reveal_{slide_num}_{k}_c.png"
+                                )
+                                compose_slide_with_bullets(
+                                    str(img_path),
+                                    effective_title or str(slide["title"]),
+                                    visible,
+                                    str(composed),
+                                    config,
+                                    code_blocks=slide.get("code_blocks"),
+                                )
+                                vpath = composed
+                            variants.append(str(vpath))
+                        spans: list[tuple[str, float]] = []
+                        for k, cue in enumerate(slide_cues):
+                            end = (
+                                slide_cues[k + 1].start
+                                if k + 1 < len(slide_cues)
+                                else float("nan")
+                            )
+                            spans.append(
+                                (variants[min(k, len(variants) - 1)],
+                                 end - cue.start if k + 1 < len(slide_cues)
+                                 else max(0.1, cue.end - cue.start))
+                            )
+                        reveal_frames = spans
+                    except Exception as e:
+                        err_console.print(
+                            f"  - Warning: bullet reveal failed ({e}); "
+                            "the slide stays static."
+                        )
+                        reveal_frames = None
                 fragment_file = create_video_fragment(
                     str(img_path),
                     str(audio_path) if audio_file else None,
@@ -1352,6 +1494,8 @@ def create(
                     config,
                     head_video=head_path,
                     captions=burn,
+                    reveal_frames=reveal_frames,
+                    clip_video=str(slide_clip) if slide_clip is not None else None,
                 )
 
                 if fragment_file:

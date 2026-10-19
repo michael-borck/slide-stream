@@ -234,6 +234,11 @@ settings:
   # with kokoro | gtts.
   voice_floor: auto
 
+  # Bullets appear as they are spoken in the video (ADR-0019). auto = on
+  # when the narration is built from the slide's own text; off = one static
+  # frame per slide. reveal: auto
+  reveal: auto
+
   # Design new slides with this PowerPoint template (.pptx/.potx); its
   # masters and layouts style the deck and the video (ADR-0014). Per run:
   # create --pptx-template FILE

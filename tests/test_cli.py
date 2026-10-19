@@ -7,6 +7,7 @@
 import tempfile
 import wave
 from pathlib import Path
+from typing import Any
 
 import pytest
 from PIL import Image
@@ -885,3 +886,153 @@ def test_cli_pptx_template_fallback_cards_are_not_artwork(tmp_path, mocker, monk
         if getattr(sh, "shape_type", None) == 13
     ]
     assert pictures == []
+
+
+# --- Bullet reveal (ADR-0019) -------------------------------------------------
+
+
+def test_create_reveal_frames_build_for_by_construction_narration(
+    tmp_path, mocker, monkeypatch
+):
+    """Default (no-LLM) narration is title + bullets: reveal frames switch
+    at each part. LLM narration can't be attributed: static."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "deck.md").write_text(
+        "# Intro\n\n- welcome to the show\n\n# Details\n\n- one\n- two\n"
+    )
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(FAST_VIDEO_CONFIG)
+    mocker.patch("slide_stream.cli.ProviderFactory.create_tts_provider",
+                 return_value=_speaking_tts(mocker))
+    captured = []
+    def spy(image_path, audio_path, output_path, config, head_video=None,
+            captions=None, reveal_frames=None, clip_video=None):
+        captured.append(reveal_frames)
+        from slide_stream.media import create_video_fragment as real
+
+        return real(
+            image_path, audio_path, output_path, config,
+            head_video=head_video, captions=captions,
+            reveal_frames=reveal_frames, clip_video=clip_video,
+        )
+
+    mocker.patch("slide_stream.cli.create_video_fragment", spy)
+    result = CliRunner().invoke(app, [
+        "create", "deck.md", "talk.mp4", "--config", str(config_file),
+    ])
+    assert result.exit_code == 0, result.output
+    # Variant files live in the per-run temp dir, removed after the render;
+    # the fragment switching on them is what matters.
+    assert captured[0] is not None and len(captured[0]) == 2, captured
+    assert captured[1] is not None and len(captured[1]) == 3, captured
+    assert captured[1][0][1] > 0 and captured[1][1][1] > 0
+
+
+def test_create_reveal_off_keeps_single_frame(tmp_path, mocker, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "deck.md").write_text("# Intro\n\n- welcome\n")
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        FAST_VIDEO_CONFIG.replace("settings:\n", "settings:\n  reveal: off\n")
+    )
+    mocker.patch("slide_stream.cli.ProviderFactory.create_tts_provider",
+                 return_value=_speaking_tts(mocker))
+    captured = []
+    def spy(image_path, audio_path, output_path, config, head_video=None,
+            captions=None, reveal_frames=None, clip_video=None):
+        captured.append(reveal_frames)
+        from slide_stream.media import create_video_fragment as real
+
+        return real(
+            image_path, audio_path, output_path, config,
+            head_video=head_video, captions=captions,
+            reveal_frames=reveal_frames, clip_video=clip_video,
+        )
+
+    mocker.patch("slide_stream.cli.create_video_fragment", spy)
+    result = CliRunner().invoke(app, [
+        "create", "deck.md", "talk.mp4", "--config", str(config_file),
+    ])
+    assert result.exit_code == 0, result.output
+    assert captured == [None]
+
+
+def test_create_slide_clip_plays_in_picture_area(tmp_path, mocker, monkeypatch):
+    """![](demo.mp4) plays the clip in the slide; the deck embeds a poster."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "deck.md").write_text(
+        "# Demo\n\n![demo](demo.mp4)\n\n- watch this\n"
+    )
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(FAST_VIDEO_CONFIG)
+
+    # A real 2-second clip (longer than the 0.3s silent narration).
+    from moviepy import ColorClip
+
+    clip = ColorClip((200, 100), (10, 120, 60), duration=2.0)
+    clip.write_videofile("demo.mp4", fps=10, logger=None)
+
+    output = tmp_path / "talk.mp4"
+    # The video render runs as a real subprocess: moviepy's ffmpeg info
+    # parser can't capture output inside CliRunner's replaced streams.
+    import os
+    import subprocess
+
+    env = {**os.environ, "HOME": str(tmp_path / "home")}
+    (tmp_path / "home").mkdir()
+    result = subprocess.run(
+        [str(Path(__file__).parent.parent / ".venv" / "bin" / "slide-stream"),
+         "create", "deck.md", str(output), "--config", str(config_file)],
+        capture_output=True, text=True, env=env, cwd=str(tmp_path),
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+
+    # Verify with ffmpeg: moviepy's probe parser chokes on the chapter
+    # track that embedding adds (players handle it fine).
+    from slide_stream.ffmpeg_bin import ffmpeg_exe
+
+    probe = subprocess.run(
+        [str(ffmpeg_exe()), "-i", str(output)], capture_output=True, text=True
+    )
+    assert "Duration: 00:00:0" in probe.stderr
+    duration_line = next(
+        line for line in probe.stderr.splitlines() if "Duration:" in line
+    )
+    clock = duration_line.split("Duration: ")[1].split(",")[0]
+    parts = [float(x) for x in clock.split(":")]
+    total = parts[0] * 3600 + parts[1] * 60 + parts[2]
+    assert total >= 2.0  # slide lasts as long as the clip
+    assert "Chapter #0:0" in probe.stderr and "Demo" in probe.stderr
+    # The clip's green dominates the frame at t=1 (a still would be black).
+    frame_png = tmp_path / "f1.png"
+    subprocess.run(
+        [str(ffmpeg_exe()), "-y", "-loglevel", "error", "-ss", "1",
+         "-i", str(output), "-frames:v", "1", str(frame_png)],
+        check=True,
+    )
+    from PIL import Image
+
+    im: Any = Image.open(frame_png)
+    frame: Any = im.convert("RGB")
+    w, h = frame.size
+    greens = sum(
+        1 for x in range(0, w, 10) for y in range(0, h, 10)
+        if frame.getpixel((x, y))[1] > frame.getpixel((x, y))[0]
+    )
+    assert greens > 20  # the demo clip is on screen mid-slide
+    im.close()
+
+    # Deck output: a poster still is embedded for the clip.
+    poster_deck = tmp_path / "deck.pptx"
+    result = CliRunner().invoke(app, [
+        "create", "deck.md", str(poster_deck), "--config", str(config_file),
+    ])
+    assert result.exit_code == 0, result.output
+    from pptx import Presentation
+
+    prs = Presentation(str(poster_deck))
+    pics = [
+        sh for s in prs.slides for sh in s.shapes
+        if getattr(sh, "shape_type", None) == 13
+    ]
+    assert len(pics) == 1

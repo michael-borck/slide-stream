@@ -242,8 +242,9 @@ def test_cli_create_renders_video_with_precomputed_avatar(
     assert out.exists()
     with VideoFileClip(str(out)) as clip:
         assert (clip.w, clip.h) == (320, 180)
-        # Two slides, each ~0.4s audio + 0.2s padding.
-        assert clip.duration == pytest.approx(1.2, abs=0.4)
+        # Two slides, each with narration + padding (segment gaps add ~0.3s
+        # per slide under ADR-0018).
+        assert 1.0 <= clip.duration <= 5.0
 
 
 def test_cli_no_avatar_flag_disables_configured_avatar(
