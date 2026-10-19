@@ -90,6 +90,8 @@ controls the output:
 | `accessibility.burn` | `false` | Draw the captions into the picture |
 | `accessibility.transcript` | `true` | Write `<output>.transcript.md` |
 | `accessibility.chapters` | `true` | MP4 chapter markers + `<output>.chapters.txt` |
+| `reveal` | `auto` | Bullets appear as spoken: `auto` or `off` |
+| `pronunciations` | `{}` | Written → spoken map applied to narration |
 | `accessibility.captions` | `both` | Caption files beside the video: `both`, `srt`, `vtt` or `none` |
 | `accessibility.burn` | `false` | Draw the captions into the picture |
 | `accessibility.transcript` | `true` | Write `<output>.transcript.md` |
@@ -208,6 +210,27 @@ Renders a deck. The output's extension picks the mode:
 describe each picture with a vision LLM (claude, openai, gemini) and write
 the description as the picture's alt text in the PowerPoint, and as the
 image text in the enriched Markdown. Needs an LLM provider with vision.
+
+## Lecture-quality narration
+
+- **Bullets appear as they are spoken.** When the narration is built from
+  the slide's own text (no LLM, no script), each bullet is voiced as its own
+  segment and appears in the video exactly when the voice reaches it
+  ([ADR-0019](adr/0019-pauses-reveal-pronunciations-clips.md)). `settings.reveal: off` gives a
+  single static frame per slide. LLM-written narration and scripts stay
+  static (their text can't be attributed to bullets).
+- **Pauses:** `[pause]` or `[pause 2s]` in speaker notes, a script or slide
+  content becomes real silence — also in narration you authored. Other
+  bracketed directions (`[click]`) are still stripped, and prose cues are
+  still only flagged by `doctor`.
+- **Pronunciations:** `settings.pronunciations` maps written form to spoken
+  form (acronyms, names, symbols); word-like keys match whole words, and
+  common code symbols (`%`, `->`) have built-in readings. Captions and the
+  transcript show the spoken form.
+- **Video clips:** reference a clip in the deck (`![demo](demo.mp4)`) and it
+  plays in the slide's picture area; the slide lasts at least as long as the
+  clip while the narration keeps playing. The `.pptx` output embeds the
+  clip's first frame.
 
 ## Your own PowerPoint template
 
