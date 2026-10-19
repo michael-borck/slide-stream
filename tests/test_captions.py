@@ -118,10 +118,15 @@ def test_synthesize_segments_times_the_spoken_audio(tmp_path):
 
 
 def test_synthesize_segments_survives_a_later_failure(tmp_path):
+    """A failed segment leaves a silent gap; later cues shift but keep their
+    text, and the failed segment never becomes a caption."""
     voice = _FakeVoice(fail={2})
-    audio, cues = synthesize_segments(voice, "First works. Second fails.", tmp_path, "s")
+    audio, cues = synthesize_segments(
+        voice, "First works. Second fails. Third appears.", tmp_path, "s"
+    )
     assert audio is not None
-    assert cues[1].end - cues[1].start >= 0.2  # a silent gap, not a shift
+    assert [c.text for c in cues] == ["First works.", "Third appears."]
+    assert cues[0].end + 0.5 <= cues[1].start  # the gap was kept
 
 
 def test_synthesize_segments_first_failure_means_no_audio(tmp_path):

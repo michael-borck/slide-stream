@@ -234,13 +234,17 @@ settings:
   # with kokoro | gtts.
   voice_floor: auto
 
-  # Accessible outputs with every video (ADR-0018), timed from the narration
-  # segments: caption files beside the video, captions drawn into the
-  # picture, a Markdown transcript, and chapter markers in the MP4 plus a
   # Design new slides with this PowerPoint template (.pptx/.potx); its
   # masters and layouts style the deck and the video (ADR-0014). Per run:
   # create --pptx-template FILE
   # pptx_template: uni-template.pptx
+
+  # Written -> spoken, applied to the narration before it is voiced
+  # (ADR-0019): acronyms, names, symbols. Word-like keys match whole words;
+  # a few code symbols (%, ->, _) are built in, entries here win.
+  # pronunciations:
+  #   GPU: "G P U"
+  #   Quixote: "kee-hoh-tay"
 
   # Accessible outputs with every video (ADR-0018), timed from the narration
   # segments: caption files beside the video, captions drawn into the

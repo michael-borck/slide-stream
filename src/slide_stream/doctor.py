@@ -30,8 +30,9 @@ GROUPS = ["Deck", "Narration", "Voice", "Images", "Avatar", "Accessibility",
            "Providers & environment"]
 
 # Speaker-note fragments that are stage directions, not spoken prose.
+# Note: [pause] / [pause 2s] are honoured as silence (ADR-0019), not flagged.
 _STAGE_DIRECTION = re.compile(
-    r"\[[^\]]+\]"                                  # [pause], [click]
+    r"\[(?!\s*pause\b)[^\]]+\]"                       # [click], [advance]
     r"|\((?:[^)]*\b(?:pause|click|next|slow|beat|breath|aside|note)\b[^)]*)\)"
     r"|\b(?:pause here|click(?: here| to advance)?|advance|next slide|"
     r"read (?:this )?slowly|take (?:this|it) slow(?:ly|er)?|slow down|"

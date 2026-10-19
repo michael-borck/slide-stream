@@ -51,6 +51,7 @@ from .media import (
     create_video_fragment,
 )
 from .narration import (
+    apply_pronunciations,
     build_narration_prompt,
     narration_source,
     notes_narration_ready,
@@ -1155,6 +1156,10 @@ def create(
                         if improved_query:
                             search_query = improved_query.strip().replace('"', "")
 
+                speech_text = apply_pronunciations(
+                    speech_text,
+                    config["settings"].get("pronunciations"),
+                )
                 narration_texts.append(speech_text)
 
                 # File paths

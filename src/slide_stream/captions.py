@@ -96,46 +96,65 @@ def synthesize_segments(
     Uses the provider's normal ``synthesize`` for every segment, so fallback
     and strict-mode behaviour are unchanged. Returns ``(None, [])`` when the
     first segment produces nothing (the caller treats that as the usual
-    failed-audio case).
+    failed-audio case). Pause directives (``[pause 2s]``) become real silence
+    between segments (ADR-0019).
     """
-    segments = split_segments(text)
-    if not segments:
-        return None, []
-    paths: list[Path] = []
-    clips: list[Any] = []
     from moviepy import AudioFileClip, concatenate_audioclips
 
+    from .narration import split_pauses
+
+    # Expand sentences into speak/pause items.
+    items: list[tuple[str, float]] = []
+    for segment in split_segments(text):
+        pairs = split_pauses(segment)
+        for j, (speak, pause) in enumerate(pairs):
+            if speak:
+                items.append((speak, pause if j < len(pairs) - 1 else 0.0))
+            elif pause:
+                if items:
+                    prev_text, prev_pause = items[-1]
+                    items[-1] = (prev_text, prev_pause + pause)
+    if not items:
+        return None, []
+
+    paths: list[Path] = []
+    clips: list[Any] = []
+    cues: list[Cue] = []
+    spoke_any = False
+    t = 0.0
     try:
-        for i, segment in enumerate(segments):
+        for i, (speak, pause) in enumerate(items):
             path = work_dir / f"{stem}_seg{i + 1:02d}.mp3"
-            result = provider.synthesize(segment, str(path))
-            if not result or not Path(result).exists():
-                if paths:
-                    # A later segment failed: keep the gap silent rather than
-                    # shifting every following caption.
-                    clips.append(_silence(SEGMENT_GAP, 24000, 1))
-                continue
-            seg_path = Path(result)
-            if seg_path != path:
-                seg_path.replace(path)
-            paths.append(path)
-            clip = AudioFileClip(str(path))
-            clips.append(clip)
-            clips.append(_silence(SEGMENT_GAP, int(clip.fps), int(clip.nchannels)))
-        if clips and len(clips) % 2 == 0:
-            clips.pop()  # no pause after the final segment
-        if not clips:
+            result = provider.synthesize(speak, str(path))
+            if result and Path(result).exists():
+                spoke_any = True
+                seg_path = Path(result)
+                if seg_path != path:
+                    seg_path.replace(path)
+                paths.append(path)
+                clip = AudioFileClip(str(path))
+                duration = float(clip.duration)
+                clips.append(clip)
+                cues.append(Cue(speak, t, t + duration))
+            else:
+                # A failed segment keeps a silent gap so later captions
+                # don't shift; strict mode has already returned None above.
+                clips.append(_silence(0.8, 24000, 1))
+                duration = 0.8
+            t += duration
+            gap = pause if pause > 0 else (
+                SEGMENT_GAP if i < len(items) - 1 else 0.0
+            )
+            if gap > 0:
+                clips.append(_silence(gap, 24000, 1))
+                t += gap
+        if not spoke_any:
+            # Every segment failed (e.g. strict mode): that is the usual
+            # failed-audio case, not a silent video.
             return None, []
         joined = concatenate_audioclips(clips)
         audio_path = work_dir / f"{stem}.mp3"
         joined.write_audiofile(str(audio_path), logger=None)
-        cues: list[Cue] = []
-        t = 0.0
-        for i, clip in enumerate(clips):
-            duration = float(clip.duration)
-            if i % 2 == 0:  # even indexes are segments; odd are the gaps
-                cues.append(Cue(segments[i // 2], t, t + duration))
-            t += duration
         return audio_path, cues
     finally:
         for clip in clips:

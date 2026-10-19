@@ -19,23 +19,62 @@ from typing import Any
 DEFAULT_WPM = 150
 
 # Stage directions that are safe to REMOVE from narration before it is voiced:
-# any [square-bracket] annotation, and (parentheticals) that clearly contain a
-# direction keyword. Deliberately narrower than doctor's warning pattern —
-# prose-form cues ("pause here", "click to advance") are left alone here because
-# deleting bare words would risk eating real narration; the doctor preflight
-# still flags those for a human to fix.
+# any [square-bracket] annotation EXCEPT pause directives (ADR-0019: those are
+# instructions to the machine, honoured as real silence), and (parentheticals)
+# that clearly contain a direction keyword. Deliberately narrower than doctor's
+# warning pattern — prose-form cues ("pause here", "click to advance") are left
+# alone here because deleting bare words would risk eating real narration; the
+# doctor preflight still flags those for a human to fix.
 _STRIP_STAGE_DIRECTION = re.compile(
-    r"\[[^\]]*\]"
-    r"|\((?:[^)]*\b(?:pause|click|next|slow|beat|breath|aside|note)\b[^)]*)\)",
+    r"\[(?!\s*pause\b)[^\]]*\]"
+    r"|\((?:[^)]*\b(?:click|next|slow|beat|breath|aside|note)\b[^)]*)\)"
+    r"|\((?!\s*pause\s*[\d.)]).*?\)",
     re.IGNORECASE,
 )
 
+# A pause directive: [pause] or [pause 2] / [pause 1.5] seconds (ADR-0019).
+PAUSE_RE = re.compile(
+    r"[\[(]\s*pause(?:\s+(\d+(?:\.\d+)?)\s*(?:s|sec|secs|second|seconds)?)?\s*[\])]",
+    re.IGNORECASE,
+)
+DEFAULT_PAUSE_SECONDS = 0.6
+
+
+def split_pauses(text: str) -> list[tuple[str, float]]:
+    """Narration text split on pause directives.
+
+    Returns ordered ``(speak_text, pause_after_seconds)`` pairs; the final
+    pair's pause is 0. ``[pause]`` defaults to ``DEFAULT_PAUSE_SECONDS``.
+    """
+    out: list[tuple[str, float]] = []
+    pos = 0
+    for m in PAUSE_RE.finditer(text):
+        chunk = text[pos:m.start()].strip()
+        if chunk:
+            out.append((chunk, 0.0))
+        seconds = m.group(1)
+        duration = float(seconds) if seconds else DEFAULT_PAUSE_SECONDS
+        if out:
+            prev_text, prev_pause = out[-1]
+            out[-1] = (prev_text, prev_pause + duration)
+        else:
+            out.append(("", duration))
+        pos = m.end()
+    tail = text[pos:].strip()
+    if tail:
+        out.append((tail, 0.0))
+    elif not out:
+        out.append((text.strip(), 0.0))
+    return out
+
 
 def strip_stage_directions(text: str) -> str:
-    """Remove unspoken stage directions (e.g. ``[pause]``, ``(click here)``)
-    from narration text before it is voiced, then tidy the whitespace and stray
-    punctuation left behind. Conservative — only bracketed/parenthetical
-    annotations are removed; returns the text unchanged if there are none."""
+    """Remove unspoken stage directions (e.g. ``(click here)``) from narration
+    text before it is voiced, then tidy the whitespace and stray punctuation
+    left behind. Pause directives (``[pause 2s]``) are NOT removed — they are
+    honoured as silence (ADR-0019). Conservative — only bracketed or
+    parenthetical annotations are removed; returns the text unchanged if
+    there are none."""
     if not text or not _STRIP_STAGE_DIRECTION.search(text):
         return text
     cleaned = _STRIP_STAGE_DIRECTION.sub("", text)
@@ -221,3 +260,37 @@ def build_narration_prompt(
         "This slide contains only a title. Write a brief narration "
         f"introducing the topic: {title or 'this section'}."
     )
+
+
+# Symbols that read badly when a slide's text is spoken as written.
+_BUILTIN_PRONUNCIATIONS = {
+    "%": " percent",
+    "->": " returns",
+    "=>": " yields",
+    "_": " ",
+}
+
+_WORDY_KEY_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 .'-]*")
+
+
+def apply_pronunciations(
+    text: str, mapping: dict[str, str] | None = None
+) -> str:
+    """Rewrite narration text so it is spoken well (ADR-0019).
+
+    A built-in map covers common code symbols; ``mapping``
+    (``settings.pronunciations``) is applied after it and wins. Word-like
+    keys are replaced on word boundaries, so ``GPU: "graphics processing
+    unit"`` never rewrites "SVGPU"; other keys (symbols) are literal.
+    """
+    if not text:
+        return text
+    combined = {**_BUILTIN_PRONUNCIATIONS, **(mapping or {})}
+    for key, spoken in combined.items():
+        if not key or spoken is None:
+            continue
+        if _WORDY_KEY_RE.fullmatch(key):
+            text = re.sub(rf"\b{re.escape(key)}\b", str(spoken), text)
+        else:
+            text = text.replace(key, str(spoken))
+    return text

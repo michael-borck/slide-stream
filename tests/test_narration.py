@@ -71,7 +71,17 @@ def test_narration_source_skips_placeholder_notes():
 
 
 def test_strip_removes_square_bracket_directions():
-    assert strip_stage_directions("Welcome [pause] everyone.") == "Welcome everyone."
+    assert strip_stage_directions("Welcome [click] everyone.") == "Welcome everyone."
+
+
+def test_pause_directives_are_kept_for_honouring():
+    """[pause] is an instruction to the machine (ADR-0019), not dead text."""
+    assert "[pause 2s]" in strip_stage_directions("Wait [pause 2s] then go.")
+    assert "[pause]" in strip_stage_directions("Wait [pause] then go.")
+    from slide_stream.narration import split_pauses
+    assert split_pauses("Wait [pause 2s] then go.") == [
+        ("Wait", 2.0), ("then go.", 0.0)
+    ]
 
 
 def test_strip_removes_parenthetical_direction():
@@ -85,7 +95,9 @@ def test_strip_preserves_bare_direction_words():
 
 
 def test_strip_tidies_punctuation_and_spacing():
-    assert strip_stage_directions("Intro [pause], then begin.") == "Intro, then begin."
+    assert strip_stage_directions("Intro [click], then begin.") == "Intro, then begin."
+    # Pause directives survive stripping; they are honoured as silence.
+    assert "[pause]" in strip_stage_directions("Intro [pause], then begin.")
 
 
 def test_strip_returns_unchanged_when_no_directions():
@@ -102,10 +114,15 @@ def test_clean_narration_strips_directions_from_notes():
     from slide_stream.cli import _clean_narration
 
     spoken = _clean_narration(
-        "My Title", ["a bullet"], "Welcome to the session [pause] everyone."
+        "My Title", ["a bullet"], "Welcome to the session [click] everyone."
     )
-    assert "[pause]" not in spoken
+    assert "[click]" not in spoken
     assert "Welcome to the session everyone." in spoken
+    # A pause directive is machine instruction: kept, honoured later.
+    kept = _clean_narration(
+        "My Title", ["a bullet"], "Welcome [pause 2] everyone."
+    )
+    assert "[pause 2]" in kept
 
 
 def test_clean_narration_skips_placeholder_and_cue_notes():
@@ -425,3 +442,32 @@ def test_prebuilt_slide_image_ignores_missing_and_remote(tmp_path):
     assert _prebuilt_slide_image({"image_path": "images/nope.png"}, tmp_path) is None
     assert _prebuilt_slide_image({"image_path": "https://x/y.png"}, tmp_path) is None
     assert _prebuilt_slide_image({}, tmp_path) is None
+
+
+# --- Pronunciation dictionary (ADR-0019) --------------------------------------
+
+
+def test_builtin_symbol_readings():
+    from slide_stream.narration import apply_pronunciations
+
+    assert apply_pronunciations("50% -> done") == "50 percent  returns done"
+
+
+def test_user_mappings_win_and_match_whole_words():
+    from slide_stream.narration import apply_pronunciations
+
+    text = "The GPU renders. A SVGPU chip. gpu lower."
+    out = apply_pronunciations(text, {"GPU": "graphics processing unit"})
+    assert "graphics processing unit" in out
+    assert "SVGPU" in out          # not rewritten inside another word
+    assert "gpu lower" in out      # case-sensitive whole word
+    assert apply_pronunciations(
+        "The GPU works", {"GPU": "G P U"}
+    ) == "The G P U works"          # user entry beats the built-ins' spirit
+
+
+def test_empty_mapping_is_a_noop():
+    from slide_stream.narration import apply_pronunciations
+
+    assert apply_pronunciations("Plain words.", {}) == "Plain words."
+    assert apply_pronunciations("", None) == ""
