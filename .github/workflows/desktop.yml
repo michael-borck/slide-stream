@@ -43,18 +43,18 @@ jobs:
         run: |
           set -euo pipefail
           TAG="$GITHUB_REF_NAME"
-          rm -rf out && mkdir -p out
+          rm -rf out stable && mkdir -p out stable
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir out
           shopt -s nullglob
-          for f in out/*aarch64*.dmg; do mv "$f" out/SlideStream-macos-apple-silicon.dmg; done
-          for f in out/*x64*.dmg; do mv "$f" out/SlideStream-macos-intel.dmg; done
-          for f in out/*.AppImage; do mv "$f" out/SlideStream-linux.AppImage; done
-          for f in out/*.deb; do mv "$f" out/SlideStream-linux.deb; done
-          for f in out/*.rpm; do mv "$f" out/SlideStream-linux.rpm; done
-          for f in out/*setup.exe; do mv "$f" out/SlideStream-windows-setup.exe; done
-          for f in out/*.msi; do mv "$f" out/SlideStream-windows.msi; done
-          ls -la out
-          gh release upload "$TAG" out/SlideStream-* --clobber --repo "$GITHUB_REPOSITORY"
+          for f in out/*aarch64*.dmg; do mv "$f" stable/SlideStream-macos-apple-silicon.dmg; done
+          for f in out/*x64*.dmg; do mv "$f" stable/SlideStream-macos-intel.dmg; done
+          for f in out/*.AppImage; do mv "$f" stable/SlideStream-linux.AppImage; done
+          for f in out/*.deb; do mv "$f" stable/SlideStream-linux.deb; done
+          for f in out/*.rpm; do mv "$f" stable/SlideStream-linux.rpm; done
+          for f in out/*setup.exe; do mv "$f" stable/SlideStream-windows-setup.exe; done
+          for f in out/*.msi; do mv "$f" stable/SlideStream-windows.msi; done
+          ls -la stable
+          gh release upload "$TAG" stable/SlideStream-* --clobber --repo "$GITHUB_REPOSITORY"
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' |
             while read -r asset; do
               case "$asset" in
