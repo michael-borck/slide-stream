@@ -55,3 +55,11 @@ jobs:
           for f in out/*.msi; do mv "$f" out/SlideStream-windows.msi; done
           ls -la out
           gh release upload "$TAG" out/SlideStream-* --clobber --repo "$GITHUB_REPOSITORY"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' |
+            while read -r asset; do
+              case "$asset" in
+                SlideStream-*) continue ;;
+                *.dmg|*.exe|*.msi|*.AppImage|*.deb|*.rpm)
+                  gh release delete-asset "$TAG" "$asset" --yes --repo "$GITHUB_REPOSITORY" ;;
+              esac
+            done
