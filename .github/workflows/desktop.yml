@@ -1,107 +1,57 @@
-name: Build desktop apps
-
-# Builds the Tauri desktop shell for macOS (Apple Silicon + Intel), Linux and
-# Windows. Run manually (workflow_dispatch) to get installers as artifacts, or
-# push a tag like desktop-v0.1.0 to also attach them to a GitHub release.
+# Shared release pipeline: michael-borck/app-hq/.github/workflows/tauri-release.yml
+name: Release desktop
 
 on:
-  workflow_dispatch:
   push:
     tags: ['desktop-v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest      # Apple Silicon
-            name: macos-arm64
-          - os: macos-15-intel    # Intel
-            name: macos-x64
-          - os: ubuntu-22.04
-            name: linux-x64
-          - os: windows-latest
-            name: windows-x64
-    runs-on: ${{ matrix.os }}
+  release:
+    uses: michael-borck/app-hq/.github/workflows/tauri-release.yml@main
+    with:
+      product-name: Slide Stream
+      project-path: desktop
+      tauri-script: npx --yes @tauri-apps/cli@^2
+      install-command: ''
+      cache: ''
+      preflight-command: ''
+      updater: false
+    secrets:
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+
+  stable-assets:
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/desktop-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Linux webview deps
-        if: startsWith(matrix.os, 'ubuntu')
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl \
-            wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: desktop/src-tauri
-
-      - name: Prepare App Store Connect API key
-        if: startsWith(matrix.os, 'macos')
-        env:
-          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-        run: |
-          if [ -n "$APPLE_API_KEY_CONTENT" ] && [ -n "$APPLE_API_KEY" ]; then
-            mkdir -p ~/.appstoreconnect/private_keys
-            printf '%s' "$APPLE_API_KEY_CONTENT" | openssl base64 -d -A > ~/.appstoreconnect/private_keys/AuthKey_${APPLE_API_KEY}.p8
-            chmod 600 ~/.appstoreconnect/private_keys/AuthKey_${APPLE_API_KEY}.p8
-          else
-            echo "No API key secrets; notarization will fall back to Apple ID"
-          fi
-
-      - name: Build
-        working-directory: desktop
-        env:
-          # macOS code signing + notarization (no-ops on linux/windows)
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npx --yes @tauri-apps/cli@^2 build
-
-      # Stable asset names so the landing page can deep-link
-      # .../releases/latest/download/<name> without version numbers or API calls.
-      - name: Rename bundles to stable names
+      - name: Rename release assets
         shell: bash
-        working-directory: desktop/src-tauri/target/release/bundle
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mkdir -p out
-          case "${{ matrix.name }}" in
-            macos-arm64) mv dmg/*.dmg out/SlideStream-macos-apple-silicon.dmg ;;
-            macos-x64)   mv dmg/*.dmg out/SlideStream-macos-intel.dmg ;;
-            linux-x64)
-              mv appimage/*.AppImage out/SlideStream-linux.AppImage
-              mv deb/*.deb out/SlideStream-linux.deb
-              mv rpm/*.rpm out/SlideStream-linux.rpm ;;
-            windows-x64)
-              mv nsis/*-setup.exe out/SlideStream-windows-setup.exe
-              mv msi/*.msi out/SlideStream-windows.msi || true ;;
-          esac
-          ls -la out/
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: slidestream-desktop-${{ matrix.name }}
-          path: desktop/src-tauri/target/release/bundle/out/*
-          if-no-files-found: warn
-          retention-days: 5
-
-      - name: Attach to release (tag builds)
-        if: startsWith(github.ref, 'refs/tags/desktop-v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: desktop/src-tauri/target/release/bundle/out/*
+          set -euo pipefail
+          TAG="$GITHUB_REF_NAME"
+          rm -rf out && mkdir -p out
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir out
+          shopt -s nullglob
+          for f in out/*aarch64*.dmg; do mv "$f" out/SlideStream-macos-apple-silicon.dmg; done
+          for f in out/*x64*.dmg; do mv "$f" out/SlideStream-macos-intel.dmg; done
+          for f in out/*.AppImage; do mv "$f" out/SlideStream-linux.AppImage; done
+          for f in out/*.deb; do mv "$f" out/SlideStream-linux.deb; done
+          for f in out/*.rpm; do mv "$f" out/SlideStream-linux.rpm; done
+          for f in out/*setup.exe; do mv "$f" out/SlideStream-windows-setup.exe; done
+          for f in out/*.msi; do mv "$f" out/SlideStream-windows.msi; done
+          ls -la out
+          gh release upload "$TAG" out/SlideStream-* --clobber --repo "$GITHUB_REPOSITORY"
